@@ -11,6 +11,7 @@ import pytest  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from sst import translate as translate_module  # noqa: E402
 from sst import translateui  # noqa: E402
 from sst.hotkey import VK_ESCAPE  # noqa: E402
 from sst.settings import Settings  # noqa: E402
@@ -24,6 +25,11 @@ JAPANESE = "金曜日までに更新したレポートを送っていただけ�
 @pytest.fixture(scope="module", autouse=True)
 def qt():
     return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def windows_in_english(monkeypatch):
+    monkeypatch.setattr(translate_module, "system_language", lambda: "English")  # the same on every test machine
 
 
 class FakeAccess:
@@ -92,7 +98,10 @@ class FakeApp:
     def __init__(self, ready=True, answer=JAPANESE, gate=None):
         self.settings = Settings(welcomed=True, translate_to="Japanese")
         self.ready, self.answer, self.gate = ready, answer, gate
-        self.said, self.asked = [], []
+        self.said, self.asked, self.opened = [], [], []
+
+    def open_window(self, page):
+        self.opened.append(page)
 
     def translate_ready(self):
         return self.ready
@@ -156,8 +165,9 @@ def test_ctrl_c_c_shows_the_copied_text_translated(qt):
     assert controller.double_copy
     press(controller)
     assert shown(controller) and controller.popup.isVisible()
-    assert app.asked == [(SOURCE, "Japanese", "")]
+    assert app.asked == [(SOURCE, "Japanese", "English")]  # no second language chosen: Windows' own, else English
     assert controller.popup.result.toPlainText() == f"{JAPANESE} [Japanese]"
+    assert controller.popup.route.text() == "English →"  # the text's language, then the one it went into
     assert access.copy_calls == 0  # the app copied: Rflow pressed nothing
     assert controller.listener.captured == {VK_ESCAPE}  # Esc closes the popup
 
@@ -184,10 +194,14 @@ def test_nothing_to_translate_says_why(qt, copied, said):
     assert app.said == [("warning", said)] and not controller.popup.isVisible() and not app.asked
 
 
-def test_without_an_ai_model_the_user_is_told(qt):
+def test_without_an_ai_model_the_popup_says_so_and_leads_to_ai_cleanup(qt):
     controller, _, app = make(ready=False)
-    controller.trigger()
-    assert app.said == [("warning", "Translate needs an AI model: choose one in AI cleanup.")]
+    press(controller)
+    popup = controller.popup
+    assert wait_until(popup.isVisible) and "needs an AI model" in popup.status.text()
+    assert not popup.setup_button.isHidden() and popup.copy_button.isHidden() and not app.asked  # nothing sent
+    popup.setup.emit()
+    assert app.opened == ["cleanup"] and not popup.isVisible()
 
 
 def test_the_second_language_is_used_for_text_already_in_the_first(qt):
@@ -223,8 +237,8 @@ def test_copy_puts_the_translation_on_the_clipboard(qt):
     press(controller)
     assert shown(controller)
     controller.popup.copy.emit()
-    assert access.clipboard == f"{JAPANESE} [Japanese]" and not controller.popup.isVisible()
-    assert app.said[-1] == ("transformed", "Translation copied") and controller.listener.captured is None
+    assert access.clipboard == f"{JAPANESE} [Japanese]" and controller.popup.isVisible()  # it stays, and says so
+    assert controller.popup.copy_button.text() == "✓ Copied" and not app.said
 
 
 def test_replace_puts_the_translation_in_place_of_the_text(qt):
@@ -267,11 +281,25 @@ def test_the_popup_closes_when_the_user_goes_to_another_app_but_not_for_rflows_o
     assert wait_until(lambda: not controller.popup.isVisible())
 
 
-def test_a_failing_model_is_shown_in_the_popup(qt):
-    controller, _, _ = make(answer=RuntimeError("HTTP 429 quota"))
+def test_a_failing_model_is_explained_with_try_again(qt):
+    controller, _, app = make(answer=RuntimeError("HTTP 429 quota"))
     press(controller)
-    assert wait_until(lambda: "HTTP 429 quota" in controller.popup.status.text())
-    assert not controller.popup.copy_button.isEnabled()
+    popup = controller.popup
+    assert wait_until(lambda: "limit is reached" in popup.status.text())  # in plain words
+    assert "HTTP 429 quota" in popup.detail.toolTip() and not popup.detail.isHidden()  # the provider's own, small
+    assert popup.copy_button.isHidden() and not popup.retry_button.isHidden() and popup.setup_button.isHidden()
+    app.answer = JAPANESE
+    popup.retry.emit()
+    assert wait_until(lambda: controller.result is not None) and len(app.asked) == 2
+
+
+def test_a_refused_key_leads_to_ai_cleanup(qt):
+    controller, _, app = make(answer=RuntimeError("HTTP 401: invalid API key"))
+    press(controller)
+    popup = controller.popup
+    assert wait_until(lambda: "refused the API key" in popup.status.text()) and not popup.setup_button.isHidden()
+    popup.setup.emit()
+    assert app.opened == ["cleanup"]
 
 
 def test_another_shortcut_copies_the_selection_itself_but_never_in_a_terminal(qt):
@@ -291,3 +319,73 @@ def test_off_means_no_shortcut(qt):
     assert controller.listener is None
     controller.start("not a key")
     assert controller.listener is None
+
+
+# ---- the popup's UX (phase 24)
+
+def test_the_header_says_from_what_into_what_with_one_click_languages(qt):
+    controller, _, app = make(access=FakeAccess(copied=JAPANESE))
+    app.settings.translate_to = "English"
+    press(controller)
+    assert shown(controller)
+    popup = controller.popup
+    chips = {chip.text(): chip.isChecked() for chip in popup.chips}
+    assert popup.route.text() == "Japanese →" and chips.get("English") is True
+    assert "Japanese" not in chips  # never into the language the text is already in
+    popup.chips[-1].click()
+    assert wait_until(lambda: app.asked[-1][1] == popup.chips[-1].text())
+
+
+def test_more_shows_every_language_and_esc_goes_back(qt):
+    controller, _, app = make()
+    press(controller)
+    assert shown(controller)
+    popup = controller.popup
+    popup.more.click()
+    assert not popup.grid_box.isHidden() and popup.result.isHidden() and len(popup.all_languages) >= 25
+    controller.listener.events.put((f"key:{VK_ESCAPE}", 0.0))
+    assert wait_until(lambda: popup.grid_box.isHidden()) and popup.isVisible() and not popup.result.isHidden()
+    popup.more.click()
+    popup.all_languages["Korean"].click()
+    assert wait_until(lambda: controller.result is not None and controller.result.target == "Korean")
+    assert popup.grid_box.isHidden() and app.settings.translate_to == "Korean"
+
+
+def test_a_click_outside_closes_the_popup_but_not_one_inside(qt, monkeypatch):
+    access = FakeAccess()
+    access.mouse_down = lambda: access.down
+    access.down = False
+    controller, _, _ = make(access=access)
+    press(controller)
+    assert shown(controller)
+    popup, where = controller.popup, {}
+    monkeypatch.setattr(translateui, "_pointer", lambda: where["at"])
+    where["at"] = popup.frameGeometry().center()
+    QTest.qWait(40)
+    access.down = True  # a click on the popup itself
+    QTest.qWait(60)
+    assert popup.isVisible()
+    access.down = False
+    QTest.qWait(40)
+    where["at"] = popup.frameGeometry().bottomRight() + translateui.QPoint(40, 40)
+    access.down = True  # and one outside it
+    assert wait_until(lambda: not popup.isVisible())
+
+
+def test_a_long_translation_never_covers_the_buttons(qt):
+    controller, _, app = make(answer="A long translation. " * 120)
+    press(controller)
+    assert shown(controller)
+    popup = controller.popup
+    QTest.qWait(30)
+    assert popup.result.geometry().bottom() < popup.buttons.geometry().top()  # scrolls inside its box instead
+    area = popup.screen().availableGeometry()
+    assert area.contains(popup.frameGeometry())  # and the grown popup is still on the screen
+
+
+def test_english_text_with_english_chosen_goes_into_windows_language(qt, monkeypatch):
+    monkeypatch.setattr(translate_module, "system_language", lambda: "Japanese")
+    controller, _, app = make()
+    app.settings.translate_to = "English"
+    press(controller)
+    assert shown(controller) and app.asked == [(SOURCE, "English", "Japanese")]  # never English into English

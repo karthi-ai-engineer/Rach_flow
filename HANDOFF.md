@@ -108,6 +108,7 @@ _Last updated: 2026-10-04_
 | 16 | **Cloud speech models**: OpenAI, Groq, Google Gemini with the user's key, a warning, a Test, Parakeet as the fallback | done, on `main` (PR #39), released **v1.5.0** |
 | 17 | **Your own server for speech**: vLLM, the company gateway, any OpenAI-compatible transcription server; Load models, Test | done, on `main` (PR #41), released **v1.5.0** |
 | 18 | **Parakeet downloaded on demand**: a speech step in the welcome, the installer 90 MB instead of 571 MB; version 1.5.0 | done, on `main` (PR #43), released **v1.5.0** |
+| 24 | **The Translate popup, redone** (the owner: "the UX literally sucks"): "Japanese → English" with one-click languages and More, as tall as the text (nothing overlaps) and always on the screen, errors in plain words with Try again, no model leads to AI cleanup, Copy says "Copied", a click outside closes it, never English into English | in review |
 | 23 | **Settings that change only on purpose** (the owner's request): the wheel never changes a dropdown, long lists searchable, a Save per section with its state shown, API keys masked with a pen to change them, the model in use and the language at the top of Speech recognition | done, on `main` (PR #58), released **v1.9.0** |
 | fix | A dictation typed twice when its last part replaced the one before: the result read the replacement too early | done, on `main` (PR #57), released **v1.9.0** |
 | 22 | **Translate** (the owner's idea, like DeepL): select text, Ctrl+C+C, a popup at the pointer shows it translated by the AI model, language at the top, Copy or Replace | done, on `main` (PR #54), released **v1.8.0** |
@@ -1246,6 +1247,32 @@ These were scratch scripts, not in git. The findings:
 - Toggles on Settings, Text Transform and Translate still apply at once (one click, one change); they got the wheel
   fix only. The UX review of the other pages is in **Next steps**.
 
+## The Translate popup, redone (phase 24, the owner's request of 2026-10-04)
+
+- **What was wrong** (found in the code, the log and the popup rendered in every state):
+  - a long translation ran under Copy and Replace: the window was sized before its word-wrapped labels were
+    measured, and the box measured its text at Qt's default width (632 px) instead of its own
+  - it was placed while small, then grew downwards off the screen
+  - the language dropdown re-translated and saved a new language when the wheel went over it
+  - with no second language, English text went "into English"
+  - no word of the text's language; "1.6 s · model" shown; raw provider errors, no Try again
+  - without an AI model, Ctrl+C+C only flashed a notice in the pill
+  - Copy closed it at once; a click elsewhere in the same app left it open
+- **Now** (`sst/translateui.py`, `TranslatePopup`):
+  - the header says "Japanese → English" (`translate.detect`: only when the letters make it certain, so
+    Devanagari, Cyrillic and most Latin-alphabet text get no name rather than a guess)
+  - the languages used most are one-click buttons beside it (never the text's own); More shows all 25 in a grid
+  - every part is as tall as its text, measured; the translation up to 360 px or 40% of the screen, then it scrolls.
+    The popup opens upwards when there's little room below, and is placed again whenever it grows
+  - errors are said in plain words (`explain`), with the provider's own words small below and Try again; a refused key
+    or no connection also offers "Set up AI cleanup", as does having no model at all (the popup opens and says so)
+  - Copy says "✓ Copied" and the popup stays; a new click outside it closes it (`textaccess.mouse_down`); Esc in the
+    language list goes back
+  - text already in the chosen language goes to the second language, else to Windows' own language, else English
+    (`translate.fallback_second`, `system_language`): the Translate page calls this "Automatic"
+- The empty gap above "Try it" (Translate, Text Transform, the welcome) and "Add a snippet": the text boxes kept their
+  growing size policy despite a fixed height, so their card grew and the heading took the room (`fixed_height`).
+
 ## Known limitations
 
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.
@@ -1264,7 +1291,6 @@ These were scratch scripts, not in git. The findings:
 ## Next steps
 
 1. **The UX review of the other pages** (found while doing phase 23; the owner chooses the order):
-   - Snippets ("Add a snippet") and Translate ("Try it"): a large empty gap above the card's heading
    - Text Transform: long phrase lists are cut off in one-line boxes
    - Settings, Text Transform and Translate apply each toggle at once with no word that it was saved
    - the speech language list has 17 languages plus Automatic; Whisper and the cloud models know about 99, and the

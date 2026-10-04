@@ -99,6 +99,15 @@ def window_class(hwnd: int) -> str:
     return buffer.value
 
 
+user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+user32.GetAsyncKeyState.restype = ctypes.c_short
+
+
+def mouse_down() -> bool:
+    """A mouse button is held now (left, right or middle): Rflow's popups close on a click outside them."""
+    return any(user32.GetAsyncKeyState(vk) & 0x8000 for vk in (0x01, 0x02, 0x04))
+
+
 def activate(hwnd: int, timeout: float = 0.3) -> bool:
     """Bring the window `hwnd` back to the front (restored if minimised), so a paste goes there. True once it is the
     foreground window; False when it no longer exists or Windows kept another window in front."""

@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QTextBrowser,
     QToolButton,
@@ -77,6 +78,7 @@ from sst.snippets import load as load_snippets
 from sst.snippets import protect as protect_snippets
 from sst.transform import TRANSFORMS
 from sst.translate import LANGUAGES as TRANSLATE_LANGUAGES
+from sst.translate import fallback_second, system_language
 
 APP_NAME = "Rflow"
 ICON_FILE = Path(__file__).parent / "static" / "sst.ico"
@@ -228,6 +230,13 @@ def card(spacing: int = 10) -> tuple[QFrame, QVBoxLayout]:
     layout.setContentsMargins(18, 16, 18, 16)
     layout.setSpacing(spacing)
     return frame, layout
+
+
+def fixed_height(widget: QWidget, height: int) -> None:
+    """One height, and no asking the card for more: a text box's size policy grows, so a fixed height alone still made
+    its card taller, and the spare height went to the card's heading (a large gap above "Try it" and "Add a snippet")."""
+    widget.setFixedHeight(height)
+    widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
 
 def button(label: str, on_click=None, primary: bool = False, link: bool = False) -> QPushButton:
@@ -905,7 +914,7 @@ class SnippetsPage(Page):
         layout.addWidget(self.cue)
         self.snippet_text = QPlainTextEdit()
         self.snippet_text.setPlaceholderText("\u2026type this (e.g. xyz@gmail.com). Several lines are fine.")
-        self.snippet_text.setFixedHeight(84)
+        fixed_height(self.snippet_text, 84)
         layout.addWidget(self.snippet_text)
         self.anywhere = QCheckBox("Also inside a sentence (\u201csend it to my email\u201d)")
         self.anywhere.setToolTip("Off: only when you say the phrase on its own, so \u201cI checked my email this "
@@ -2142,7 +2151,7 @@ class TransformPage(Page):
         self.sample = QPlainTextEdit()
         self.sample.setPlainText("I checked the deployment and everything looks good, but we still have one issue with the "
                                  "database migration, and I think we should fix that before production.")
-        self.sample.setFixedHeight(84)
+        fixed_height(self.sample, 84)
         layout.addWidget(self.sample)
         self.try_buttons: dict[str, QPushButton] = {}
         buttons = QHBoxLayout()
@@ -2276,12 +2285,12 @@ class TranslatePage(Page):
         self.target.currentIndexChanged.connect(self._apply)
         layout.addLayout(row(text("Translate into", wrap=False), self.target, stretch_at=2))
         self.second = Choice(search=True)
-        self.second.addItem("\u2014 (keep that language)", "")
+        self.second.addItem("Automatic: Windows' language, or English", "")
         for name in TRANSLATE_LANGUAGES:
             self.second.addItem(name, name)
         self.second.setCurrentIndex(max(0, self.second.findData(s.translate_second)))
         self.second.currentIndexChanged.connect(self._apply)
-        layout.addLayout(row(text("Text already in that language: into", wrap=False), self.second, stretch_at=2))
+        layout.addLayout(row(text("Text already in that language goes into", wrap=False), self.second, stretch_at=2))
         self.how = text("", muted=True)
         layout.addWidget(self.how)
         self.add(frame)
@@ -2299,7 +2308,7 @@ class TranslatePage(Page):
         layout.addWidget(text("Try it", "h2"))
         self.sample = QPlainTextEdit()
         self.sample.setPlainText("Could you send me the updated report by Friday? The budget is $25,000.")
-        self.sample.setFixedHeight(70)
+        fixed_height(self.sample, 70)
         layout.addWidget(self.sample)
         self.try_button = button("Translate", self._try, primary=True)
         layout.addLayout(row(self.try_button, stretch_at=1))
@@ -2313,12 +2322,17 @@ class TranslatePage(Page):
         self.add(trial)
         self.body.addStretch()
 
+    def _second(self) -> str:
+        s = self.app.settings
+        return s.translate_second or fallback_second(s.translate_to, system_language())
+
     def refresh(self) -> None:
-        s, model = self.app.settings, self.app.transform_model()
-        second = f" (already in {s.translate_to}: into {s.translate_second})" if s.translate_second else ""
+        s, model, second = self.app.settings, self.app.transform_model(), self._second()
+        already = f" (text already in {s.translate_to}: in {second})" if second else ""
         self.how.setText("Translate is off." if not s.translate_shortcut else
                          f"Select text, press {self.shortcut.currentText().split(' (')[0]}: the window shows it in "
-                         f"{s.translate_to}{second}. Esc closes it; the language list at its top translates again.")
+                         f"{s.translate_to}{already}. A language at its top translates again; Esc or a click outside "
+                         "closes it.")
         self.model.setText(f"Uses your AI cleanup model: {model}" if model else
                            "Translate needs an AI model: choose a provider and a model in AI cleanup.")
         self.setup.setVisible(not model)
@@ -2353,7 +2367,8 @@ class TranslatePage(Page):
             self.result.show()
             self._say(f"{result.target} in {result.seconds:.1f} s" + (": " + "; ".join(result.warnings)
                                                                         if result.warnings else ""))
-        run_in_background(self, lambda: self.app.run_translation(sample, s.translate_to, s.translate_second), done)
+        second = self._second()
+        run_in_background(self, lambda: self.app.run_translation(sample, s.translate_to, second), done)
 
 
 # ---------------------------------------------------------------- Settings
@@ -2538,7 +2553,7 @@ class WelcomePage(Page):
         layout.addWidget(self.try_text)
         self.try_box = QPlainTextEdit()
         self.try_box.setPlaceholderText("Click here first. Your words will appear here.")
-        self.try_box.setFixedHeight(84)
+        fixed_height(self.try_box, 84)
         layout.addWidget(self.try_box)
         self.status = text("", muted=True)
         layout.addWidget(self.status)

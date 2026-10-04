@@ -84,6 +84,48 @@ def choose_target(text: str, target: str, second: str) -> str:
     return second if second and second != target and already_in(text, target) else target
 
 
+# The languages a text's letters tell apart for certain. Devanagari (Hindi or Marathi), Cyrillic, Arabic and most of the
+# Latin alphabet are shared by several languages, so those texts get no name rather than a guess.
+_KNOWN_BY_LETTERS = [("Japanese", "Japanese"), ("Korean", "Korean"), ("Tamil", "Tamil"), ("Telugu", "Telugu"),
+                     ("Malayalam", "Malayalam"), ("Kannada", "Kannada"), ("Bengali", "Bengali"), ("Thai", "Thai"),
+                     ("Chinese", "Chinese (Simplified)"), ("English", "English")]
+
+
+def detect(text: str) -> str:
+    """The language `text` is in, when its letters make it certain (shown as "Japanese → English"); else ""."""
+    return next((name for name, language in _KNOWN_BY_LETTERS if already_in(text, language)), "")
+
+
+# Windows' language codes for the languages above (Chinese is told apart by its region).
+_CODES = {"en": "English", "ja": "Japanese", "ta": "Tamil", "hi": "Hindi", "ko": "Korean", "es": "Spanish",
+          "fr": "French", "de": "German", "it": "Italian", "pt": "Portuguese", "nl": "Dutch", "ru": "Russian",
+          "ar": "Arabic", "te": "Telugu", "ml": "Malayalam", "kn": "Kannada", "bn": "Bengali", "mr": "Marathi",
+          "th": "Thai", "vi": "Vietnamese", "id": "Indonesian", "tr": "Turkish", "pl": "Polish"}
+
+
+def system_language() -> str:
+    """The language Windows shows its menus in, as Translate names it ("Japanese"); "" when it isn't one of them."""
+    try:
+        import ctypes
+        import locale
+        tag = locale.windows_locale.get(ctypes.windll.kernel32.GetUserDefaultUILanguage(), "")
+    except (AttributeError, OSError):  # not Windows
+        return ""
+    code = tag.split("_")[0]
+    if code == "zh":
+        return "Chinese (Traditional)" if tag in ("zh_TW", "zh_HK", "zh_MO") else "Chinese (Simplified)"
+    return _CODES.get(code, "")
+
+
+def fallback_second(target: str, system: str) -> str:
+    """Where text already in `target` goes when the user chose no second language: the language Windows is in (Japanese
+    on a Japanese Windows), or else English. Never `target` itself: "English into English" helped nobody."""
+    for language in (system, "English"):
+        if language in LANGUAGES and language != target:
+            return language
+    return ""
+
+
 def system_prompt(target: str) -> str:
     return PROMPT.format(target=target)
 

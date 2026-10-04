@@ -1,15 +1,18 @@
 """Translate (the owner's idea of 2026-10-02, like DeepL): select text in any app, press Ctrl+C twice, read it translated.
 
   Ctrl+C+C (the shortcut)   the app copies as usual; Rflow reads that copy, presses nothing, and opens a small popup
-                            at the pointer: the language at the top, the translation below (sst.translate)
-  the language list         translates again into the language picked, and remembers it
-  Copy                      the translation on the clipboard
+                            at the pointer: "Japanese → English" at the top, the translation below (sst.translate)
+  a language at the top     translates again into it, and remembers it; More shows every language
+  Copy                      the translation on the clipboard ("✓ Copied"; the popup stays)
   Replace                   the translation in place of the selected text (its window brought back first, like Text
                             Transform; if the text isn't there any more, the translation goes on the clipboard)
-  Esc, x, another window    closes the popup
+  Try again                 after an error, which is said in plain words (the provider's own below, small)
+  Esc, ✕, a click outside   closes the popup (Esc in the language list goes back), as does going to another app
 
 The popup never takes the keyboard focus, so the app keeps its selection; Esc is taken from the keyboard hook while the
-popup is open. Another shortcut (not a double copy) copies the selection itself, with Ctrl+Insert, never in a terminal.
+popup is open. Text already in the chosen language goes to the second language, or else to Windows' own language (or
+English), never into the same language. Another shortcut (not a double copy) copies the selection itself, with
+Ctrl+Insert, never in a terminal.
 """
 import dataclasses
 import logging
@@ -20,8 +23,8 @@ import time
 from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import (
-    QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -31,43 +34,83 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from sst import translate
 from sst.hotkey import VK_ESCAPE, HotkeyListener, parse_hotkey
 from sst.transformui import TERMINALS, place
-from sst.translate import LANGUAGES, MAX_CHARS, Translation
+from sst.translate import LANGUAGES, MAX_CHARS, Translation, choose_target, detect, fallback_second
 
 COPY_WAIT = 0.4  # seconds the app gets to copy after the second Ctrl+C, before the clipboard is read as it is
 
 log = logging.getLogger(__name__)
 
+
+def _pointer() -> QPoint:
+    return QCursor.pos()  # apart, so the tests can say where the pointer is
+
 _STYLE = """
-#popup { background: rgba(24, 24, 32, 246); border: 1px solid rgba(255, 255, 255, 40); border-radius: 12px; }
+#popup { background: rgba(28, 28, 36, 250); border: 1px solid rgba(255, 255, 255, 36); border-radius: 12px; }
 QLabel { color: #F5F5FA; background: transparent; }
-QLabel#muted { color: #A8A8B8; }
+QLabel#muted { color: #9A9AAD; }
+QLabel#route { color: #C9C9D6; font-weight: 600; }
 QLabel#warning { color: #FBBF24; }
-QTextBrowser { color: #F5F5FA; background: transparent; border: none; font-size: 11pt; }
-QComboBox { color: #F5F5FA; background: rgba(255, 255, 255, 18); border: 1px solid rgba(255, 255, 255, 40);
-            border-radius: 6px; padding: 2px 8px; }
-QComboBox QAbstractItemView { color: #F5F5FA; background: #20202A; selection-background-color: #3B82F6; }
+QTextBrowser { color: #F5F5FA; background: transparent; border: none; font-size: 11pt;
+               selection-background-color: #3B82F6; selection-color: #FFFFFF; }
 QPushButton { color: #FFFFFF; background: rgba(255, 255, 255, 22); border: none; border-radius: 6px; padding: 5px 14px; }
 QPushButton:hover { background: rgba(255, 255, 255, 40); }
 QPushButton#primary { background: #3B82F6; }
 QPushButton#primary:hover { background: #2563EB; }
-QPushButton:disabled { color: #77778A; background: rgba(255, 255, 255, 10); }
+QPushButton:disabled { color: #9A9AAD; background: rgba(255, 255, 255, 10); }
+QPushButton#chip { color: #D8D8E4; background: rgba(255, 255, 255, 14); border-radius: 11px; padding: 3px 11px; }
+QPushButton#chip:hover { background: rgba(255, 255, 255, 34); }
+QPushButton#chip:checked { color: #FFFFFF; background: #3B82F6; }
+QPushButton#language { color: #E8E8F0; background: transparent; text-align: left; padding: 5px 8px; }
+QPushButton#language:hover { background: rgba(255, 255, 255, 26); }
+QPushButton#language:checked { background: rgba(59, 130, 246, 170); }
 QToolButton { color: #A8A8B8; background: transparent; border: none; font-size: 12pt; }
 QToolButton:hover { color: #FFFFFF; }
+QScrollBar:vertical { background: transparent; width: 8px; }
+QScrollBar::handle:vertical { background: rgba(255, 255, 255, 60); border-radius: 4px; min-height: 24px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 """
 
 
-class TranslatePopup(QWidget):
-    """The small panel at the pointer: the language, the text, its translation, Copy and Replace. It never takes focus."""
+KEY_REFUSED = "The provider refused the API key. Check it on the AI cleanup page."
+UNREACHABLE = "Rflow can't reach the provider. Check the internet connection and the AI cleanup settings, then try again."
 
-    language = Signal(str)  # a language picked in the list
+
+def explain(error: str) -> str:
+    """What a failed translation means for the user, from the provider's error (shown below it, smaller)."""
+    e = error.casefold()
+    if any(s in e for s in ("401", "403", "unauthorized", "forbidden", "api key", "api_key", "permission")):
+        return KEY_REFUSED
+    if any(s in e for s in ("429", "quota", "rate limit", "exhausted", "too many requests")):
+        return "The provider's limit is reached (quota, or too many requests). Try again in a minute."
+    if any(s in e for s in ("timed out", "timeout")):
+        return "The provider took too long to answer. Try again."
+    if any(s in e for s in ("getaddrinfo", "connection", "unreachable", "network", "11001", "10061", "no address")):
+        return UNREACHABLE
+    if "no translation" in e:
+        return "The model gave no translation. Try again, or choose another model in AI cleanup."
+    return "Couldn't translate this. Try again."
+
+
+class TranslatePopup(QWidget):
+    """The panel at the pointer. The header says from what into what ("Japanese → English"), with the languages used
+    most as one-click buttons and More for all of them; then the translation, as tall as it needs (it scrolls past a
+    limit); then Copy and Replace, or Retry after an error. It never takes the keyboard focus (the app keeps its
+    selection for Replace), stays on the screen as it grows, and closes on Esc, ✕ or a click outside it."""
+
+    language = Signal(str)  # a language picked in the header or the full list
     copy = Signal()
     replace = Signal()
+    retry = Signal()
+    setup = Signal()  # open the AI cleanup page: no model yet, or its key or connection failed
     closed = Signal()
 
-    WIDTH = 440
-    RESULT_MAX = 300
+    WIDTH = 460
+    INNER = WIDTH - 34  # inside the frame's margins and border
+    RESULT_MAX = 360  # at most, and at most 40% of the screen; then the translation scrolls
+    COLUMNS = 3  # of the full language list
 
     def __init__(self):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
@@ -76,6 +119,9 @@ class TranslatePopup(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setStyleSheet(_STYLE)
         self.setFixedWidth(self.WIDTH)
+        self.anchor, self._above, self._view, self._back, self.target = QPoint(), False, "busy", "busy", ""
+        self._choices: list[str] = []
+        self._dot = 0
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         frame = QFrame()
@@ -84,60 +130,102 @@ class TranslatePopup(QWidget):
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(16, 12, 16, 14)
         layout.setSpacing(8)
-        head = QHBoxLayout()
-        title = QLabel("Translate into")
-        title.setStyleSheet("font-weight: 600;")
-        head.addWidget(title)
-        self.languages = QComboBox()
-        self.languages.addItems(list(LANGUAGES))
-        self.languages.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.languages.activated.connect(lambda i: self.language.emit(self.languages.itemText(i)))
-        head.addWidget(self.languages)
-        head.addStretch()
+
+        self.head = QHBoxLayout()
+        self.head.setSpacing(6)
+        self.route = QLabel("Into")
+        self.route.setObjectName("route")
+        self.head.addWidget(self.route)
+        self.chips: list[QPushButton] = []
+        self.chip_row = QHBoxLayout()
+        self.chip_row.setSpacing(6)
+        self.head.addLayout(self.chip_row)
+        self.more = self._button("More ▾", "chip", self.toggle_languages, "All languages")
+        self.more.setCheckable(True)
+        self.head.addWidget(self.more)
+        self.head.addStretch()
         self.close_button = QToolButton()
         self.close_button.setText("✕")
         self.close_button.setToolTip("Close (Esc)")
+        self.close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.close_button.clicked.connect(self.close_popup)
-        head.addWidget(self.close_button)
-        layout.addLayout(head)
-        self.original = QLabel()
+        self.head.addWidget(self.close_button)
+        layout.addLayout(self.head)
+
+        self.original = QLabel()  # one line: the text is still selected in the app, this only says which it was
         self.original.setObjectName("muted")
-        self.original.setWordWrap(True)
         layout.addWidget(self.original)
+        self.waiting = QLabel()
+        self.waiting.setObjectName("muted")
+        layout.addWidget(self.waiting)
+        self.dots = QTimer(self)
+        self.dots.setInterval(350)
+        self.dots.timeout.connect(self._tick)
         self.result = QTextBrowser()
         self.result.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.result.setFixedHeight(44)
         self.result.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         layout.addWidget(self.result)
-        self.status = QLabel()
-        self.status.setObjectName("muted")
+        self.grid_box = QWidget()
+        self.grid = QGridLayout(self.grid_box)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setSpacing(2)
+        self.all_languages: dict[str, QPushButton] = {}
+        for i, name in enumerate(LANGUAGES):
+            b = self._button(name, "language", lambda _=False, n=name: self._pick(n))
+            b.setCheckable(True)
+            self.all_languages[name] = b
+            self.grid.addWidget(b, i // self.COLUMNS, i % self.COLUMNS)
+        layout.addWidget(self.grid_box)
+        self.status = QLabel()  # a warning about the translation, or what went wrong
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
-        buttons = QHBoxLayout()
-        buttons.addStretch()
-        self.copy_button = QPushButton("Copy")
-        self.copy_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.copy_button.clicked.connect(self.copy.emit)
-        self.replace_button = QPushButton("Replace")
-        self.replace_button.setObjectName("primary")
-        self.replace_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.replace_button.setToolTip("Put the translation in place of the selected text")
-        self.replace_button.clicked.connect(self.replace.emit)
-        buttons.addWidget(self.copy_button)
-        buttons.addWidget(self.replace_button)
-        layout.addLayout(buttons)
+        self.detail = QLabel()  # the provider's own words for an error, small
+        self.detail.setObjectName("muted")
+        layout.addWidget(self.detail)
 
-    def open_at(self, pos: QPoint, source: str, target: str) -> None:
+        self.buttons = QWidget()
+        buttons = QHBoxLayout(self.buttons)
+        buttons.setContentsMargins(0, 2, 0, 0)
+        buttons.addStretch()
+        self.copy_button = self._button("Copy", "", self.copy.emit, "Copy the translation")
+        self.replace_button = self._button("Replace", "primary", self.replace.emit,
+                                           "Put the translation in place of the selected text")
+        self.retry_button = self._button("Try again", "primary", self.retry.emit)
+        self.setup_button = self._button("Set up AI cleanup", "", self.setup.emit, "Choose the AI model Translate uses")
+        self._offer_setup = False
+        for b in (self.setup_button, self.copy_button, self.replace_button, self.retry_button):
+            buttons.addWidget(b)
+        layout.addWidget(self.buttons)
+        self.copied_timer = QTimer(self)
+        self.copied_timer.setSingleShot(True)
+        self.copied_timer.setInterval(1500)
+        self.copied_timer.timeout.connect(self._copy_done)
+
+    def _button(self, label: str, name: str, on_click, tip: str = "") -> QPushButton:
+        b = QPushButton(label)
+        if name:
+            b.setObjectName(name)
+        b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        if tip:
+            b.setToolTip(tip)
+        b.clicked.connect(on_click)
+        return b
+
+    # -- what it shows
+
+    def open_at(self, pos: QPoint, source: str, target: str, choices: list[str] | None = None,
+                source_language: str = "") -> None:
+        self.anchor = pos
+        area = self._area()
+        room_below = area.bottom() - pos.y() - 18
+        self._above = room_below < 280 and pos.y() - area.top() > room_below  # little room below: open upwards
         shown = " ".join(source.split())
-        self.original.setText(shown if len(shown) <= 160 else shown[:157].rstrip() + "…")
+        self.original.setText(self.original.fontMetrics().elidedText(shown, Qt.TextElideMode.ElideRight, self.INNER))
+        self.original.setToolTip(shown[:600])
+        self.route.setText(f"{source_language} →" if source_language else "Into")
+        self._choices = [c for c in (choices or [target]) if c in LANGUAGES]
         self.busy(target)
-        self.adjustSize()
-        screen = QGuiApplication.screenAt(pos) or QGuiApplication.primaryScreen()
-        area = screen.availableGeometry()
-        height = max(self.sizeHint().height(), 180)
-        x = min(max(area.left(), pos.x() + 12), area.right() - self.WIDTH)
-        y = pos.y() + 18 if pos.y() + 18 + height <= area.bottom() else pos.y() - height - 10
-        self.move(x, max(area.top(), y))
         self.show()
         try:
             from sst.app import _no_activate  # clicks never take the app's focus: its selection stays for Replace
@@ -145,51 +233,149 @@ class TranslatePopup(QWidget):
         except Exception:  # the off-screen test platform has no real window
             pass
 
-    def _fit(self) -> None:
-        """The translation box as tall as its text (a short one stays short), at most RESULT_MAX; then it scrolls."""
-        self.result.ensurePolished()  # the style sheet's font, which the height depends on
-        document = self.result.document()
-        document.setDefaultFont(self.result.font())
-        document.setTextWidth(self.WIDTH - 32 - 2 * self.result.frameWidth())
-        height = document.size().height() + 2 * self.result.frameWidth() + 4
-        self.result.setFixedHeight(int(min(max(height, 44), self.RESULT_MAX)))
-        self.adjustSize()
-
     def busy(self, target: str) -> None:
-        self.languages.setCurrentText(target)
+        self.target = target
+        self._set_chips(target)
+        self._dot = 0
+        self.waiting.setText(f"Translating into {target}")
+        self.dots.start()
         self.result.setPlainText("")
-        self._fit()
-        self.result.setPlaceholderText(f"Translating into {target}…")
-        self.status.setText("")
-        self.status.setObjectName("muted")
-        self._buttons(False)
+        self._show("busy")
 
     def show_result(self, translation: Translation, model: str = "") -> None:
-        self.languages.setCurrentText(translation.target)
+        self.target = translation.target
+        self._set_chips(translation.target)
         self.result.setPlainText(translation.text)
-        details = [f"{translation.seconds:.1f} s"] + ([model] if model else [])
-        self.status.setObjectName("warning" if translation.warnings else "muted")
-        self.status.setText("; ".join(translation.warnings) if translation.warnings else " · ".join(details))
-        self.status.setStyleSheet("")  # the object name changed: the style sheet applies again
-        self._buttons(True)
-        self._fit()
+        self.result.setToolTip(f"{translation.target}, by {model} in {translation.seconds:.1f} s" if model else "")
+        self._say("\n".join(translation.warnings), "warning")
+        self.detail.setText("")
+        self._show("result")
 
-    def show_error(self, message: str) -> None:
-        self.result.setPlainText("")
-        self.result.setPlaceholderText("")
-        self.status.setObjectName("warning")
-        self.status.setText(message)
-        self.status.setStyleSheet("")
-        self._buttons(False)
+    def show_error(self, message: str, detail: str = "", setup: bool = False) -> None:
+        """What went wrong, Try again, and with `setup` the way to the AI cleanup page (a key or connection problem)."""
+        self._say(message, "warning")
+        detail = " ".join(detail.split())
+        self.detail.setText(self.detail.fontMetrics().elidedText(detail, Qt.TextElideMode.ElideRight, self.INNER))
+        self.detail.setToolTip(detail)
+        self._offer_setup = setup
+        self._show("error")
 
-    def _buttons(self, on: bool) -> None:
-        self.copy_button.setEnabled(on)
-        self.replace_button.setEnabled(on)
+    def show_setup(self) -> None:
+        """No AI model is connected yet: say so here, at the text, with the way to set one up (not a passing notice)."""
+        self.dots.stop()
+        self._say("Translate needs an AI model. Choose a provider and a model in AI cleanup; Translate uses the same.",
+                  "warning")
+        self.detail.setText("")
+        self._show("setup")
+
+    def toggle_languages(self) -> None:
+        self._show("languages" if self._view != "languages" else self._back)
+
+    def escape(self) -> None:
+        """Esc: from the full language list back to the translation; else the popup closes."""
+        if self._view == "languages":
+            self._show(self._back)
+        else:
+            self.close_popup()
+
+    def copied(self) -> None:
+        self.copy_button.setText("✓ Copied")
+        self.copied_timer.start()
 
     def close_popup(self) -> None:
+        self.dots.stop()
         if self.isVisible():
             self.hide()
             self.closed.emit()
+
+    # -- inside
+
+    def _pick(self, language: str) -> None:
+        self.language.emit(language)
+
+    def _set_chips(self, current: str) -> None:
+        """The languages used most, as many as fit beside "More", the current one always among them (and lit)."""
+        while self.chip_row.count():
+            chip = self.chip_row.takeAt(0).widget()
+            chip.hide()
+            chip.deleteLater()
+        metrics = self.fontMetrics()
+        room = self.INNER - metrics.horizontalAdvance(self.route.text()) - metrics.horizontalAdvance("More ▾") - 110
+        names = list(dict.fromkeys(self._choices))
+        shown: list[str] = []
+        for name in names:
+            width = metrics.horizontalAdvance(name) + 30
+            if len(shown) == 3 or width > room:
+                break
+            shown.append(name)
+            room -= width
+        if current not in shown:
+            shown = (shown[:-1] if len(shown) == 3 or not shown else shown) + [current]
+        self.chips = []
+        for name in shown:
+            chip = self._button(name, "chip", lambda _=False, n=name: self._pick(n), f"Translate into {name}")
+            chip.setCheckable(True)
+            chip.setChecked(name == current)
+            self.chip_row.addWidget(chip)
+            self.chips.append(chip)
+        for name, b in self.all_languages.items():
+            b.setChecked(name == current)
+
+    def _say(self, message: str, name: str) -> None:
+        self.status.setObjectName(name)
+        self.status.setStyleSheet("")  # the object name changed: the style sheet applies again
+        self.status.setText(message)
+
+    def _show(self, view: str) -> None:
+        if view != "languages":
+            self._back = view
+        self._view = view
+        if view != "busy":
+            self.dots.stop()
+        self.more.setChecked(view == "languages")
+        self.waiting.setVisible(view == "busy")
+        self.result.setVisible(view == "result")
+        self.grid_box.setVisible(view == "languages")
+        self.status.setVisible(view in ("result", "error", "setup") and bool(self.status.text()))
+        self.detail.setVisible(view == "error" and bool(self.detail.text()))
+        self.buttons.setVisible(view in ("result", "error", "setup"))
+        self.copy_button.setVisible(view == "result")
+        self.replace_button.setVisible(view == "result")
+        self.retry_button.setVisible(view == "error")
+        self.setup_button.setVisible(view == "setup" or (view == "error" and self._offer_setup))
+        self.setup_button.setObjectName("primary" if view == "setup" else "")
+        self.setup_button.setStyleSheet("")  # the object name may have changed
+        self._fit()
+
+    def _area(self):
+        screen = QGuiApplication.screenAt(self.anchor) or QGuiApplication.primaryScreen()
+        return screen.availableGeometry()
+
+    def _fit(self) -> None:
+        """Every part as tall as its text (so nothing overlaps), the translation at most RESULT_MAX or 40% of the
+        screen; then the popup is placed again, so a grown popup stays on the screen."""
+        area = self._area()
+        if not self.result.isHidden():
+            self.result.ensurePolished()  # the style sheet's font, which the height depends on
+            document = self.result.document().clone()  # measured apart: the box lays out its own at its current width,
+            document.setDefaultFont(self.result.font())  # which isn't the final one yet (it measured too few lines)
+            document.setTextWidth(self.INNER - 2 * self.result.frameWidth())
+            height = document.size().height() + 2 * self.result.frameWidth() + 6
+            self.result.setFixedHeight(int(min(max(height, 30), self.RESULT_MAX, 0.4 * area.height())))
+        if not self.status.isHidden():
+            self.status.setFixedHeight(self.status.heightForWidth(self.INNER))  # wrapped lines, measured, not guessed
+        self.layout().activate()
+        self.adjustSize()
+        x = min(max(area.left(), self.anchor.x() + 12), area.right() - self.width())
+        y = self.anchor.y() - 10 - self.height() if self._above else self.anchor.y() + 18
+        self.move(x, min(max(area.top(), y), area.bottom() - self.height()))
+
+    def _tick(self) -> None:
+        self._dot = self._dot % 3 + 1
+        self.waiting.setText(f"Translating into {self.target}" + "." * self._dot)
+
+    def _copy_done(self) -> None:
+        self.copy_button.setText("Copy")
 
 
 class TranslateController(QObject):
@@ -212,7 +398,11 @@ class TranslateController(QObject):
         self.popup.language.connect(self._pick)
         self.popup.copy.connect(self._copy)
         self.popup.replace.connect(self._replace)
+        self.popup.retry.connect(self._retry)
+        self.popup.setup.connect(self._setup)
         self.popup.closed.connect(self._closed)
+        self._held = True  # a mouse button was down at the last look: only a new click outside closes the popup
+        self._asked = ("", "")  # (target, second) of the last translation, for Retry
         self._got.connect(self._show)
         self._done.connect(self._finish)
         self._placed.connect(self._after_replace)
@@ -260,20 +450,21 @@ class TranslateController(QObject):
                 if event == "release":
                     self.trigger()
                 elif event == f"key:{VK_ESCAPE}":
-                    self.popup.close_popup()
+                    self.popup.escape()
         if self.popup.isVisible() and self.source:
             front = self.access.foreground_window()
             if front not in (self.source[1], 0) and self.access.window_process(front) != os.getpid():
                 self.popup.close_popup()  # the user went to another app: the popup was for the text left behind
-                # (Rflow's own windows, like the language list, don't count)
+                # (Rflow's own windows don't count)
+            held = bool(getattr(self.access, "mouse_down", lambda: False)())
+            if held and not self._held and not self.popup.frameGeometry().contains(_pointer()):
+                self.popup.close_popup()  # a click outside it, e.g. back in the text: like any popup, it goes
+            self._held = held
 
     def trigger(self) -> None:
         if self.reading:
             return
-        if not self.app.translate_ready():
-            self.app.say("warning", "Translate needs an AI model: choose one in AI cleanup.")
-            return
-        self.reading = True
+        self.reading = True  # without an AI model the popup still opens, at the text, and says how to set one up
         hwnd, before = self.access.foreground_window(), self.access.clipboard_sequence()
         threading.Thread(target=self._read, args=(hwnd, before), name="translate-read", daemon=True).start()
 
@@ -308,16 +499,38 @@ class TranslateController(QObject):
             self.app.say("warning", f"That's {len(text):,} characters: Translate takes up to {MAX_CHARS:,} at a time.")
             return
         self.source, self.result = (text, hwnd), None
-        s = self.app.settings
-        self.popup.open_at(QCursor.pos(), text, s.translate_to)
+        s, second = self.app.settings, self._second()
+        language = detect(text)
+        self._held = True
+        self.popup.open_at(_pointer(), text, choose_target(text, s.translate_to, second),
+                           self._choices(language, second), language)
         if self.listener is not None:
             self.listener.capture(frozenset({VK_ESCAPE}))
-        self._translate(s.translate_to, s.translate_second)
+        if not self.app.translate_ready():
+            self.popup.show_setup()
+            return
+        self._translate(s.translate_to, second)
+
+    def _second(self) -> str:
+        """Where text already in the chosen language goes: the user's second language, else Windows' own language
+        (or English), so English text is never "translated" into English."""
+        s = self.app.settings
+        return s.translate_second or fallback_second(s.translate_to, translate.system_language())
+
+    def _choices(self, source_language: str, second: str) -> list[str]:
+        """The popup's one-click languages: the chosen ones, Windows' language, English, then the rest; never the
+        language the text is already in."""
+        s = self.app.settings
+        names = [s.translate_to, second, translate.system_language(), "English", *LANGUAGES]
+        return [n for n in dict.fromkeys(names) if n in LANGUAGES and not (source_language
+                                                                            and n.startswith(source_language))]
 
     def _translate(self, target: str, second: str) -> None:
         self.request += 1
         request, (text, _) = self.request, self.source
-        self.popup.busy(target)
+        self._asked = (target, second)
+        self.result = None
+        self.popup.busy(choose_target(text, target, second))
 
         def work() -> None:
             try:
@@ -332,10 +545,21 @@ class TranslateController(QObject):
         if request != self.request or not self.popup.isVisible():
             return  # a newer translation was asked for, or the popup was closed
         if isinstance(result, str):
-            self.popup.show_error(f"Couldn't translate: {result}")
+            message = explain(result)
+            self.popup.show_error(message, result, setup=message in (KEY_REFUSED, UNREACHABLE))
             return
         self.result = result
         self.popup.show_result(result, self.app.transform_model())
+
+    def _retry(self) -> None:
+        if self.source is not None:
+            self._translate(*self._asked)
+
+    def _setup(self) -> None:
+        self.popup.close_popup()
+        open_window = getattr(self.app, "open_window", None)
+        if open_window is not None:
+            open_window("cleanup")
 
     def _pick(self, language: str) -> None:
         """A language picked in the popup: translate into it (exactly that one), and remember it."""
@@ -350,10 +574,9 @@ class TranslateController(QObject):
             return
         try:
             self.access.set_clipboard(self.result.text)
-            self.app.say("transformed", "Translation copied")
+            self.popup.copied()  # it stays open: the button says so, and a click outside closes it
         except OSError as e:
             self.app.say("warning", f"Couldn't copy the translation ({e})")
-        self.popup.close_popup()
 
     def _replace(self) -> None:
         if self.result is None or self.source is None:
