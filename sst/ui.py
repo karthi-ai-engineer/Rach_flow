@@ -5,9 +5,11 @@ Buttons, toggles, lamps, keycaps and the voice orb draw themselves, so they look
 """
 import math
 import random
+from functools import lru_cache
+from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
     QCheckBox,
@@ -748,34 +750,41 @@ class WaveProgress(QWidget):
 
 
 class Mark(QWidget):
-    """Rflow's mark: a keycap with a waveform engraved on it, mint when ready (amber while not ready yet)."""
+    """Rflow's logo: the blue-to-violet ribbon "R" (sst/static/brand, made by scripts/make_brand.py from the owner's
+    artwork). It reads on Obsidian and on Porcelain alike, so it is drawn as it is; whether Rflow is ready is said by
+    the lamp beside it, not by the logo."""
 
     def __init__(self, size: int = 32, parent=None):
         super().__init__(parent)
         self.state = "ok"
         self.setFixedSize(size, size)
-        surface(self, "mark", 10 * size / 32)
+        self.setAccessibleName("Rflow")
 
     def set_state(self, state: str) -> None:
-        if state != self.state:
-            self.state = state
-            self.update()
+        self.state = state  # kept for the callers; the sidebar's lamp shows the state
 
     def paintEvent(self, event):
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(self.rect())
-        radius = 10 * self.width() / 32
-        p.fillPath(theme.rounded(r, radius), _t(self, "key_face"))
-        theme.lip(p, r, radius, -2, _t(self, "key_lip"))
-        theme.lip(p, r, radius, 1, _t(self, "edge"))
-        unit = self.width() / 32
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(_t(self, {"ok": "ok", "warn": "warn"}.get(self.state, "text3")))
-        for i, h in enumerate((6, 12, 16, 10, 6)):
-            x = r.center().x() + (i - 2) * 4.5 * unit - 1.25 * unit
-            p.drawRoundedRect(QRectF(x, r.center().y() - 1 - h * unit / 2, 2.5 * unit, h * unit), 1.2 * unit, 1.2 * unit)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.drawPixmap(self.rect(), brand_mark(round(self.width() * self.devicePixelRatioF())))
         p.end()
+
+
+def brand_mark(pixels: int) -> QPixmap:
+    """The logo file closest above `pixels` (64, 128, 256 or 512 px), so it's scaled down a little, never up."""
+    for size in BRAND_SIZES:
+        if size >= pixels or size == BRAND_SIZES[-1]:
+            return _brand_pixmap(size)
+    return _brand_pixmap(BRAND_SIZES[-1])
+
+
+BRAND_DIR = Path(__file__).parent / "static" / "brand"
+BRAND_SIZES = (64, 128, 256, 512)
+
+
+@lru_cache(maxsize=8)
+def _brand_pixmap(size: int) -> QPixmap:
+    return QPixmap(str(BRAND_DIR / f"rflow-mark-{size}.png"))
 
 
 # ---------------------------------------------------------------- a toast at the bottom of the window

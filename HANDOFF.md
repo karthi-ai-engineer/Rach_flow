@@ -10,7 +10,10 @@ _Last updated: 2026-10-04_
 
 ## Start here (a new session, or the owner's other laptop)
 
-**Where things stand (2026-10-04):**
+**Where things stand (2026-10-05):**
+- **Rflow 2.0.1** (2026-10-05, the owner's "let this be the logo"): the owner's new logo, a blue-to-violet ribbon "R",
+  everywhere: the app icon (window, taskbar, tray, Rflow.exe, installer), the sidebar and the first run, the installer's
+  pictures, the website (header, footer, favicon, touch icon, social card). See **The logo**.
 - **Rflow 2.0.0** (2026-10-04, the owner's "implement it and release v2.0"): the whole UI in the "Obsidian Signal"
   design approved in Figma (phase 25, PR #64; see **Rflow UI 2.0**): five sections (Home, Words, Tools, AI & models,
   Settings), a three-step first run, the pill and popups redone, Geist fonts shipped, and the website in the same look.- **Rflow 1.10.1** (2026-10-04, the owner's "correct it in 1.10.1"): Translate's popup and the Text Transform menu take
@@ -115,6 +118,7 @@ _Last updated: 2026-10-04_
 | 16 | **Cloud speech models**: OpenAI, Groq, Google Gemini with the user's key, a warning, a Test, Parakeet as the fallback | done, on `main` (PR #39), released **v1.5.0** |
 | 17 | **Your own server for speech**: vLLM, the company gateway, any OpenAI-compatible transcription server; Load models, Test | done, on `main` (PR #41), released **v1.5.0** |
 | 18 | **Parakeet downloaded on demand**: a speech step in the welcome, the installer 90 MB instead of 571 MB; version 1.5.0 | done, on `main` (PR #43), released **v1.5.0** |
+| logo | **The owner's logo** everywhere (`docs/brand/rflow-logo.webp` → `scripts/make_brand.py`): app icon in 10 sizes, the window's mark, installer pictures, website | done, on `main`, released **v2.0.1** |
 | 25 | **Rflow UI 2.0, "Obsidian Signal"** (the owner's request): the Figma design implemented in Qt: soft depth painted by `sst/theme.py`, widgets in `sst/ui.py`, five sections, a three-step first run, Home with orb, stats strip and search, the pill and popups in the popup look (Translate: C copies, Enter replaces), a rail at the smallest size, Geist shipped; the website redone | done, on `main` (PR #64), released **v2.0.0** |
 | fix | **Popups that take clicks**: Translate's popup and the Text Transform menu had the pill's click-through style (`WS_EX_TRANSPARENT`): `_no_activate(hwnd, click_through=False)` now; checked by hand with `scripts/check_popup_clicks.py` (15 of 15) | done, on `main`, released **v1.10.1** |
 | 24 | **The Translate popup, redone** (the owner: "the UX literally sucks"): "Japanese → English" with one-click languages and More, as tall as the text (nothing overlaps) and always on the screen, errors in plain words with Try again, no model leads to AI cleanup, Copy says "Copied", a click outside closes it, never English into English | done, on `main`, released **v1.10.0** |
@@ -125,7 +129,7 @@ _Last updated: 2026-10-04_
 | 20 | **Text Transform** (the owner's idea): say "make it concise" (or double-tap Ctrl for a menu) and the selected text or the last dictation becomes Concise, Professional, Bullet points or Action items, checked, with undo; the text is found again if focus moved | done, on `main` (PR #50, with #48), released **v1.7.0** |
 | 19 | **The voice pipeline** (the owner's plan): always-on mic, chunks while speaking, parallel ASR, merge, dictionary, formatting, guarded LLM | done, on `main` (PR #46), released **v1.6.0** |
 
-Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0, v1.10.1 and v2.0.0 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
+Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0, v1.10.1, v2.0.0 and v2.0.1 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
 added on 2026-10-01, and the old https://rachdarlingflow-site.vercel.app stays assigned: installed apps up to 1.6.0
 link there, so never remove it;
 `site/`). The in-app update path is verified end to end: the owner's installed 1.0.0 showed the banner and updated
@@ -1316,7 +1320,7 @@ These were scratch scripts, not in git. The findings:
 - **Widgets** (`sst/ui.py`): `Button` (key, primary, ghost, quiet, danger, nav, chip, segment; a keycap `hint` drawn
   inside, `suffix` for a tab's count, `badge` on nav), `IconButton`, `Toggle` (a QCheckBox drawn as a switch),
   `Lamp` (always with a word), `KeyCap`/`keys()`, `Orb` (ready, live, ai, loading with %, done, off), `Segmented`,
-  `Meter`, `WaveProgress`, `Mark` (the logo: a keycap with an engraved waveform, mint when ready), `Toast`.
+  `Meter`, `WaveProgress`, `Mark` (the logo; it was a keycap with a waveform until 2.0.1), `Toast`.
 - **The sections** (`window.py`): `NAV` has five; `SECTION` maps every page to its section and `OPENS` a section to
   its first page (Words → `dictionary`). The old page keys all stay (`dictionary`, `snippets`, `speech`, `cleanup`,
   `transform`, `translate`, `reading`, `profiles`), one level down with a "‹ back" link; new pages are `tools` and
@@ -1348,6 +1352,20 @@ These were scratch scripts, not in git. The findings:
   Words, the first run, the popups and the pill from the real widgets (never shown), as if Parakeet were downloaded.
   `site/index.html` is redone in the same look (Geist from Google Fonts, Obsidian by default, Porcelain in light
   mode; no horizontal overflow at 390 px).
+
+## The logo (2.0.1, the owner's logo of 2026-10-05)
+
+- The artwork is `docs/brand/rflow-logo.webp` (1254 px, the ribbon "R" above the word "Rflow", on white).
+  `uv run python scripts/make_brand.py` makes everything from it: `sst/static/sst.ico` (16-256 px, PNG inside the ICO;
+  the window, the taskbar, the tray, `Rflow.exe` via `packaging/sst.spec`, the installer via `installer.iss`),
+  `sst/static/brand/rflow-mark-{64,128,256,512}.png` (the window's `ui.Mark`: the sidebar and the first run), and the
+  website's `favicon.ico`, `img/logo.png`, `img/touch-icon.png` and `img/og.png` (the social card, 1200 x 630). Then
+  `scripts/make_installer_images.py` (the wizard pictures, Obsidian) and `scripts/make_site_screenshots.py`.
+- The mark is cut out of the white: a pixel at least as coloured as the ribbon's palest part is solid, a paler one is
+  an edge, made transparent in proportion and given back its own colour, so it has no white fringe on Obsidian.
+- The ribbon is only ~390 px in the artwork: the 512 px files are slightly upscaled. A vector (SVG) of the logo would
+  make the website's and any larger use sharper; ask the owner for one if it exists.
+- The words next to the mark stay live text in Geist (the app and the website), close to the artwork's wordmark.
 
 ## Known limitations
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.

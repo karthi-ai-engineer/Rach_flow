@@ -252,6 +252,21 @@ def test_the_geist_fonts_ship_with_rflow():
     assert QFontInfo(theme.font(14, 600)).family() == "Geist" and QFontInfo(theme.font(12, mono=True)).family() == "Geist Mono"
 
 
+def test_the_logo_ships_with_rflow_in_every_size():
+    import struct
+
+    from sst import ui
+    data = w.ICON_FILE.read_bytes()  # the app icon: the window, the taskbar, the tray, Rflow.exe, the installer
+    count = struct.unpack("<HHH", data[:6])[2]
+    sizes = [struct.unpack("<BBBBHHII", data[6 + 16 * i:22 + 16 * i])[0] or 256 for i in range(count)]
+    assert {16, 20, 24, 32, 48, 256} <= set(sizes)
+    for size in ui.BRAND_SIZES:  # the mark the window draws, from scripts/make_brand.py
+        assert not ui._brand_pixmap(size).isNull() and ui._brand_pixmap(size).width() == size
+    assert ui.brand_mark(48).width() == 64 and ui.brand_mark(2000).width() == 512  # scaled down a little, never up
+    window, _ = _window()
+    assert window.mark.accessibleName() == "Rflow" and not window.mark.grab().isNull()
+
+
 def test_the_theme_follows_windows_and_repaints_both_ways():
     from sst import theme
     window, _ = _window()

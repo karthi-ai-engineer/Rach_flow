@@ -181,7 +181,8 @@ Rach_flow/
 ├─ tests/                     pytest suite
 ├─ scripts/download_model.py  fetches models into models/
 ├─ scripts/build_installer.py PyInstaller -> model in -> smoke tests -> model out -> Inno Setup
-├─ scripts/make_*.py          draw the window's small images, the installer's pictures, the website's screenshots
+├─ scripts/make_*.py          the logo files from docs/brand (make_brand), the window's small images, the
+│                             installer's pictures, the website's screenshots
 ├─ packaging/                 installer recipe: sst_gui.py / sst_app.py (entry points), sst.spec, installer.iss,
 │                             notices, images/ (the setup wizard's pictures)
 ├─ models/                    downloaded models (git-ignored)
@@ -201,7 +202,7 @@ Rach_flow/
    ├─ hotkey.py               global hotkeys (low-level keyboard hook) and sending keys
    ├─ paste.py                paste text into the focused app, then restore the clipboard
    ├─ web.py                  local server for the web page (127.0.0.1 only)
-   ├─ static/                 the Record / Stop page (index.html), the app icon (sst.ico), the window's images (ui/), Geist (fonts/)
+   ├─ static/                 the Record / Stop page (index.html), the app icon (sst.ico), the logo (brand/), the window's images (ui/), Geist (fonts/)
    ├─ audio.py                microphone recording, WAV read/write, measuring a recording, splitting long audio
    └─ engines/
       ├─ __init__.py          the speech model catalog (SPEECH_MODELS: where it runs, languages, size) + load_engine()
