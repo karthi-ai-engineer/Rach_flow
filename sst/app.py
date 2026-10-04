@@ -1262,6 +1262,9 @@ def self_test() -> int:
     window.show_update("Rflow 9.9.9 is available (you have 1.0.0).", version="9.9.9")
     if not theme.load_fonts():  # the shipped Geist fonts (sst/static/fonts) made it into the build
         return 1
+    from sst.ui import brand_mark
+    if brand_mark(64).isNull() or QIcon(str(ICON_FILE)).isNull():  # the logo files (sst/static/brand, sst.ico)
+        return 1
     for name in ("dark", "light"):
         window.apply_theme(name)
         for page in window.pages:  # every page, so the icons (Qt SVG) and the soft shadows are drawn in the build too
