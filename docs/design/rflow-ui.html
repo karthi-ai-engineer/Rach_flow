@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rflow UI 2.0 · Obsidian Signal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ================================================================ tokens · Obsidian (dark, the hero) */
+:root{
+  --base:#191C22; --well:#101216; --cx-a:#1E2128; --cx-b:#15171C; --popup:#16181E;
+  --line:rgba(255,255,255,.06); --chip-bg:rgba(255,255,255,.04); --chip-line:rgba(255,255,255,.07);
+  --rim:#6B7386;                     /* control edge, 3.4 : 1 or more */
+  --text:#ECEEF3; --text-2:#A6ACBA; --text-3:#8A91A1;
+  --iris:#8C9DFF; --violet:#B48CFF; --live:#FF6B6B; --ok:#5BE3A6; --warn:#FFC56B; --err:#FF7D93;
+  --primary:#8C9DFF; --on-primary:#0B0D13; --knob-on:#0B0D13; --knob-off:#8A91A1;
+  --primary-glow:0 4px 14px rgba(140,157,255,.28);
+  --sh-1:-6px -6px 16px rgba(255,255,255,.05), 8px 8px 20px rgba(0,0,0,.60);
+  --sh-2:-4px -4px 10px rgba(255,255,255,.045), 5px 5px 12px rgba(0,0,0,.55);
+  --sh-3:-2px -2px 6px rgba(255,255,255,.04), 3px 3px 7px rgba(0,0,0,.50);
+  --in-1:inset 5px 5px 12px rgba(0,0,0,.60), inset -4px -4px 10px rgba(255,255,255,.04);
+  --in-2:inset 2px 2px 6px rgba(0,0,0,.58), inset -2px -2px 5px rgba(255,255,255,.045);
+  --edge:inset 0 1px 0 rgba(255,255,255,.06);
+  --key-face:#22252C; --key-lip:rgba(0,0,0,.45);
+}
+/* ================================================================ tokens · Porcelain (light twin) */
+.light{
+  --base:#E8EBF1; --well:#DFE3EA; --cx-a:#F3F5F9; --cx-b:#E0E4EB;
+  --line:rgba(22,25,32,.08); --chip-bg:rgba(22,25,32,.035); --chip-line:rgba(22,25,32,.08);
+  --rim:#787F91;
+  --text:#161920; --text-2:#3A4050; --text-3:#5E6575;
+  --iris:#3F4ACB; --violet:#6A3ED4; --live:#B42F2F; --ok:#0B6B42; --warn:#8A4E00; --err:#B02640;
+  --primary:#4651D2; --on-primary:#FFFFFF; --knob-on:#FFFFFF; --knob-off:#787F91;
+  --primary-glow:0 4px 14px rgba(70,81,210,.26);
+  --sh-1:-8px -8px 20px rgba(255,255,255,.95), 10px 10px 24px rgba(136,146,170,.42);
+  --sh-2:-5px -5px 12px rgba(255,255,255,.90), 6px 6px 14px rgba(136,146,170,.40);
+  --sh-3:-3px -3px 7px rgba(255,255,255,.85), 3px 3px 8px rgba(136,146,170,.38);
+  --in-1:inset 5px 5px 12px rgba(136,146,170,.45), inset -4px -4px 10px rgba(255,255,255,.90);
+  --in-2:inset 2px 2px 6px rgba(136,146,170,.45), inset -2px -2px 5px rgba(255,255,255,.90);
+  --edge:inset 0 1px 0 rgba(255,255,255,.70);
+  --key-face:#F6F7FA; --key-lip:rgba(136,146,170,.45);
+}
+
+/* ================================================================ base · spacing 4/8/12/16/24/32 · radii 6/10/14/20/999 */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#07080A;padding:64px;display:flex;flex-direction:column;align-items:flex-start;gap:80px;
+     font-family:"Geist","Noto Sans JP",system-ui,sans-serif;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+.frame{position:relative;overflow:hidden;background:var(--base);color:var(--text);font-size:14px;line-height:20px}
+.app{width:1000px;height:700px;display:flex}
+.compact{width:780px;height:540px;display:flex}
+.board{width:1440px;padding:56px 64px 64px;display:flex;flex-direction:column;gap:48px}
+.mono{font-family:"Geist Mono",ui-monospace,monospace}
+.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.i.s{width:16px;height:16px}
+.row{display:flex;align-items:center}
+.col{display:flex;flex-direction:column}
+.grow{flex:1 1 0;min-width:0}
+.spacer{flex:1}
+.t2{color:var(--text-2)} .t3{color:var(--text-3)}
+
+/* ================================================================ type · integer scale */
+.display{font-size:30px;line-height:36px;font-weight:600;letter-spacing:-.025em}
+.title{font-size:26px;line-height:32px;font-weight:600;letter-spacing:-.02em}
+.hero-line{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.015em}
+.heading{font-size:15px;line-height:20px;font-weight:600}
+.row-title{font-size:14px;line-height:20px;font-weight:500}
+.caption{font-size:12px;line-height:16px;font-weight:500}
+.caps{font-size:11px;line-height:14px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)}
+.subtitle{font-size:13px;line-height:18px;color:var(--text-2)}
+
+/* ================================================================ surfaces */
+.card{background:linear-gradient(145deg,var(--cx-a),var(--cx-b));border-radius:20px;box-shadow:var(--sh-1),var(--edge)}
+.tile{background:linear-gradient(145deg,var(--cx-a),var(--cx-b));border-radius:14px;box-shadow:var(--sh-2),var(--edge)}
+.well{background:var(--well);border-radius:14px;box-shadow:var(--in-2)}
+.divider{height:1px;background:var(--line);flex:none}
+
+/* ================================================================ controls */
+.btn{height:36px;padding:0 16px;border-radius:14px;background:linear-gradient(145deg,var(--cx-a),var(--cx-b));box-shadow:var(--sh-3),var(--edge);
+     color:var(--text);font-size:14px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;flex:none}
+.btn.primary{background:var(--primary);color:var(--on-primary);font-weight:600;box-shadow:var(--primary-glow),inset 0 1px 0 rgba(255,255,255,.3)}
+.btn.ghost{background:transparent;box-shadow:none;color:var(--iris);padding:0 8px}
+.btn.quiet{background:transparent;box-shadow:none;color:var(--text-2);padding:0 8px}
+.btn.danger{color:var(--err)}
+.btn.sm{height:32px;padding:0 12px;border-radius:10px;font-size:13px}
+.btn.lg{height:44px;padding:0 20px;font-size:14px}
+.btn.pressed{background:var(--base);box-shadow:var(--in-2);font-weight:600}
+.btn.focus{box-shadow:var(--sh-3);border:2px solid var(--iris);padding:0 14px}
+.btn.disabled{background:var(--base);box-shadow:var(--in-2);color:var(--text-3)}
+.btn .key{margin-left:2px}
+.btn.primary .key{background:rgba(11,13,19,.14);color:var(--on-primary);box-shadow:inset 0 -1px 0 rgba(0,0,0,.2)}
+.light .btn.primary .key{background:rgba(255,255,255,.18)}
+.ib{width:32px;height:32px;border-radius:10px;background:linear-gradient(145deg,var(--cx-a),var(--cx-b));box-shadow:var(--sh-3),var(--edge);color:var(--text-2);
+    display:inline-flex;align-items:center;justify-content:center;flex:none}
+.key{min-width:26px;height:24px;padding:0 7px;border-radius:6px;background:var(--key-face);color:var(--text);font:500 12px/1 "Geist Mono",monospace;
+     display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;flex:none;
+     box-shadow:var(--sh-3),inset 0 -2px 0 var(--key-lip),inset 0 1px 0 rgba(255,255,255,.06)}
+.key.sm{min-width:22px;height:20px;padding:0 6px;font-size:11px}
+.key.lg{min-width:56px;height:40px;padding:0 12px;border-radius:10px;font-size:14px}
+.plus{color:var(--text-3);font:500 12px "Geist Mono";margin:0 6px;vertical-align:middle}
+.field{height:40px;border-radius:14px;background:var(--well);border:1px solid var(--rim);box-shadow:var(--in-2);display:flex;align-items:center;
+       gap:10px;padding:0 12px;font-size:14px;color:var(--text);flex:none}
+.field.grow{flex:1 1 0;min-width:0}
+.field .ph{color:var(--text-3)}
+.field.focus{border:2px solid var(--iris);padding:0 11px}
+.select{justify-content:space-between}
+.chip{height:32px;padding:0 12px;border-radius:999px;background:var(--chip-bg);border:1px solid var(--chip-line);color:var(--text);
+      font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;flex:none}
+.chip.hover{background:linear-gradient(145deg,var(--cx-a),var(--cx-b));border-color:transparent;box-shadow:var(--sh-3),var(--edge)}
+.chip.sel{background:var(--base);border-color:transparent;box-shadow:var(--in-2);font-weight:600}
+.chip .x{width:20px;height:20px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;color:var(--text-2);margin-right:-6px}
+.chip .alias{font-size:12px;color:var(--text-3);font-weight:400}
+.lamp{width:12px;height:12px;border-radius:999px;background:var(--well);box-shadow:var(--in-2);display:inline-flex;align-items:center;justify-content:center;flex:none}
+.lamp i{display:block;width:6px;height:6px;border-radius:999px}
+.lamp.ok i{background:var(--ok);box-shadow:0 0 4px rgba(91,227,166,.6)}
+.lamp.warn i{background:var(--warn);box-shadow:0 0 4px rgba(255,197,107,.6)}
+.lamp.live i{background:var(--live);box-shadow:0 0 4px rgba(255,107,107,.6)}
+.lamp.err i{background:var(--err)}
+.lamp.ai i{background:var(--violet)}
+.light .lamp i{box-shadow:none}
+.tg{width:44px;height:24px;border-radius:999px;background:var(--well);border:1px solid var(--rim);box-shadow:var(--in-2);position:relative;flex:none}
+.tg .k{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:999px;background:var(--knob-off)}
+.tg.on{background:var(--primary);border-color:var(--primary);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+.tg.on .k{left:23px;background:var(--knob-on)}
+.seg{display:inline-flex;padding:4px;gap:4px;border-radius:14px;background:var(--well);box-shadow:var(--in-2);flex:none;align-self:flex-start}
+.seg span{height:28px;padding:0 12px;border-radius:10px;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;color:var(--text-2)}
+.seg span.on{background:linear-gradient(145deg,var(--cx-a),var(--cx-b));box-shadow:var(--sh-3),var(--edge);color:var(--text);font-weight:600}
+.meter{display:flex;gap:3px;align-items:flex-end;height:18px;flex:none}
+.meter i{display:block;width:4px;border-radius:2px;background:var(--line)}
+.meter i.on{background:var(--ok)}
+.wave-bar{display:flex;align-items:center;gap:2px;height:28px}
+.wave-bar i{display:block;width:3px;border-radius:2px;background:var(--line)}
+.wave-bar i.on{background:var(--warn)}
+
+/* ================================================================ shell */
+.side{width:216px;padding:24px 16px 24px 20px;display:flex;flex-direction:column;gap:4px;flex:none}
+.brand{display:flex;align-items:center;gap:12px;height:32px;padding:0 4px;margin-bottom:24px}
+.mark{width:32px;height:32px;border-radius:10px;background:var(--key-face);display:flex;align-items:center;justify-content:center;gap:2px;flex:none;
+      box-shadow:var(--sh-3),inset 0 -2px 0 var(--key-lip),inset 0 1px 0 rgba(255,255,255,.06)}
+.mark i{display:block;width:2.5px;border-radius:2px;background:var(--ok)}
+.wordmark{font-size:18px;font-weight:600;letter-spacing:-.03em}
+.nav{display:flex;align-items:center;gap:12px;height:40px;padding:0 12px;border-radius:14px;color:var(--text-2);font-size:14px;font-weight:500}
+.nav.on{background:var(--base);box-shadow:var(--in-2);color:var(--text);font-weight:600}
+.nav.on .i{color:var(--iris)}
+.nav .badge{margin-left:auto;min-width:18px;height:18px;border-radius:999px;padding:0 5px;background:var(--violet);color:#0B0D13;font:600 11px/18px "Geist";text-align:center}
+.status{display:flex;align-items:center;gap:10px;padding:12px;border-radius:14px;background:var(--well);box-shadow:var(--in-2)}
+.status b{display:block;font-size:12px;line-height:16px;font-weight:600;color:var(--text)}
+.status span{font-size:12px;line-height:16px;color:var(--text-2)}
+.main{flex:1;min-width:0;padding:24px 24px 24px 8px;display:flex;flex-direction:column;gap:24px}
+.ph-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex:none}
+.ph-head .right{height:32px;display:flex;align-items:center}
+
+/* ================================================================ voice orb */
+.orb{border-radius:999px;background:linear-gradient(145deg,var(--cx-a),var(--cx-b));box-shadow:var(--sh-1),var(--edge);display:flex;align-items:center;justify-content:center;flex:none;position:relative}
+.orb .ring{border-radius:999px;display:flex;align-items:center;justify-content:center}
+.orb .core{border-radius:999px;background:var(--well);box-shadow:var(--in-1);display:flex;align-items:center;justify-content:center}
+.ring.ok{border:2px solid var(--ok);box-shadow:0 0 16px rgba(91,227,166,.30)}
+.ring.live{border:2px solid var(--live);box-shadow:0 0 18px rgba(255,107,107,.34)}
+.ring.ai{border:2px solid var(--violet);box-shadow:0 0 16px rgba(180,140,255,.30)}
+.ring.off{border:2px solid var(--line)}
+.light .ring.ok{box-shadow:0 0 14px rgba(11,107,66,.18)}
+.wave{display:flex;align-items:center;gap:4px}
+.wave i{display:block;width:4px;border-radius:2px}
+.wave.ok i{background:var(--ok);opacity:.6}
+.wave.live i{background:var(--live)}
+.wave.ai i{background:var(--violet)}
+.wave.off i{background:var(--line)}
+
+/* ================================================================ home */
+.hero{display:flex;align-items:center;gap:24px;padding:24px;flex:none}
+.readout{height:48px;display:flex;align-items:center;padding:0 20px;flex:none}
+.readout .seg-v{display:flex;align-items:baseline;gap:6px;flex:1}
+.readout .seg-v b{font-size:16px;line-height:20px;font-weight:600}
+.readout .seg-v span{font-size:12px;color:var(--text-3)}
+.readout .sep{width:1px;height:24px;background:var(--line);margin:0 20px}
+.list{padding:16px 16px 8px;display:flex;flex-direction:column;gap:2px;flex:1;min-height:0}
+.lh{display:flex;align-items:center;gap:12px;padding:0 8px 8px}
+.item{display:flex;align-items:center;gap:16px;height:42px;padding:0 12px;border-radius:14px;flex:none}
+.item .tm{font:500 12px "Geist Mono";color:var(--text-3);width:40px;flex:none}
+.item .tx{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item.hover{background:var(--base);box-shadow:var(--in-2)}
+.acts{display:flex;gap:8px}
+
+/* ================================================================ boards */
+.bh p{max-width:640px;color:var(--text-2);font-size:15px;line-height:24px;margin-top:12px}
+.sec{display:flex;align-items:baseline;gap:16px;margin-bottom:24px}
+.swatches{display:grid;grid-template-columns:repeat(5,1fr);gap:24px}
+.sw{padding:16px;display:flex;flex-direction:column;gap:12px}
+.sw .chipc{height:56px;border-radius:10px;display:flex;align-items:flex-end;justify-content:space-between;padding:8px 10px}
+.sw .chipc span{font:500 11px "Geist Mono"}
+.sw .use{font-size:12px;line-height:17px;color:var(--text-2)}
+.sw .ct{font:500 11px "Geist Mono";color:var(--text-3)}
+.type-row{display:flex;align-items:baseline;gap:24px;padding:14px 0;border-top:1px solid var(--line)}
+.type-row .spec{width:200px;flex:none;font:500 12px/16px "Geist Mono";color:var(--text-3)}
+.specimens{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.spec-card{padding:24px;display:flex;flex-direction:column;gap:16px}
+
+/* ================================================================ overlays */
+.desk{background:radial-gradient(1100px 650px at 20% 0%,#232836 0%,#121419 55%,#0B0C10 100%)}
+.win{position:absolute;border-radius:10px;background:#F7F8FA;border:1px solid rgba(0,0,0,.25);box-shadow:0 30px 80px rgba(0,0,0,.45);overflow:hidden}
+.win .bar{height:34px;display:flex;align-items:center;background:#EEF0F3;border-bottom:1px solid #E1E4E8;font-size:12px;color:#4B5160}
+.win .cap{width:46px;height:34px;display:flex;align-items:center;justify-content:center;color:#3B4150}
+.win .ln{height:9px;border-radius:5px;background:#E3E6EB;margin:12px 24px 0}
+.win .sel{background:rgba(70,81,210,.20);border-radius:2px;padding:1px 2px}
+.pop{position:absolute;border-radius:20px;background:var(--popup);color:var(--text);
+     border:1px solid rgba(255,255,255,.07);box-shadow:0 24px 60px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06)}
+.pill{height:40px;min-width:176px;border-radius:999px;background:var(--popup);color:var(--text);display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:0 18px;
+      font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,.08);box-shadow:0 16px 40px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06)}
+.menu-row{display:flex;align-items:center;gap:12px;height:36px;padding:0 10px;border-radius:10px;font-size:14px}
+.menu-row.on{background:var(--well);box-shadow:var(--in-2);font-weight:600}
+
+/* ================================================================ first run */
+.ob{width:1000px;height:700px;display:flex;flex-direction:column}
+.ob-head{height:88px;padding:24px 40px;display:flex;align-items:center;position:relative;flex:none}
+.ob-head .brand{margin:0}
+.ob-head .steps{position:absolute;left:50%;top:28px;transform:translateX(-50%)}
+.ob-head .slot{margin-left:auto;width:120px;display:flex;justify-content:flex-end}
+.steps{display:flex;align-items:center;gap:12px}
+.step{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-3)}
+.step .n{width:24px;height:24px;border-radius:999px;display:flex;align-items:center;justify-content:center;font:600 12px "Geist Mono";background:var(--well);box-shadow:var(--in-2)}
+.step.on{color:var(--text);font-weight:600} .step.on .n{background:var(--primary);color:var(--on-primary);box-shadow:none}
+.step.done .n{color:var(--ok)}
+.stepline{width:32px;height:2px;border-radius:1px;background:var(--line)}
+.ob-body{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 40px}
+.ob-foot{height:72px;padding:0 40px;display:flex;align-items:center;gap:12px;border-top:1px solid var(--line);flex:none}
+.option{padding:24px;display:flex;flex-direction:column;gap:16px;border-radius:20px}
+.option.sel{background:var(--base);border:2px solid var(--iris);padding:22px;box-shadow:var(--in-1)}
+.ticks{display:flex;flex-direction:column;gap:8px;font-size:14px;color:var(--text-2)}
+.ticks div{display:flex;gap:10px;align-items:center}
+.provider{height:64px;border-radius:14px;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 16px}
+.provider b{font-size:15px;line-height:20px;font-weight:600}
+.provider span{font-size:12px;line-height:16px;color:var(--text-3)}
+.provider.sel{background:var(--base);border:2px solid var(--iris);padding:0 14px;box-shadow:var(--in-2)}
+</style>
+</head>
+<body>
+
+<!-- ======================================================================================= 01 FOUNDATIONS -->
+<section class="frame board" id="foundations" data-name="01 Foundations">
+  <div class="row" style="justify-content:space-between;align-items:flex-end">
+    <div class="bh">
+      <div class="caps" style="color:var(--iris)">Rflow UI 2.0 · Design system</div>
+      <div class="display" style="font-size:40px;line-height:46px;margin-top:12px">Obsidian Signal</div>
+      <p>Soft, machined depth on graphite, lit by a few instrument lamps. One surface colour; depth comes from light and shadow; every colour has one job; only the orb and the main button glow. Built for someone dictating for the first time, and someone dictating all day.</p>
+    </div>
+    <div class="row" style="gap:24px">
+      <div class="orb" style="width:112px;height:112px"><div class="ring ok" style="width:90px;height:90px"><div class="core" style="width:72px;height:72px"><div class="wave ok"><i style="height:6px"></i><i style="height:10px"></i><i style="height:14px"></i><i style="height:10px"></i><i style="height:6px"></i></div></div></div></div>
+      <div class="col" style="gap:12px"><div class="row"><span class="key">Ctrl</span><span class="plus">+</span><span class="key">Win</span></div><span class="caption t2">Hold to talk, anywhere</span></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="sec"><span class="heading" style="font-size:17px">Colour, by job</span><span class="caption t3">Obsidian · Porcelain · lowest contrast on any surface</span></div>
+    <div class="swatches">
+      <div class="tile sw"><div class="chipc" style="background:linear-gradient(90deg,#191C22 50%,#E8EBF1 50%);border:1px solid var(--line)"><span style="color:#A6ACBA">#191C22</span><span style="color:#3A4050">#E8EBF1</span></div><div class="heading">Surface</div><div class="use">One colour for everything. Depth comes from light and shadow, never from new greys.</div></div>
+      <div class="tile sw"><div class="chipc" style="background:linear-gradient(90deg,#ECEEF3 50%,#161920 50%)"><span style="color:#161920">#ECEEF3</span><span style="color:#ECEEF3">#161920</span></div><div class="heading">Text</div><div class="use">Secondary #A6ACBA / #3A4050 for descriptions; tertiary #8A91A1 / #5E6575 for times and hints.</div><div class="ct">13.9 · 13.7 : 1</div></div>
+      <div class="tile sw"><div class="chipc" style="background:linear-gradient(90deg,#8C9DFF 50%,#3F4ACB 50%)"><span style="color:#0B0D13">#8C9DFF</span><span style="color:#fff">#3F4ACB</span></div><div class="heading">Iris · action</div><div class="use">Means "you can press this": the main button, links, focus, the current page.</div><div class="ct">6.4 · 5.3 : 1</div></div>
+      <div class="tile sw"><div class="chipc" style="background:linear-gradient(90deg,#B48CFF 50%,#6A3ED4 50%)"><span style="color:#0B0D13">#B48CFF</span><span style="color:#fff">#6A3ED4</span></div><div class="heading">Violet · AI</div><div class="use">Only for what the AI connection does: cleanup, Transform, Translate, suggestions.</div><div class="ct">6.2 · 5.0 : 1</div></div>
+      <div class="tile sw"><div class="chipc" style="background:linear-gradient(90deg,#FF6B6B 50%,#B42F2F 50%)"><span style="color:#0B0D13">#FF6B6B</span><span style="color:#fff">#B42F2F</span></div><div class="heading">Coral · live</div><div class="use">Only while Rflow is listening to you.</div><div class="ct">5.8 · 4.8 : 1</div></div>
+      <div class="tile sw"><div class="chipc" style="background:linear-gradient(90deg,#5BE3A6 50%,#0B6B42 50%)"><span style="color:#0B0D13">#5BE3A6</span><span style="color:#fff">#0B6B42</span></div><div class="heading">Mint · ready</div><div class="use">Ready to dictate, saved, worked. Lives on lamps, not on text.</div><div class="ct">10.0 · 5.1 : 1</div></div>
+      <div class="tile sw"><div class="chipc" style="background:linear-gradient(90deg,#FFC56B 50%,#8A4E00 50%)"><span style="color:#0B0D13">#FFC56B</span><span style="color:#fff">#8A4E00</span></div><div class="heading">Amber · attention</div><div class="use">Not ready yet, offline, a choice to make. Progress while you wait.</div><div class="ct">10.3 · 5.2 : 1</div></div>
+      <div class="tile sw"><div class="chipc" style="background:linear-gradient(90deg,#FF7D93 50%,#B02640 50%)"><span style="color:#0B0D13">#FF7D93</span><span style="color:#fff">#B02640</span></div><div class="heading">Rose · error</div><div class="use">Something failed or will be deleted, always with Undo or a way out.</div><div class="ct">6.6 · 5.1 : 1</div></div>
+      <div class="tile sw"><div class="chipc" style="background:#101216;border:1px solid #6B7386;box-shadow:var(--in-2)"><span style="color:#A6ACBA">#6B7386</span><span style="color:#A6ACBA">#787F91</span></div><div class="heading">Control edge</div><div class="use">Fields and toggles keep a real edge, so they read as controls in soft light.</div><div class="ct">3.4 · 3.1 : 1</div></div>
+      <div class="tile sw"><div class="chipc" style="background:linear-gradient(90deg,#8C9DFF 50%,#4651D2 50%)"><span style="color:#0B0D13">Connect</span><span style="color:#fff">Connect</span></div><div class="heading">The main button</div><div class="use">A lit key: dark on Iris in Obsidian, white on deep Iris in Porcelain. One per view.</div><div class="ct">7.8 · 6.2 : 1</div></div>
+    </div>
+  </div>
+
+  <div class="row" style="gap:56px;align-items:flex-start">
+    <div class="grow">
+      <div class="sec"><span class="heading" style="font-size:17px">Type</span><span class="caption t3">Geist · Geist Mono for keys and IDs · Noto Sans JP · whole-pixel sizes</span></div>
+      <div class="type-row"><div class="spec">Display 30/36 · 600</div><div class="display">Speak anywhere.</div></div>
+      <div class="type-row"><div class="spec">Page title 26/32 · 600</div><div class="title">AI &amp; models</div></div>
+      <div class="type-row"><div class="spec">Hero line 20/28 · 600</div><div class="hero-line">Hold the key and talk. Let go, it's typed.</div></div>
+      <div class="type-row"><div class="spec">Heading 15/20 · 600</div><div class="heading">How Rflow hears you</div></div>
+      <div class="type-row"><div class="spec">Body 14/20 · 400 / 500</div><div>Dictations stay on this PC. <span class="row-title">Keep recordings</span></div></div>
+      <div class="type-row"><div class="spec">Caption 12/16 · 500</div><div class="caption t2">On this PC · English · fast here</div></div>
+      <div class="type-row"><div class="spec">Numbers · Geist, tabular</div><div style="font-size:16px;font-weight:600">1,284 · 38,920 · 142</div></div>
+      <div class="type-row"><div class="spec">Mono 12 · keys, times, IDs</div><div class="mono" style="font-size:12px">09:42 · gemini-3.5-flash-lite · 663 MB</div></div>
+      <div class="type-row"><div class="spec">Japanese · Noto Sans JP</div><div style="font-family:'Noto Sans JP'">日本語もきれいに表示されます。</div></div>
+    </div>
+    <div style="width:560px;flex:none" class="col">
+      <div class="sec"><span class="heading" style="font-size:17px">Depth and space</span><span class="caption t3">five levels, each with one meaning</span></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px">
+        <div class="card" style="height:104px;padding:16px;display:flex;flex-direction:column;justify-content:flex-end"><div class="row-title">Raised</div><div class="caption t3">cards, popups</div></div>
+        <div class="tile" style="height:104px;padding:16px;display:flex;flex-direction:column;justify-content:flex-end"><div class="row-title">Raised, small</div><div class="caption t3">buttons, keys</div></div>
+        <div class="well" style="height:104px;padding:16px;display:flex;flex-direction:column;justify-content:flex-end;border-radius:20px"><div class="row-title">Pressed</div><div class="caption t3">selected, current</div></div>
+        <div class="well" style="height:104px;padding:16px;display:flex;flex-direction:column;justify-content:flex-end;border-radius:20px;border:1px solid var(--rim)"><div class="row-title">Inset with edge</div><div class="caption t3">fields, tracks</div></div>
+        <div class="well" style="height:104px;padding:16px;display:flex;flex-direction:column;justify-content:flex-end;border-radius:20px;border:2px solid var(--iris)"><div class="row-title">Focus</div><div class="caption t3">2 px Iris edge</div></div>
+        <div style="height:104px;padding:16px;display:flex;flex-direction:column;justify-content:flex-end;border-radius:20px;border:1px solid var(--line)"><div class="row-title">Flat</div><div class="caption t3">rows, chips at rest</div></div>
+      </div>
+      <div class="row" style="gap:12px;margin-top:24px;align-items:flex-end">
+        <div class="col" style="gap:8px;align-items:center"><div style="width:4px;height:4px;background:var(--iris);border-radius:1px"></div><span class="caption t3">4</span></div>
+        <div class="col" style="gap:8px;align-items:center"><div style="width:8px;height:8px;background:var(--iris);border-radius:2px"></div><span class="caption t3">8</span></div>
+        <div class="col" style="gap:8px;align-items:center"><div style="width:12px;height:12px;background:var(--iris);border-radius:2px"></div><span class="caption t3">12</span></div>
+        <div class="col" style="gap:8px;align-items:center"><div style="width:16px;height:16px;background:var(--iris);border-radius:3px"></div><span class="caption t3">16</span></div>
+        <div class="col" style="gap:8px;align-items:center"><div style="width:24px;height:24px;background:var(--iris);border-radius:4px"></div><span class="caption t3">24</span></div>
+        <div class="col" style="gap:8px;align-items:center"><div style="width:32px;height:32px;background:var(--iris);border-radius:5px"></div><span class="caption t3">32</span></div>
+        <span class="spacer"></span>
+        <div class="col" style="gap:8px;align-items:center"><div style="width:40px;height:40px;border-radius:6px;border:1.5px solid var(--text-3)"></div><span class="caption t3">6</span></div>
+        <div class="col" style="gap:8px;align-items:center"><div style="width:40px;height:40px;border-radius:10px;border:1.5px solid var(--text-3)"></div><span class="caption t3">10</span></div>
+        <div class="col" style="gap:8px;align-items:center"><div style="width:40px;height:40px;border-radius:14px;border:1.5px solid var(--text-3)"></div><span class="caption t3">14</span></div>
+        <div class="col" style="gap:8px;align-items:center"><div style="width:40px;height:40px;border-radius:20px;border:1.5px solid var(--text-3)"></div><span class="caption t3">20</span></div>
+      </div>
+      <div class="well" style="margin-top:24px;padding:16px 20px;border-radius:14px">
+        <div class="heading">Guarantees</div>
+        <div class="ticks" style="margin-top:12px;font-size:13px">
+          <div><svg width="16" height="16" class="i s" style="color:var(--ok);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg>Text 4.5 : 1 and controls 3 : 1 on every surface, both themes</div>
+          <div><svg width="16" height="16" class="i s" style="color:var(--ok);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg>Glow only on the orb and the one main button</div>
+          <div><svg width="16" height="16" class="i s" style="color:var(--ok);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg>Selected = pressed in, with the label in bold; focus = 2 px Iris edge</div>
+          <div><svg width="16" height="16" class="i s" style="color:var(--ok);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg>A state is never colour alone: a lamp always has a word</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="sec"><span class="heading" style="font-size:17px">The voice orb</span><span class="caption t3">one glance says what Rflow is doing</span></div>
+    <div class="row" style="gap:40px">
+      <div class="col" style="gap:12px;align-items:center"><div class="orb" style="width:104px;height:104px"><div class="ring ok" style="width:84px;height:84px"><div class="core" style="width:68px;height:68px"><div class="wave ok"><i style="height:6px"></i><i style="height:10px"></i><i style="height:14px"></i><i style="height:10px"></i><i style="height:6px"></i></div></div></div></div><div class="row caption" style="gap:8px"><span class="lamp ok"><i></i></span>Ready, breathing</div></div>
+      <div class="col" style="gap:12px;align-items:center"><div class="orb" style="width:104px;height:104px"><div class="ring live" style="width:84px;height:84px"><div class="core" style="width:68px;height:68px"><div class="wave live"><i style="height:12px"></i><i style="height:26px"></i><i style="height:34px"></i><i style="height:20px"></i><i style="height:28px"></i></div></div></div></div><div class="row caption" style="gap:8px"><span class="lamp live"><i></i></span>Listening</div></div>
+      <div class="col" style="gap:12px;align-items:center"><div class="orb" style="width:104px;height:104px"><div class="ring ai" style="width:84px;height:84px"><div class="core" style="width:68px;height:68px"><div class="wave ai" style="gap:6px"><i style="height:5px;width:5px;border-radius:999px"></i><i style="height:5px;width:5px;border-radius:999px;opacity:.6"></i><i style="height:5px;width:5px;border-radius:999px;opacity:.3"></i></div></div></div></div><div class="row caption" style="gap:8px"><span class="lamp ai"><i></i></span>Cleaning up</div></div>
+      <div class="col" style="gap:12px;align-items:center"><div class="orb" style="width:104px;height:104px"><svg width="84" height="84" viewBox="0 0 84 84" style="position:absolute"><circle cx="42" cy="42" r="40.385" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="2.423"/><path d="M 42 1.615 A 40.385 40.385 0 0 1 44.536 82.304" fill="none" stroke="#FFC56B" stroke-width="2.423" stroke-linecap="round"/></svg><div class="core" style="width:68px;height:68px"><span style="font-size:15px;font-weight:600;color:var(--warn)">49%</span></div></div><div class="row caption" style="gap:8px"><span class="lamp warn"><i></i></span>Not ready yet</div></div>
+      <div class="col" style="gap:12px;align-items:center"><div class="orb" style="width:104px;height:104px"><div class="ring off" style="width:84px;height:84px"><div class="core" style="width:68px;height:68px"><div class="wave off"><i style="height:4px"></i><i style="height:4px"></i><i style="height:4px"></i><i style="height:4px"></i><i style="height:4px"></i></div></div></div></div><div class="row caption t3" style="gap:8px"><span class="lamp"><i style="background:var(--text-3)"></i></span>Paused</div></div>
+      <span class="spacer"></span>
+      <div class="col" style="gap:16px;width:360px">
+        <div class="heading">Keys look like keys</div>
+        <div class="row" style="gap:12px;flex-wrap:wrap"><span class="key">Ctrl</span><span class="key">Win</span><span class="key">Esc</span><span class="key">C</span><span class="key">↵</span><span class="key sm">1</span><span class="key sm">2</span><span class="key sm">U</span></div>
+        <div class="caption t2">Every shortcut is drawn as a keycap, so it is recognised before it is read. The logo is one too, lit when Rflow is ready.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================================================= 02 COMPONENTS -->
+<section class="frame board" id="components" data-name="02 Components">
+  <div class="bh"><div class="caps" style="color:var(--iris)">Rflow UI 2.0 · Design system</div><div class="display" style="font-size:40px;line-height:46px;margin-top:12px">Components</div>
+  <p>Few parts, every state drawn. Selected is always pressed in; focus is always a 2 px Iris edge; only the main button glows.</p></div>
+  <div class="specimens">
+    <div class="card spec-card">
+      <div class="caption t3">Buttons</div>
+      <div class="row" style="gap:12px;flex-wrap:wrap"><span class="btn primary">Connect</span><span class="btn">Change</span><span class="btn ghost">Show all</span><span class="btn danger">Delete</span></div>
+      <div class="row" style="gap:12px;flex-wrap:wrap"><span class="btn pressed">Pressed</span><span class="btn focus">Focused</span><span class="btn disabled">Disabled</span></div>
+      <div class="row" style="gap:12px;flex-wrap:wrap"><span class="btn sm">Copy <span class="key sm">C</span></span><span class="btn sm primary">Replace <span class="key sm">↵</span></span><span class="caption t3">keys live inside the button</span></div>
+    </div>
+    <div class="card spec-card">
+      <div class="caption t3">Toggle · segmented · lamps</div>
+      <div class="row" style="gap:16px"><span class="tg on"><span class="k"></span></span><span class="tg"><span class="k"></span></span><span class="caption t2">On, off: a dark knob on Iris, never a glow</span></div>
+      <div class="seg"><span class="on">Your words <span class="t3" style="font-weight:500">17</span></span><span>Snippets <span class="t3">6</span></span></div>
+      <div class="row" style="gap:16px;flex-wrap:wrap"><span class="row caption" style="gap:8px"><span class="lamp ok"><i></i></span>Ready</span><span class="row caption" style="gap:8px"><span class="lamp warn"><i></i></span>Not ready</span><span class="row caption" style="gap:8px"><span class="lamp live"><i></i></span>Listening</span><span class="row caption" style="gap:8px"><span class="lamp ai"><i></i></span>AI</span><span class="row caption" style="gap:8px"><span class="lamp err"><i></i></span>Failed</span></div>
+    </div>
+    <div class="card spec-card">
+      <div class="caption t3">Fields</div>
+      <div class="field" style="width:100%"><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><circle cx="8.25" cy="8.25" r="4.875"/><path d="M 15 15 l -3.15 -3.15"/></svg><span class="ph">Search languages</span></div>
+      <div class="field focus" style="width:100%"><span>Kubernetes</span><span class="spacer"></span><span class="key sm">↵</span><span class="caption t3">to add</span></div>
+      <div class="field select" style="width:100%"><span>Microphone array (Surface)</span><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 4.5 7.125 l 4.5 4.5 4.5 -4.5"/></svg></div>
+    </div>
+    <div class="card spec-card">
+      <div class="caption t3">Chips</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><span class="chip">GitHub</span><span class="chip hover">Kubernetes<span class="x"><svg width="12" height="12" class="i" style="width:12px;height:12px;stroke-width:0.875" viewBox="0 0 12 12"><path d="M 3.25 3.25 l 5.5 5.5 M 8.75 3.25 l -5.5 5.5"/></svg></span></span><span class="chip">PostgreSQL <span class="alias">· heard as "post grass"</span></span></div>
+      <div class="row" style="gap:8px"><span class="chip sel">English</span><span class="chip">Japanese</span><span class="chip">Tamil</span><span class="caption t3">selected = pressed</span></div>
+    </div>
+    <div class="card spec-card">
+      <div class="caption t3">API key</div>
+      <div class="row" style="gap:12px"><div class="field grow"><span class="mono t2" style="letter-spacing:.12em">•••••••• 9f3c</span><span class="spacer"></span><span class="row caption t2" style="gap:6px"><span class="lamp ok"><i></i></span>Works</span></div><span class="btn sm">Change key</span></div>
+      <div class="row" style="gap:12px"><div class="field focus grow"><span class="ph">Paste your Gemini key</span></div><span class="btn sm">Paste</span></div>
+      <div class="caption t3">A saved key shows its last four characters only. Paste is one click.</div>
+    </div>
+    <div class="card spec-card">
+      <div class="caption t3">Feedback · one pattern</div>
+      <div class="tile row" style="height:44px;padding:0 8px 0 16px;gap:12px"><svg width="16" height="16" class="i s" style="color:var(--ok);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg><span class="grow">Saved</span><span class="btn ghost sm">Undo</span></div>
+      <div class="tile row" style="height:44px;padding:0 8px 0 16px;gap:12px"><svg width="16" height="16" class="i s" style="color:var(--err);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 4.333 4.333 l 7.333 7.333 M 11.667 4.333 l -7.333 7.333"/></svg><span class="grow">Removed "Vercel"</span><span class="btn ghost sm">Undo</span></div>
+      <div class="well row" style="padding:12px 16px;gap:12px"><span class="lamp warn"><i></i></span><span class="grow caption t2">Can't reach Gemini. Typed as heard.</span><span class="btn ghost sm">Retry</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================================================= 03 HOME -->
+<section class="frame app" id="home" data-name="03 Home · dark">
+  <aside class="side">
+    <div class="brand"><div class="mark"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:10px"></i><i style="height:6px"></i></div><span class="wordmark">Rflow</span></div>
+    <div class="nav on"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 2.625 7.65 9 2.625 l 6.375 5.025 V 14.25 a 1.125 1.125 0 0 1 -1.125 1.125 h -3.375 v -4.5 h -3.75 v 4.5 H 3.75 A 1.125 1.125 0 0 1 2.625 14.25 z"/></svg>Home</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 9 4.875 C 7.5 3.75 5.625 3.375 3 3.375 v 10.5 c 2.625 0 4.5 0.375 6 1.5 1.5 -1.125 3.375 -1.5 6 -1.5 v -10.5 c -2.625 0 -4.5 0.375 -6 1.5 z M 9 4.875 v 10.5"/></svg>Words<span class="badge">1</span></div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 8.25 2.625 l 1.2 3.3 3.3 1.2 -3.3 1.2 L 8.25 11.625 l -1.2 -3.3 L 3.75 7.125 l 3.3 -1.2 z M 13.5 10.875 l 0.6 1.65 1.65 0.6 -1.65 0.6 -0.6 1.65 -0.6 -1.65 -1.65 -0.6 1.65 -0.6 z"/></svg>Tools</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><rect x="4.5" y="4.5" width="9" height="9" rx="2.25"/><path d="M 7.5 7.5 h 3 v 3 h -3 z M 6.75 2.25 v 2.25 M 11.25 2.25 v 2.25 M 6.75 13.5 v 2.25 M 11.25 13.5 v 2.25 M 2.25 6.75 h 2.25 M 2.25 11.25 h 2.25 M 13.5 6.75 h 2.25 M 13.5 11.25 h 2.25"/></svg>AI &amp; models</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 3 5.25 h 6.75 M 12.75 5.25 h 2.25 M 3 12.75 h 2.25 M 8.25 12.75 h 6.75"/><circle cx="11.25" cy="5.25" r="1.5"/><circle cx="6.75" cy="12.75" r="1.5"/></svg>Settings</div>
+    <div class="spacer"></div>
+    <div class="status"><span class="lamp ok"><i></i></span><div><b>Ready</b><span>Parakeet, on this PC</span></div></div>
+  </aside>
+  <main class="main">
+    <section class="card hero">
+      <div class="orb" style="width:128px;height:128px"><div class="ring ok" style="width:104px;height:104px"><div class="core" style="width:84px;height:84px"><div class="wave ok"><i style="height:6px"></i><i style="height:10px"></i><i style="height:14px"></i><i style="height:10px"></i><i style="height:6px"></i></div></div></div></div>
+      <div class="grow col" style="gap:8px">
+        <div class="row caption t2" style="gap:8px"><span class="lamp ok"><i></i></span>Ready in any app</div>
+        <div class="hero-line">Hold <span class="key">Ctrl</span><span class="plus">+</span><span class="key">Win</span> and talk. Let go, it's typed.</div>
+        <div class="t2">Tap once for hands-free, tap again to finish. <span class="key sm">Esc</span> cancels.</div>
+        <div class="row caption t3" style="gap:16px;margin-top:4px"><span class="row" style="gap:6px"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><rect x="6" y="2" width="4" height="7.333" rx="2"/><path d="M 3.667 7.333 a 4.333 4.333 0 0 0 8.667 0 M 8 11.667 V 14"/></svg>Surface mic array</span><span class="row" style="gap:6px;color:var(--violet)"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 7.333 2.333 l 1.067 2.933 2.933 1.067 -2.933 1.067 L 7.333 10.333 l -1.067 -2.933 L 3.333 6.333 l 2.933 -1.067 z M 12 9.667 l 0.533 1.467 1.467 0.533 -1.467 0.533 -0.533 1.467 -0.533 -1.467 -1.467 -0.533 1.467 -0.533 z"/></svg>Cleanup by Gemini</span></div>
+      </div>
+    </section>
+    <div class="well readout">
+      <div class="seg-v"><b>1,284</b><span>this week</span></div><span class="sep"></span>
+      <div class="seg-v"><b>142</b><span>words a minute</span></div><span class="sep"></span>
+      <div class="seg-v"><b>6</b><span>days in a row</span></div><span class="sep"></span>
+      <div class="seg-v"><b>38,920</b><span>all time</span></div>
+    </div>
+    <section class="card list">
+      <div class="lh"><span class="heading">Today</span><span class="spacer"></span><div class="field" style="width:220px;height:32px;border-radius:10px;font-size:13px"><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><circle cx="8.25" cy="8.25" r="4.875"/><path d="M 15 15 l -3.15 -3.15"/></svg><span class="ph">Search</span><span class="spacer"></span><span class="key sm">Ctrl</span><span class="key sm">K</span></div><span class="btn ghost sm">Show all</span></div>
+      <div class="item hover"><span class="tm">09:42</span><span class="tx">Can you review the pull request before lunch and leave a comment if anything looks wrong?</span><span class="acts"><span class="ib" style="width:28px;height:28px"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 2.667 13.333 l 0.667 -2.667 L 10.667 3.333 l 2 2 L 5.333 12.667 z M 9.333 4.667 l 2 2"/></svg></span><span class="ib" style="width:28px;height:28px"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><rect x="6" y="6" width="7.333" height="7.333" rx="1.667"/><path d="M 10 6 V 4.333 A 1.667 1.667 0 0 0 8.333 2.667 h -4 A 1.667 1.667 0 0 0 2.667 4.333 v 4 A 1.667 1.667 0 0 0 4.333 10 H 6"/></svg></span></span></div>
+      <div class="item"><span class="tm">09:15</span><span class="tx">Thanks for the quick reply! I'll send you the updated draft this afternoon.</span></div>
+      <div class="item"><span class="tm">08:51</span><span class="tx">Let's move the stand-up to Thursday morning and share the notes in Slack.</span></div>
+      <div class="item"><span class="tm">08:30</span><span class="tx">Please book a room for six people on Friday at 2 o'clock.</span></div>
+      <div class="item"><span class="tm">08:12</span><span class="tx">Ship the release notes after the review is merged, then tag the build.</span></div>
+      <div class="item"><span class="tm">07:58</span><span class="tx">Remind Priya that the Q3 roadmap review moved to Monday.</span></div>
+      <div class="item"><span class="tm">07:40</span><span class="tx">田中さん、資料を共有フォルダにアップロードしました。</span></div>
+    </section>
+  </main>
+</section>
+
+<!-- ======================================================================================= 04 HOME NOT READY -->
+<section class="frame app" id="home-not-ready" data-name="04 Home · not ready yet">
+  <aside class="side">
+    <div class="brand"><div class="mark"><i style="height:6px;background:var(--warn)"></i><i style="height:12px;background:var(--warn)"></i><i style="height:16px;background:var(--warn)"></i><i style="height:10px;background:var(--warn)"></i><i style="height:6px;background:var(--warn)"></i></div><span class="wordmark">Rflow</span></div>
+    <div class="nav on"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 2.625 7.65 9 2.625 l 6.375 5.025 V 14.25 a 1.125 1.125 0 0 1 -1.125 1.125 h -3.375 v -4.5 h -3.75 v 4.5 H 3.75 A 1.125 1.125 0 0 1 2.625 14.25 z"/></svg>Home</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 9 4.875 C 7.5 3.75 5.625 3.375 3 3.375 v 10.5 c 2.625 0 4.5 0.375 6 1.5 1.5 -1.125 3.375 -1.5 6 -1.5 v -10.5 c -2.625 0 -4.5 0.375 -6 1.5 z M 9 4.875 v 10.5"/></svg>Words</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 8.25 2.625 l 1.2 3.3 3.3 1.2 -3.3 1.2 L 8.25 11.625 l -1.2 -3.3 L 3.75 7.125 l 3.3 -1.2 z M 13.5 10.875 l 0.6 1.65 1.65 0.6 -1.65 0.6 -0.6 1.65 -0.6 -1.65 -1.65 -0.6 1.65 -0.6 z"/></svg>Tools</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><rect x="4.5" y="4.5" width="9" height="9" rx="2.25"/><path d="M 7.5 7.5 h 3 v 3 h -3 z M 6.75 2.25 v 2.25 M 11.25 2.25 v 2.25 M 6.75 13.5 v 2.25 M 11.25 13.5 v 2.25 M 2.25 6.75 h 2.25 M 2.25 11.25 h 2.25 M 13.5 6.75 h 2.25 M 13.5 11.25 h 2.25"/></svg>AI &amp; models</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 3 5.25 h 6.75 M 12.75 5.25 h 2.25 M 3 12.75 h 2.25 M 8.25 12.75 h 6.75"/><circle cx="11.25" cy="5.25" r="1.5"/><circle cx="6.75" cy="12.75" r="1.5"/></svg>Settings</div>
+    <div class="spacer"></div>
+    <div class="status"><span class="lamp warn"><i></i></span><div><b>Not ready yet</b><span>Downloading, 49%</span></div></div>
+  </aside>
+  <main class="main">
+    <section class="card hero" style="align-items:flex-start">
+      <div class="orb" style="width:128px;height:128px"><svg width="104" height="104" viewBox="0 0 104 104" style="position:absolute"><circle cx="52" cy="52" r="50" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="3"/><path d="M52 2 A50 50 0 0 1 55.14 101.9" fill="none" stroke="#FFC56B" stroke-width="3" stroke-linecap="round"/></svg><div class="core" style="width:84px;height:84px"><span style="font-size:18px;font-weight:600;color:var(--warn)">49%</span></div></div>
+      <div class="grow col" style="gap:8px">
+        <div class="row caption t2" style="gap:8px"><span class="lamp warn"><i></i></span>Not ready yet · about 2 minutes left</div>
+        <div class="hero-line">Getting Parakeet, your private speech model</div>
+        <div class="t2" style="max-width:460px">Rflow types as soon as it's here. Until then, the key says "Not ready" instead of doing nothing.</div>
+        <div class="row" style="gap:16px;margin-top:8px">
+          <div class="wave-bar"><i class="on" style="height:10px"></i><i class="on" style="height:16px"></i><i class="on" style="height:22px"></i><i class="on" style="height:14px"></i><i class="on" style="height:26px"></i><i class="on" style="height:18px"></i><i class="on" style="height:12px"></i><i class="on" style="height:20px"></i><i class="on" style="height:28px"></i><i class="on" style="height:16px"></i><i class="on" style="height:10px"></i><i class="on" style="height:18px"></i><i class="on" style="height:24px"></i><i class="on" style="height:14px"></i><i class="on" style="height:20px"></i><i class="on" style="height:12px"></i><i class="on" style="height:22px"></i><i class="on" style="height:16px"></i><i class="on" style="height:26px"></i><i style="height:12px"></i><i style="height:18px"></i><i style="height:22px"></i><i style="height:14px"></i><i style="height:10px"></i><i style="height:20px"></i><i style="height:26px"></i><i style="height:16px"></i><i style="height:12px"></i><i style="height:22px"></i><i style="height:18px"></i><i style="height:10px"></i><i style="height:16px"></i><i style="height:24px"></i><i style="height:14px"></i><i style="height:20px"></i><i style="height:12px"></i><i style="height:18px"></i><i style="height:22px"></i><i style="height:14px"></i><i style="height:10px"></i></div>
+          <span class="mono caption t3">325 / 663 MB</span>
+        </div>
+        <div class="row" style="gap:12px;margin-top:8px"><span class="btn"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 5 12.333 a 2.667 2.667 0 0 1 -0.467 -5.293 A 3.667 3.667 0 0 1 11.6 6.067 a 3.133 3.133 0 0 1 0.067 6.267 z"/></svg>Use a cloud model instead</span><span class="btn quiet">Pause</span></div>
+      </div>
+    </section>
+    <section class="card col" style="padding:24px;gap:12px;align-items:center;flex:none">
+      <div class="row"><span class="key lg">Ctrl</span><span class="plus" style="font-size:14px">+</span><span class="key lg">Win</span></div>
+      <div class="heading">Your dictations will appear here</div>
+      <div class="caption t2" style="text-align:center;max-width:420px">Kept on this PC, with one click to copy and a quick way to fix a word.</div>
+    </section>
+    <div class="col" style="gap:12px">
+      <span class="caption t3">While you wait</span>
+      <div class="row" style="gap:24px">
+        <div class="tile row grow" style="padding:16px;gap:12px"><svg width="18" height="18" class="i" style="color:var(--text-2);stroke-width:1.312" viewBox="0 0 18 18"><path d="M 9 4.875 C 7.5 3.75 5.625 3.375 3 3.375 v 10.5 c 2.625 0 4.5 0.375 6 1.5 1.5 -1.125 3.375 -1.5 6 -1.5 v -10.5 c -2.625 0 -4.5 0.375 -6 1.5 z M 9 4.875 v 10.5"/></svg><div class="grow"><div class="row-title">Add names to Words</div><div class="caption t3">So Rflow spells them right from the start</div></div><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 7.125 4.5 l 4.5 4.5 -4.5 4.5"/></svg></div>
+        <div class="tile row grow" style="padding:16px;gap:12px"><svg width="18" height="18" class="i" style="color:var(--violet);stroke-width:1.312" viewBox="0 0 18 18"><path d="M 8.25 2.625 l 1.2 3.3 3.3 1.2 -3.3 1.2 L 8.25 11.625 l -1.2 -3.3 L 3.75 7.125 l 3.3 -1.2 z M 13.5 10.875 l 0.6 1.65 1.65 0.6 -1.65 0.6 -0.6 1.65 -0.6 -1.65 -1.65 -0.6 1.65 -0.6 z"/></svg><div class="grow"><div class="row-title">Connect an AI</div><div class="caption t3">Punctuation, no filler words, Translate</div></div><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 7.125 4.5 l 4.5 4.5 -4.5 4.5"/></svg></div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ======================================================================================= 05 HOME LIGHT -->
+<section class="frame app light" id="home-light" data-name="05 Home · light (Porcelain)">
+  <aside class="side">
+    <div class="brand"><div class="mark"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:10px"></i><i style="height:6px"></i></div><span class="wordmark">Rflow</span></div>
+    <div class="nav on"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 2.625 7.65 9 2.625 l 6.375 5.025 V 14.25 a 1.125 1.125 0 0 1 -1.125 1.125 h -3.375 v -4.5 h -3.75 v 4.5 H 3.75 A 1.125 1.125 0 0 1 2.625 14.25 z"/></svg>Home</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 9 4.875 C 7.5 3.75 5.625 3.375 3 3.375 v 10.5 c 2.625 0 4.5 0.375 6 1.5 1.5 -1.125 3.375 -1.5 6 -1.5 v -10.5 c -2.625 0 -4.5 0.375 -6 1.5 z M 9 4.875 v 10.5"/></svg>Words<span class="badge" style="color:#fff">1</span></div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 8.25 2.625 l 1.2 3.3 3.3 1.2 -3.3 1.2 L 8.25 11.625 l -1.2 -3.3 L 3.75 7.125 l 3.3 -1.2 z M 13.5 10.875 l 0.6 1.65 1.65 0.6 -1.65 0.6 -0.6 1.65 -0.6 -1.65 -1.65 -0.6 1.65 -0.6 z"/></svg>Tools</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><rect x="4.5" y="4.5" width="9" height="9" rx="2.25"/><path d="M 7.5 7.5 h 3 v 3 h -3 z M 6.75 2.25 v 2.25 M 11.25 2.25 v 2.25 M 6.75 13.5 v 2.25 M 11.25 13.5 v 2.25 M 2.25 6.75 h 2.25 M 2.25 11.25 h 2.25 M 13.5 6.75 h 2.25 M 13.5 11.25 h 2.25"/></svg>AI &amp; models</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 3 5.25 h 6.75 M 12.75 5.25 h 2.25 M 3 12.75 h 2.25 M 8.25 12.75 h 6.75"/><circle cx="11.25" cy="5.25" r="1.5"/><circle cx="6.75" cy="12.75" r="1.5"/></svg>Settings</div>
+    <div class="spacer"></div>
+    <div class="status"><span class="lamp ok"><i></i></span><div><b>Ready</b><span>Parakeet, on this PC</span></div></div>
+  </aside>
+  <main class="main">
+    <section class="card hero">
+      <div class="orb" style="width:128px;height:128px"><div class="ring ok" style="width:104px;height:104px"><div class="core" style="width:84px;height:84px"><div class="wave ok"><i style="height:6px;opacity:.8"></i><i style="height:10px;opacity:.8"></i><i style="height:14px;opacity:.8"></i><i style="height:10px;opacity:.8"></i><i style="height:6px;opacity:.8"></i></div></div></div></div>
+      <div class="grow col" style="gap:8px">
+        <div class="row caption t2" style="gap:8px"><span class="lamp ok"><i></i></span>Ready in any app</div>
+        <div class="hero-line">Hold <span class="key">Ctrl</span><span class="plus">+</span><span class="key">Win</span> and talk. Let go, it's typed.</div>
+        <div class="t2">Tap once for hands-free, tap again to finish. <span class="key sm">Esc</span> cancels.</div>
+        <div class="row caption t3" style="gap:16px;margin-top:4px"><span class="row" style="gap:6px"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><rect x="6" y="2" width="4" height="7.333" rx="2"/><path d="M 3.667 7.333 a 4.333 4.333 0 0 0 8.667 0 M 8 11.667 V 14"/></svg>Surface mic array</span><span class="row" style="gap:6px;color:var(--violet)"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 7.333 2.333 l 1.067 2.933 2.933 1.067 -2.933 1.067 L 7.333 10.333 l -1.067 -2.933 L 3.333 6.333 l 2.933 -1.067 z M 12 9.667 l 0.533 1.467 1.467 0.533 -1.467 0.533 -0.533 1.467 -0.533 -1.467 -1.467 -0.533 1.467 -0.533 z"/></svg>Cleanup by Gemini</span></div>
+      </div>
+    </section>
+    <div class="well readout">
+      <div class="seg-v"><b>1,284</b><span>this week</span></div><span class="sep"></span>
+      <div class="seg-v"><b>142</b><span>words a minute</span></div><span class="sep"></span>
+      <div class="seg-v"><b>6</b><span>days in a row</span></div><span class="sep"></span>
+      <div class="seg-v"><b>38,920</b><span>all time</span></div>
+    </div>
+    <section class="card list">
+      <div class="lh"><span class="heading">Today</span><span class="spacer"></span><div class="field" style="width:220px;height:32px;border-radius:10px;font-size:13px"><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><circle cx="8.25" cy="8.25" r="4.875"/><path d="M 15 15 l -3.15 -3.15"/></svg><span class="ph">Search</span><span class="spacer"></span><span class="key sm">Ctrl</span><span class="key sm">K</span></div><span class="btn ghost sm">Show all</span></div>
+      <div class="item hover"><span class="tm">09:42</span><span class="tx">Can you review the pull request before lunch and leave a comment if anything looks wrong?</span><span class="acts"><span class="ib" style="width:28px;height:28px"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 2.667 13.333 l 0.667 -2.667 L 10.667 3.333 l 2 2 L 5.333 12.667 z M 9.333 4.667 l 2 2"/></svg></span><span class="ib" style="width:28px;height:28px"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><rect x="6" y="6" width="7.333" height="7.333" rx="1.667"/><path d="M 10 6 V 4.333 A 1.667 1.667 0 0 0 8.333 2.667 h -4 A 1.667 1.667 0 0 0 2.667 4.333 v 4 A 1.667 1.667 0 0 0 4.333 10 H 6"/></svg></span></span></div>
+      <div class="item"><span class="tm">09:15</span><span class="tx">Thanks for the quick reply! I'll send you the updated draft this afternoon.</span></div>
+      <div class="item"><span class="tm">08:51</span><span class="tx">Let's move the stand-up to Thursday morning and share the notes in Slack.</span></div>
+      <div class="item"><span class="tm">08:30</span><span class="tx">Please book a room for six people on Friday at 2 o'clock.</span></div>
+      <div class="item"><span class="tm">08:12</span><span class="tx">Ship the release notes after the review is merged, then tag the build.</span></div>
+      <div class="item"><span class="tm">07:58</span><span class="tx">Remind Priya that the Q3 roadmap review moved to Monday.</span></div>
+      <div class="item"><span class="tm">07:40</span><span class="tx">田中さん、資料を共有フォルダにアップロードしました。</span></div>
+    </section>
+  </main>
+</section>
+
+<!-- ======================================================================================= 06 FIRST RUN 1 -->
+<section class="frame ob" id="welcome-1" data-name="06 First run · 1 How Rflow hears you">
+  <div class="ob-head">
+    <div class="brand"><div class="mark"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:10px"></i><i style="height:6px"></i></div><span class="wordmark">Rflow</span></div>
+    <div class="steps"><div class="step on"><span class="n">1</span>Hear you</div><span class="stepline"></span><div class="step"><span class="n">2</span>Try it</div><span class="stepline"></span><div class="step"><span class="n">3</span>AI</div></div>
+    <div class="slot"><span class="btn quiet sm">Skip setup</span></div>
+  </div>
+  <div class="ob-body">
+    <div class="display">How should Rflow hear you?</div>
+    <div class="t2" style="margin-top:8px">Pick one to start. You can switch any time on AI &amp; models.</div>
+    <div class="row" style="gap:24px;margin-top:32px;width:760px;align-items:stretch">
+      <div class="option sel grow">
+        <div class="row" style="justify-content:space-between"><svg width="24" height="24" class="i" style="width:24px;height:24px;color:var(--iris)" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" rx="2"/><path d="M2.5 19h19"/></svg><span class="caption t2">Recommended</span></div>
+        <div><div class="hero-line">On this PC</div><div class="caption t3" style="margin-top:2px">NVIDIA Parakeet · English</div></div>
+        <div class="ticks">
+          <div><svg width="16" height="16" class="i s" style="color:var(--ok);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg>Private: your voice stays on this PC</div>
+          <div><svg width="16" height="16" class="i s" style="color:var(--ok);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg>Works offline, free, no account</div>
+          <div><svg width="16" height="16" class="i s" style="color:var(--ok);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg>Fast here: about 0.4 s a sentence</div>
+        </div>
+        <div class="divider"></div>
+        <div class="row caption t3" style="gap:8px"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 8 2.667 v 7.333 M 5 7 L 8 10 l 3 -3 M 3.333 13 h 9.333"/></svg>One download of 663 MB</div>
+      </div>
+      <div class="option card grow">
+        <div class="row" style="justify-content:space-between"><svg width="24" height="24" class="i" style="width:24px;height:24px;color:var(--text-2)" viewBox="0 0 24 24"><path d="M7.5 18.5a4 4 0 0 1-.7-7.94A5.5 5.5 0 0 1 17.4 9.1a4.7 4.7 0 0 1 .1 9.4z"/></svg></div>
+        <div><div class="hero-line">In the cloud</div><div class="caption t3" style="margin-top:2px">Gemini, OpenAI or Groq</div></div>
+        <div class="ticks">
+          <div><svg width="16" height="16" class="i s" style="color:var(--ok);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg>99 languages, Tamil and Japanese too</div>
+          <div><svg width="16" height="16" class="i s" style="color:var(--ok);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg>Nothing to download</div>
+          <div><svg width="16" height="16" class="i s" style="color:var(--warn);stroke-width:1.167" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.667"/><path d="M 8 5 v 3.333 M 8 10.667 v 0.333"/></svg>Your voice goes to the provider</div>
+        </div>
+        <div class="divider"></div>
+        <div class="row caption t3" style="gap:8px"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><circle cx="5.333" cy="10" r="2.333"/><path d="M 7 8.333 l 5.333 -5.333 M 10.333 5 l 1.667 1.667"/></svg>Needs an API key from the provider</div>
+      </div>
+    </div>
+  </div>
+  <div class="ob-foot"><span class="caption t3">The download keeps going while you try the next step.</span><span class="spacer"></span><span class="btn primary lg"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 8 2.667 v 7.333 M 5 7 L 8 10 l 3 -3 M 3.333 13 h 9.333"/></svg>Download Parakeet and continue</span></div>
+</section>
+
+<!-- ======================================================================================= 07 FIRST RUN 2 -->
+<section class="frame ob" id="welcome-2" data-name="07 First run · 2 Try it">
+  <div class="ob-head">
+    <div class="brand"><div class="mark"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:10px"></i><i style="height:6px"></i></div><span class="wordmark">Rflow</span></div>
+    <div class="steps"><div class="step done"><span class="n">✓</span>Hear you</div><span class="stepline"></span><div class="step on"><span class="n">2</span>Try it</div><span class="stepline"></span><div class="step"><span class="n">3</span>AI</div></div>
+    <div class="slot"><span class="btn quiet sm">Skip setup</span></div>
+  </div>
+  <div class="ob-body" style="flex-direction:row;gap:56px;padding:0 64px">
+    <div class="col" style="align-items:center;gap:24px;width:260px;flex:none">
+      <div class="orb" style="width:200px;height:200px"><div class="ring ok" style="width:164px;height:164px"><div class="core" style="width:134px;height:134px"><svg width="52" height="52" viewBox="0 0 52 52" style="width:52px;height:52px;fill:none;stroke:var(--ok);stroke-width:4.333;stroke-linecap:round;stroke-linejoin:round"><path d="M 10.833 27.083 l 9.75 9.75 L 41.167 16.25"/></svg></div></div></div>
+      <div class="row caption t2" style="gap:8px"><span class="lamp ok"><i></i></span>Typed in 0.4 s, on this PC</div>
+    </div>
+    <div class="grow col" style="gap:24px">
+      <div><div class="display">Say something</div><div class="t2" style="margin-top:8px">Hold <span class="key sm">Ctrl</span><span class="plus">+</span><span class="key sm">Win</span>, say "Hello Rflow, this is my first dictation", then let go.</div></div>
+      <div class="col" style="gap:8px"><span class="caption t2">Microphone</span><div class="row" style="gap:16px"><div class="field select grow"><span>Microphone array (Surface)</span><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 4.5 7.125 l 4.5 4.5 4.5 -4.5"/></svg></div><div class="meter"><i class="on" style="height:6px"></i><i class="on" style="height:9px"></i><i class="on" style="height:13px"></i><i class="on" style="height:16px"></i><i style="height:12px"></i><i style="height:8px"></i><i style="height:5px"></i></div></div></div>
+      <div class="well" style="padding:16px 20px;min-height:96px"><span class="caption t3">Typed here</span><div style="margin-top:8px;font-size:16px;line-height:24px">Hello Rflow, this is my first dictation.</div></div>
+      <div class="row" style="gap:12px"><svg width="18" height="18" class="i" style="color:var(--ok);stroke-width:1.312" viewBox="0 0 18 18"><path d="M 3.75 9.375 l 3.375 3.375 L 14.25 5.625"/></svg><span class="row-title">It works.</span><span class="t2">Now try it in any app.</span></div>
+    </div>
+  </div>
+  <div class="ob-foot"><span class="btn quiet">Back</span><span class="spacer"></span><span class="btn">Try again</span><span class="btn primary lg">Continue<svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 3.333 8 h 9.333 M 8.667 4 l 4 4 -4 4"/></svg></span></div>
+</section>
+
+<!-- ======================================================================================= 08 FIRST RUN 3 -->
+<section class="frame ob" id="welcome-3" data-name="08 First run · 3 Connect an AI">
+  <div class="ob-head">
+    <div class="brand"><div class="mark"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:10px"></i><i style="height:6px"></i></div><span class="wordmark">Rflow</span></div>
+    <div class="steps"><div class="step done"><span class="n">✓</span>Hear you</div><span class="stepline"></span><div class="step done"><span class="n">✓</span>Try it</div><span class="stepline"></span><div class="step on"><span class="n">3</span>AI</div></div>
+    <div class="slot"></div>
+  </div>
+  <div class="ob-body">
+    <div class="caption t2">Optional</div>
+    <div class="display" style="margin-top:8px">Make it write better</div>
+    <div class="t2" style="margin-top:8px;max-width:520px;text-align:center">Connect an AI to add punctuation, drop filler words and unlock Text Transform and Translate. Only text is sent, never your voice.</div>
+    <div class="row" style="gap:16px;margin-top:32px;width:840px">
+      <div class="provider sel grow"><b>Gemini</b><span>Free key</span></div>
+      <div class="provider tile grow"><b>OpenAI</b><span>Pay as you go</span></div>
+      <div class="provider tile grow"><b>Anthropic</b><span>Pay as you go</span></div>
+      <div class="provider tile grow"><b>Groq</b><span>Fastest answers</span></div>
+      <div class="provider tile grow"><b>Ollama</b><span>Runs on this PC</span></div>
+    </div>
+    <div class="card col" style="gap:16px;margin-top:24px;width:620px;padding:24px">
+      <div class="row" style="justify-content:space-between"><span class="caption t2">Gemini API key</span><span class="btn ghost sm">Get a free key<svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 9.333 3 h 3.667 V 6.667 M 13 3 L 7.333 8.667 M 11.333 9.333 v 3 a 1 1 0 0 1 -1 1 h -6.667 A 1 1 0 0 1 2.667 12.333 v -6.667 A 1 1 0 0 1 3.667 4.667 H 6.667"/></svg></span></div>
+      <div class="row" style="gap:12px"><div class="field focus grow"><span class="ph">Paste your key</span></div><span class="btn">Paste</span></div>
+      <div class="row caption t3" style="gap:8px"><svg width="16" height="16" class="i s" style="color:var(--violet);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 7.333 2.333 l 1.067 2.933 2.933 1.067 -2.933 1.067 L 7.333 10.333 l -1.067 -2.933 L 3.333 6.333 l 2.933 -1.067 z M 12 9.667 l 0.533 1.467 1.467 0.533 -1.467 0.533 -0.533 1.467 -0.533 -1.467 -1.467 -0.533 1.467 -0.533 z"/></svg>Model chosen for you: <span class="mono t2">gemini-3.5-flash-lite</span><span class="btn ghost sm" style="height:20px">Change</span></div>
+    </div>
+  </div>
+  <div class="ob-foot"><span class="btn quiet">Back</span><span class="spacer"></span><span class="btn">Skip for now</span><span class="btn primary lg">Connect and finish</span></div>
+</section>
+
+<!-- ======================================================================================= 09 AI & MODELS -->
+<section class="frame app" id="models" data-name="09 AI & models">
+  <aside class="side">
+    <div class="brand"><div class="mark"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:10px"></i><i style="height:6px"></i></div><span class="wordmark">Rflow</span></div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 2.625 7.65 9 2.625 l 6.375 5.025 V 14.25 a 1.125 1.125 0 0 1 -1.125 1.125 h -3.375 v -4.5 h -3.75 v 4.5 H 3.75 A 1.125 1.125 0 0 1 2.625 14.25 z"/></svg>Home</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 9 4.875 C 7.5 3.75 5.625 3.375 3 3.375 v 10.5 c 2.625 0 4.5 0.375 6 1.5 1.5 -1.125 3.375 -1.5 6 -1.5 v -10.5 c -2.625 0 -4.5 0.375 -6 1.5 z M 9 4.875 v 10.5"/></svg>Words<span class="badge">1</span></div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 8.25 2.625 l 1.2 3.3 3.3 1.2 -3.3 1.2 L 8.25 11.625 l -1.2 -3.3 L 3.75 7.125 l 3.3 -1.2 z M 13.5 10.875 l 0.6 1.65 1.65 0.6 -1.65 0.6 -0.6 1.65 -0.6 -1.65 -1.65 -0.6 1.65 -0.6 z"/></svg>Tools</div>
+    <div class="nav on"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><rect x="4.5" y="4.5" width="9" height="9" rx="2.25"/><path d="M 7.5 7.5 h 3 v 3 h -3 z M 6.75 2.25 v 2.25 M 11.25 2.25 v 2.25 M 6.75 13.5 v 2.25 M 11.25 13.5 v 2.25 M 2.25 6.75 h 2.25 M 2.25 11.25 h 2.25 M 13.5 6.75 h 2.25 M 13.5 11.25 h 2.25"/></svg>AI &amp; models</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 3 5.25 h 6.75 M 12.75 5.25 h 2.25 M 3 12.75 h 2.25 M 8.25 12.75 h 6.75"/><circle cx="11.25" cy="5.25" r="1.5"/><circle cx="6.75" cy="12.75" r="1.5"/></svg>Settings</div>
+    <div class="spacer"></div>
+    <div class="status"><span class="lamp ok"><i></i></span><div><b>Ready</b><span>Parakeet, on this PC</span></div></div>
+  </aside>
+  <main class="main">
+    <div class="ph-head"><div><div class="title">AI &amp; models</div><div class="subtitle" style="margin-top:4px">How Rflow hears you, and the AI that polishes what you say.</div></div></div>
+    <div class="row" style="gap:24px;align-items:stretch">
+      <section class="card grow col" style="padding:20px;gap:16px">
+        <div class="row" style="justify-content:space-between"><span class="heading">How Rflow hears you</span><span class="row caption t2" style="gap:8px"><span class="lamp ok"><i></i></span>In use</span></div>
+        <div class="row" style="gap:12px"><div class="grow"><div class="row-title">NVIDIA Parakeet</div><div class="caption t2">On this PC · English · fast here</div></div><span class="btn sm">Change</span></div>
+        <div class="divider"></div>
+        <div class="col" style="gap:8px"><span class="caption t2">Microphone</span><div class="row" style="gap:12px"><div class="field select grow"><span>Microphone array (Surface)</span><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 4.5 7.125 l 4.5 4.5 4.5 -4.5"/></svg></div><div class="meter"><i class="on" style="height:6px"></i><i class="on" style="height:10px"></i><i class="on" style="height:14px"></i><i style="height:9px"></i><i style="height:5px"></i></div></div></div>
+      </section>
+      <section class="card grow col" style="padding:20px;gap:16px">
+        <div class="row" style="justify-content:space-between"><span class="heading">AI connection</span><span class="row caption t2" style="gap:8px"><span class="lamp ok"><i></i></span>Connected · 0.6 s</span></div>
+        <div class="row" style="gap:12px"><div class="grow"><div class="row-title">Gemini</div><div class="caption mono t2">gemini-3.5-flash-lite</div></div><span class="btn sm">Change</span></div>
+        <div class="divider"></div>
+        <div class="col" style="gap:8px"><span class="caption t2">API key</span><div class="row" style="gap:12px"><div class="field grow"><span class="mono t2" style="letter-spacing:.12em">•••••••• 9f3c</span></div><span class="btn sm">Test</span></div></div>
+      </section>
+    </div>
+    <section class="card col" style="padding:4px 20px">
+      <div class="row" style="gap:16px;padding:16px 0"><div class="grow"><div class="row-title">Clean up dictation</div><div class="caption t2">Punctuation, no filler words, your names spelled right. Only text is sent, never your voice.</div></div><span class="tg on"><span class="k"></span></span></div>
+      <div class="divider"></div>
+      <div class="row" style="gap:12px;padding:14px 0"><svg width="16" height="16" class="i s" style="color:var(--violet);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 7.333 2.333 l 1.067 2.933 2.933 1.067 -2.933 1.067 L 7.333 10.333 l -1.067 -2.933 L 3.333 6.333 l 2.933 -1.067 z M 12 9.667 l 0.533 1.467 1.467 0.533 -1.467 0.533 -0.533 1.467 -0.533 -1.467 -1.467 -0.533 1.467 -0.533 z"/></svg><span class="caption t2 grow">This connection also powers Text Transform and Translate.</span><span class="btn ghost sm">Tools<svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 6.333 4 l 4 4 -4 4"/></svg></span></div>
+    </section>
+    <div class="col"><div class="divider"></div><div class="row" style="height:48px;gap:12px;padding:0 4px"><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 7.125 4.5 l 4.5 4.5 -4.5 4.5"/></svg><span class="row-title">Advanced</span><span class="caption t3">Backup model, your own server, scan this PC</span></div></div>
+  </main>
+</section>
+
+<!-- ======================================================================================= 10 WORDS -->
+<section class="frame app" id="words" data-name="10 Words">
+  <aside class="side">
+    <div class="brand"><div class="mark"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:10px"></i><i style="height:6px"></i></div><span class="wordmark">Rflow</span></div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 2.625 7.65 9 2.625 l 6.375 5.025 V 14.25 a 1.125 1.125 0 0 1 -1.125 1.125 h -3.375 v -4.5 h -3.75 v 4.5 H 3.75 A 1.125 1.125 0 0 1 2.625 14.25 z"/></svg>Home</div>
+    <div class="nav on"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 9 4.875 C 7.5 3.75 5.625 3.375 3 3.375 v 10.5 c 2.625 0 4.5 0.375 6 1.5 1.5 -1.125 3.375 -1.5 6 -1.5 v -10.5 c -2.625 0 -4.5 0.375 -6 1.5 z M 9 4.875 v 10.5"/></svg>Words<span class="badge">1</span></div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 8.25 2.625 l 1.2 3.3 3.3 1.2 -3.3 1.2 L 8.25 11.625 l -1.2 -3.3 L 3.75 7.125 l 3.3 -1.2 z M 13.5 10.875 l 0.6 1.65 1.65 0.6 -1.65 0.6 -0.6 1.65 -0.6 -1.65 -1.65 -0.6 1.65 -0.6 z"/></svg>Tools</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><rect x="4.5" y="4.5" width="9" height="9" rx="2.25"/><path d="M 7.5 7.5 h 3 v 3 h -3 z M 6.75 2.25 v 2.25 M 11.25 2.25 v 2.25 M 6.75 13.5 v 2.25 M 11.25 13.5 v 2.25 M 2.25 6.75 h 2.25 M 2.25 11.25 h 2.25 M 13.5 6.75 h 2.25 M 13.5 11.25 h 2.25"/></svg>AI &amp; models</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 3 5.25 h 6.75 M 12.75 5.25 h 2.25 M 3 12.75 h 2.25 M 8.25 12.75 h 6.75"/><circle cx="11.25" cy="5.25" r="1.5"/><circle cx="6.75" cy="12.75" r="1.5"/></svg>Settings</div>
+    <div class="spacer"></div>
+    <div class="status"><span class="lamp ok"><i></i></span><div><b>Ready</b><span>Parakeet, on this PC</span></div></div>
+  </aside>
+  <main class="main">
+    <div class="ph-head"><div><div class="title">Words</div><div class="subtitle" style="margin-top:4px">Names Rflow should always get right, and phrases it types for you.</div></div><div class="right"><div class="seg"><span class="on">Your words <span class="t3" style="font-weight:500">17</span></span><span>Snippets <span class="t3">6</span></span></div></div></div>
+    <div class="row" style="gap:12px"><div class="field grow" style="height:44px"><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><circle cx="8.25" cy="8.25" r="4.875"/><path d="M 15 15 l -3.15 -3.15"/></svg><span class="ph">Add or find a word</span><span class="spacer"></span><span class="key sm">↵</span><span class="caption t3">adds it</span></div><span class="btn disabled" style="height:44px">Add</span></div>
+    <div class="well row" style="padding:12px 12px 12px 16px;gap:12px">
+      <svg width="18" height="18" class="i" style="color:var(--violet);stroke-width:1.312" viewBox="0 0 18 18"><path d="M 8.25 2.625 l 1.2 3.3 3.3 1.2 -3.3 1.2 L 8.25 11.625 l -1.2 -3.3 L 3.75 7.125 l 3.3 -1.2 z M 13.5 10.875 l 0.6 1.65 1.65 0.6 -1.65 0.6 -0.6 1.65 -0.6 -1.65 -1.65 -0.6 1.65 -0.6 z"/></svg>
+      <div class="grow">Heard <span class="t3" style="text-decoration:line-through">cube nettie's</span> twice. You meant <b style="font-weight:600">Kubernetes</b>.</div>
+      <span class="btn quiet sm">Not now</span><span class="btn primary sm">Learn it</span>
+    </div>
+    <section class="card" style="padding:20px;display:flex;flex-direction:column;gap:16px;flex:none">
+      <div class="row" style="justify-content:space-between"><span class="heading">Your words</span><span class="caption t3">Speech recognition listens for these</span></div>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <span class="chip">GitHub</span><span class="chip hover">Kubernetes<span class="x"><svg width="12" height="12" class="i" style="width:12px;height:12px;stroke-width:0.875" viewBox="0 0 12 12"><path d="M 3.25 3.25 l 5.5 5.5 M 8.75 3.25 l -5.5 5.5"/></svg></span></span><span class="chip">Priya</span><span class="chip">Q3 roadmap</span><span class="chip">Rflow</span><span class="chip">Parakeet</span><span class="chip">CodeQL</span><span class="chip">Tamil</span><span class="chip">Karthi</span><span class="chip">Teams</span><span class="chip">PostgreSQL <span class="alias">· heard as "post grass"</span></span><span class="chip">Vercel</span><span class="chip">pull request</span><span class="chip">Surface</span><span class="chip">田中</span><span class="chip">Snapdragon</span><span class="chip">Tanaka</span>
+      </div>
+    </section>
+    <section class="card col" style="padding:8px 20px;flex:none">
+      <div class="row" style="height:44px"><span class="heading">Learned from your fixes</span><span class="spacer"></span><span class="caption t3">When you correct a word on Home, Rflow remembers it</span></div>
+      <div class="divider"></div>
+      <div class="row" style="height:44px;gap:12px"><span class="t3" style="text-decoration:line-through;width:140px">post grass</span><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 3.75 9 h 10.5 M 9.75 4.5 l 4.5 4.5 -4.5 4.5"/></svg><span class="row-title grow">PostgreSQL</span><span class="mono caption t3">Yesterday</span></div>
+      <div class="divider"></div>
+      <div class="row" style="height:44px;gap:12px"><span class="t3" style="text-decoration:line-through;width:140px">code QL</span><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 3.75 9 h 10.5 M 9.75 4.5 l 4.5 4.5 -4.5 4.5"/></svg><span class="row-title grow">CodeQL</span><span class="mono caption t3">Mon</span></div>
+    </section>
+  </main>
+  <div class="tile row" style="position:absolute;left:50%;bottom:24px;transform:translateX(-50%);margin-left:108px;height:44px;padding:0 8px 0 16px;gap:16px;border-radius:999px;width:300px"><svg width="16" height="16" class="i s" style="color:var(--err);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 4.333 4.333 l 7.333 7.333 M 11.667 4.333 l -7.333 7.333"/></svg><span class="grow">Removed "Ollama"</span><span class="btn ghost sm">Undo</span></div>
+</section>
+
+<!-- ======================================================================================= 11 TOOLS -->
+<section class="frame app" id="tools" data-name="11 Tools">
+  <aside class="side">
+    <div class="brand"><div class="mark"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:10px"></i><i style="height:6px"></i></div><span class="wordmark">Rflow</span></div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 2.625 7.65 9 2.625 l 6.375 5.025 V 14.25 a 1.125 1.125 0 0 1 -1.125 1.125 h -3.375 v -4.5 h -3.75 v 4.5 H 3.75 A 1.125 1.125 0 0 1 2.625 14.25 z"/></svg>Home</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 9 4.875 C 7.5 3.75 5.625 3.375 3 3.375 v 10.5 c 2.625 0 4.5 0.375 6 1.5 1.5 -1.125 3.375 -1.5 6 -1.5 v -10.5 c -2.625 0 -4.5 0.375 -6 1.5 z M 9 4.875 v 10.5"/></svg>Words<span class="badge">1</span></div>
+    <div class="nav on"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 8.25 2.625 l 1.2 3.3 3.3 1.2 -3.3 1.2 L 8.25 11.625 l -1.2 -3.3 L 3.75 7.125 l 3.3 -1.2 z M 13.5 10.875 l 0.6 1.65 1.65 0.6 -1.65 0.6 -0.6 1.65 -0.6 -1.65 -1.65 -0.6 1.65 -0.6 z"/></svg>Tools</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><rect x="4.5" y="4.5" width="9" height="9" rx="2.25"/><path d="M 7.5 7.5 h 3 v 3 h -3 z M 6.75 2.25 v 2.25 M 11.25 2.25 v 2.25 M 6.75 13.5 v 2.25 M 11.25 13.5 v 2.25 M 2.25 6.75 h 2.25 M 2.25 11.25 h 2.25 M 13.5 6.75 h 2.25 M 13.5 11.25 h 2.25"/></svg>AI &amp; models</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 3 5.25 h 6.75 M 12.75 5.25 h 2.25 M 3 12.75 h 2.25 M 8.25 12.75 h 6.75"/><circle cx="11.25" cy="5.25" r="1.5"/><circle cx="6.75" cy="12.75" r="1.5"/></svg>Settings</div>
+    <div class="spacer"></div>
+    <div class="status"><span class="lamp ok"><i></i></span><div><b>Ready</b><span>Parakeet, on this PC</span></div></div>
+  </aside>
+  <main class="main">
+    <div class="ph-head"><div><div class="title">Tools</div><div class="subtitle" style="margin-top:4px">Rewrite or translate any text, in any app. Uses your Gemini connection.</div></div></div>
+    <div class="row" style="gap:24px;align-items:flex-start">
+      <section class="card grow col" style="padding:20px;gap:16px">
+        <div class="row" style="gap:12px"><div class="grow"><div class="heading">Text Transform</div><div class="caption t2" style="margin-top:4px">Select text, double-tap <span class="key sm">Ctrl</span></div></div><span class="tg on"><span class="k"></span></span></div>
+        <div class="well col" style="padding:6px;gap:2px">
+          <div class="menu-row"><span class="key sm">1</span>Concise<span class="spacer"></span><span class="caption t3">"make it concise"</span></div>
+          <div class="menu-row"><span class="key sm">2</span>Professional</div>
+          <div class="menu-row"><span class="key sm">3</span>Bullet points</div>
+          <div class="menu-row"><span class="key sm">4</span>Action items</div>
+        </div>
+        <span class="btn ghost sm" style="align-self:flex-start;padding:0">Customise phrases and menu</span>
+      </section>
+      <section class="card grow col" style="padding:20px;gap:16px">
+        <div class="row" style="gap:12px"><div class="grow"><div class="heading">Translate</div><div class="caption t2" style="margin-top:4px">Select text, press <span class="key sm">Ctrl</span> <span class="key sm">C</span> <span class="key sm">C</span></div></div><span class="tg on"><span class="k"></span></span></div>
+        <div class="col" style="gap:8px"><span class="caption t2">Translate into</span><div class="field select"><span>English</span><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 4.5 7.125 l 4.5 4.5 4.5 -4.5"/></svg></div></div>
+        <div class="col" style="gap:8px"><span class="caption t2">When it's already English, into</span><div class="field select"><span>Japanese</span><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 4.5 7.125 l 4.5 4.5 4.5 -4.5"/></svg></div></div>
+      </section>
+    </div>
+    <section class="card col" style="padding:20px;gap:16px;flex:none">
+      <div class="row" style="justify-content:space-between"><span class="heading">Try it</span><div class="seg"><span>Concise</span><span>Professional</span><span class="on">Translate</span></div></div>
+      <div class="row" style="gap:16px;align-items:stretch">
+        <div class="well grow" style="padding:14px 16px;font-size:14px;line-height:22px;height:112px">I checked the deployment and everything looks good, but we still have one issue with the database migration, and I think we should fix that before production.</div>
+        <div class="well grow" style="padding:14px 16px;font-size:14px;line-height:22px;height:112px;font-family:'Noto Sans JP',Geist"><div class="row caption" style="gap:6px;color:var(--violet);margin-bottom:6px"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 7.333 2.333 l 1.067 2.933 2.933 1.067 -2.933 1.067 L 7.333 10.333 l -1.067 -2.933 L 3.333 6.333 l 2.933 -1.067 z M 12 9.667 l 0.533 1.467 1.467 0.533 -1.467 0.533 -0.533 1.467 -0.533 -1.467 -1.467 -0.533 1.467 -0.533 z"/></svg>Japanese</div>デプロイは順調ですが、DB移行に課題が一つあるので、本番前に直しましょう。</div>
+      </div>
+    </section>
+  </main>
+</section>
+
+<!-- ======================================================================================= 12 SETTINGS -->
+<section class="frame app" id="settings" data-name="12 Settings">
+  <aside class="side">
+    <div class="brand"><div class="mark"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:10px"></i><i style="height:6px"></i></div><span class="wordmark">Rflow</span></div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 2.625 7.65 9 2.625 l 6.375 5.025 V 14.25 a 1.125 1.125 0 0 1 -1.125 1.125 h -3.375 v -4.5 h -3.75 v 4.5 H 3.75 A 1.125 1.125 0 0 1 2.625 14.25 z"/></svg>Home</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 9 4.875 C 7.5 3.75 5.625 3.375 3 3.375 v 10.5 c 2.625 0 4.5 0.375 6 1.5 1.5 -1.125 3.375 -1.5 6 -1.5 v -10.5 c -2.625 0 -4.5 0.375 -6 1.5 z M 9 4.875 v 10.5"/></svg>Words<span class="badge">1</span></div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 8.25 2.625 l 1.2 3.3 3.3 1.2 -3.3 1.2 L 8.25 11.625 l -1.2 -3.3 L 3.75 7.125 l 3.3 -1.2 z M 13.5 10.875 l 0.6 1.65 1.65 0.6 -1.65 0.6 -0.6 1.65 -0.6 -1.65 -1.65 -0.6 1.65 -0.6 z"/></svg>Tools</div>
+    <div class="nav"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><rect x="4.5" y="4.5" width="9" height="9" rx="2.25"/><path d="M 7.5 7.5 h 3 v 3 h -3 z M 6.75 2.25 v 2.25 M 11.25 2.25 v 2.25 M 6.75 13.5 v 2.25 M 11.25 13.5 v 2.25 M 2.25 6.75 h 2.25 M 2.25 11.25 h 2.25 M 13.5 6.75 h 2.25 M 13.5 11.25 h 2.25"/></svg>AI &amp; models</div>
+    <div class="nav on"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 3 5.25 h 6.75 M 12.75 5.25 h 2.25 M 3 12.75 h 2.25 M 8.25 12.75 h 6.75"/><circle cx="11.25" cy="5.25" r="1.5"/><circle cx="6.75" cy="12.75" r="1.5"/></svg>Settings</div>
+    <div class="spacer"></div>
+    <div class="status"><span class="lamp ok"><i></i></span><div><b>Ready</b><span>Parakeet, on this PC</span></div></div>
+  </aside>
+  <main class="main">
+    <div class="ph-head"><div><div class="title">Settings</div><div class="subtitle" style="margin-top:4px">Changes save as you make them.</div></div></div>
+    <section class="card col" style="padding:4px 20px">
+      <div class="row" style="gap:16px;padding:14px 0"><div class="grow"><div class="row-title">Dictation key</div><div class="caption t2">Hold to talk, tap for hands-free</div></div><span class="row"><span class="key">Ctrl</span><span class="plus">+</span><span class="key">Win</span></span><span class="btn sm">Press a new key</span></div>
+      <div class="divider"></div>
+      <div class="row" style="gap:16px;padding:14px 0"><div class="grow"><div class="row-title">Sounds</div><div class="caption t2">A soft click when recording starts and stops</div></div><span class="tg on"><span class="k"></span></span></div>
+      <div class="divider"></div>
+      <div class="row" style="gap:16px;padding:14px 0"><div class="grow"><div class="row-title">Start when I sign in</div><div class="caption t2">Rflow waits quietly in the tray</div></div><span class="tg on"><span class="k"></span></span></div>
+      <div class="divider"></div>
+      <div class="row" style="gap:16px;padding:14px 0"><div class="grow"><div class="row-title">Write numbers as numbers</div><div class="caption t2">25%, October 1, 3:30 PM, $5</div></div><span class="row caption" style="gap:6px;color:var(--ok)"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg>Saved</span><span class="tg on"><span class="k"></span></span></div>
+    </section>
+    <section class="card col" style="padding:4px 20px">
+      <div class="row" style="gap:16px;padding:14px 0"><div class="grow"><div class="row-title">Keep recordings on this PC</div><div class="caption t2">Audio and text stay in your folder, never uploaded</div></div><span class="btn ghost sm">Open folder</span><span class="tg on"><span class="k"></span></span></div>
+      <div class="divider"></div>
+      <div class="row" style="gap:16px;padding:14px 0"><div class="grow"><div class="row-title">Microphone stays ready</div><div class="caption t2">Your first word is never lost. Windows shows its microphone icon meanwhile.</div></div><div class="field select" style="width:180px;height:36px;font-size:13px"><span>While Rflow runs</span><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 4.5 7.125 l 4.5 4.5 4.5 -4.5"/></svg></div></div>
+      <div class="divider"></div>
+      <div class="row" style="gap:16px;padding:14px 0"><div class="grow"><div class="row-title">Rflow 1.10.1</div><div class="row caption t2" style="gap:8px"><span class="lamp ok"><i></i></span>Up to date</div></div><span class="btn sm">Check for updates</span></div>
+    </section>
+    <div class="col"><div class="divider"></div><div class="row" style="height:48px;gap:12px;padding:0 4px"><svg width="18" height="18" class="i s t3" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 7.125 4.5 l 4.5 4.5 -4.5 4.5"/></svg><span class="row-title">Advanced</span><span class="caption t3">Voice pipeline, troubleshooting, Reading test, profiles, logs</span></div></div>
+  </main>
+</section>
+
+<!-- ======================================================================================= 13 OVERLAYS -->
+<section class="frame board desk" id="overlays" data-name="13 Popups, menu and pill" style="height:780px;padding:0;display:block">
+  <div style="position:absolute;left:64px;top:52px"><div class="caps" style="color:var(--iris)">Rflow UI 2.0 · Over any app</div><div class="display" style="margin-top:8px">Popups, menu and pill</div><div class="t2" style="margin-top:8px;max-width:540px">They float over your own app and keep its selection. Every action has its key, shown inside its button.</div></div>
+
+  <div class="win" style="left:64px;top:208px;width:640px;height:420px">
+    <div class="bar"><span style="margin-left:14px;font-size:12px">Outlook · Re: Thursday's review</span><span class="spacer"></span><span class="cap"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 4 8 h 8"/></svg></span><span class="cap"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><rect x="4" y="4" width="8" height="8" rx="1"/></svg></span><span class="cap"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 4.333 4.333 l 7.333 7.333 M 11.667 4.333 l -7.333 7.333"/></svg></span></div>
+    <div style="padding:22px 26px;color:#1B1E26;font-size:14px;line-height:24px;font-family:'Noto Sans JP',Geist">田中さん、<br><span class="sel">来週の定例会議は木曜日の午後3時からに変更になりました。資料は水曜日までに共有フォルダへアップロードしてください。</span><br>よろしくお願いします。</div>
+    <div class="ln" style="width:70%"></div><div class="ln" style="width:55%"></div><div class="ln" style="width:62%"></div>
+  </div>
+
+  <div class="pop" style="left:340px;top:404px;width:452px;padding:16px 20px 16px">
+    <div class="row" style="gap:8px"><span class="caption t2">Japanese →</span><span class="chip sel" style="height:28px;--base:#121419;--well:#0F1115">English</span><span class="chip" style="height:28px">Tamil</span><span class="chip" style="height:28px">More</span><span class="spacer"></span><span class="ib" style="width:28px;height:28px;--cx-a:#1C1F26;--cx-b:#14161B"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><path d="M 4.333 4.333 l 7.333 7.333 M 11.667 4.333 l -7.333 7.333"/></svg></span></div>
+    <div class="caption t3" style="margin-top:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:'Noto Sans JP',Geist">来週の定例会議は木曜日の午後3時からに変更になりました…</div>
+    <div style="font-size:15px;line-height:24px;margin-top:8px">Next week's regular meeting has moved to Thursday at 3 PM. Please upload the materials to the shared folder by Wednesday.</div>
+    <div class="row" style="margin-top:16px;gap:12px;justify-content:flex-end"><span class="btn sm" style="--cx-a:#1C1F26;--cx-b:#14161B">Copy <span class="key sm">C</span></span><span class="btn sm primary">Replace <span class="key sm">↵</span></span></div>
+  </div>
+
+  <div class="pop" style="left:820px;top:208px;width:296px;padding:16px 12px 12px">
+    <div style="padding:0 8px"><div class="heading" style="font-size:14px">Text Transform</div><div class="caption t3" style="margin-top:2px">Selected text · 3 sentences</div></div>
+    <div class="col" style="gap:2px;margin-top:12px">
+      <div class="menu-row on"><span class="key sm">1</span>Concise</div>
+      <div class="menu-row"><span class="key sm">2</span>Professional</div>
+      <div class="menu-row"><span class="key sm">3</span>Bullet points</div>
+      <div class="menu-row"><span class="key sm">4</span>Action items</div>
+      <div class="divider" style="margin:4px 8px"></div>
+      <div class="menu-row t2"><span class="key sm">U</span>Undo last change</div>
+    </div>
+  </div>
+
+  <div class="pop" style="left:820px;top:520px;width:296px;padding:16px 20px">
+    <div class="row" style="gap:10px"><span class="lamp warn"><i></i></span><span class="heading" style="font-size:14px">Can't reach Gemini</span></div>
+    <div class="caption t2" style="margin-top:8px;font-weight:400;font-size:13px;line-height:18px">Check the internet connection. Nothing was lost: your text is still selected.</div>
+    <div class="row" style="gap:12px;margin-top:16px"><span class="btn sm" style="--cx-a:#1C1F26;--cx-b:#14161B">AI settings</span><span class="spacer"></span><span class="btn sm primary">Try again <span class="key sm">↵</span></span></div>
+  </div>
+
+  <div style="position:absolute;left:1176px;top:208px;width:220px" class="col">
+    <div class="caption t3" style="margin-bottom:16px">The pill, bottom of the screen</div>
+    <div class="col" style="gap:16px;align-items:flex-start">
+      <div class="pill"><span class="wave live" style="gap:3px"><i style="height:8px;width:3px"></i><i style="height:16px;width:3px"></i><i style="height:12px;width:3px"></i><i style="height:20px;width:3px"></i><i style="height:10px;width:3px"></i><i style="height:14px;width:3px"></i><i style="height:8px;width:3px"></i></span><span class="mono" style="font-size:12px">0:07</span></div>
+      <div class="pill"><span class="wave ai" style="gap:5px"><i style="height:5px;width:5px;border-radius:999px"></i><i style="height:5px;width:5px;border-radius:999px;opacity:.6"></i><i style="height:5px;width:5px;border-radius:999px;opacity:.3"></i></span>Cleaning up</div>
+      <div class="pill"><svg width="16" height="16" class="i s" style="color:var(--ok);stroke-width:1.167" viewBox="0 0 16 16"><path d="M 3.333 8.333 l 3 3 L 12.667 5"/></svg>Typed · 18 words</div>
+      <div class="pill"><span class="lamp warn"><i></i></span>Not ready · 49%</div>
+      <div class="pill"><span class="lamp warn"><i></i></span>Typed as heard · AI offline</div>
+      <div class="pill" style="color:var(--text-2)"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><circle cx="8" cy="8" r="5.667"/><path d="M 5.333 8 h 5.333"/></svg>Nothing heard</div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================================================= 14 COMPACT -->
+<section class="frame compact" id="home-compact" data-name="14 Home · smallest window 780×540">
+  <aside class="side" style="width:84px;padding:20px 10px;align-items:center;gap:4px">
+    <div class="mark" style="margin-bottom:16px"><i style="height:6px"></i><i style="height:12px"></i><i style="height:16px"></i><i style="height:10px"></i><i style="height:6px"></i></div>
+    <div class="nav on" style="width:64px;height:52px;padding:6px 0 0;flex-direction:column;justify-content:center;gap:2px"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 2.625 7.65 9 2.625 l 6.375 5.025 V 14.25 a 1.125 1.125 0 0 1 -1.125 1.125 h -3.375 v -4.5 h -3.75 v 4.5 H 3.75 A 1.125 1.125 0 0 1 2.625 14.25 z"/></svg><span style="font-size:11px;line-height:14px">Home</span></div>
+    <div class="nav" style="width:64px;height:52px;padding:6px 0 0;flex-direction:column;justify-content:center;gap:2px"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 9 4.875 C 7.5 3.75 5.625 3.375 3 3.375 v 10.5 c 2.625 0 4.5 0.375 6 1.5 1.5 -1.125 3.375 -1.5 6 -1.5 v -10.5 c -2.625 0 -4.5 0.375 -6 1.5 z M 9 4.875 v 10.5"/></svg><span style="font-size:11px;line-height:14px">Words</span></div>
+    <div class="nav" style="width:64px;height:52px;padding:6px 0 0;flex-direction:column;justify-content:center;gap:2px"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 8.25 2.625 l 1.2 3.3 3.3 1.2 -3.3 1.2 L 8.25 11.625 l -1.2 -3.3 L 3.75 7.125 l 3.3 -1.2 z M 13.5 10.875 l 0.6 1.65 1.65 0.6 -1.65 0.6 -0.6 1.65 -0.6 -1.65 -1.65 -0.6 1.65 -0.6 z"/></svg><span style="font-size:11px;line-height:14px">Tools</span></div>
+    <div class="nav" style="width:64px;height:52px;padding:6px 0 0;flex-direction:column;justify-content:center;gap:2px"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><rect x="4.5" y="4.5" width="9" height="9" rx="2.25"/><path d="M 7.5 7.5 h 3 v 3 h -3 z M 6.75 2.25 v 2.25 M 11.25 2.25 v 2.25 M 6.75 13.5 v 2.25 M 11.25 13.5 v 2.25 M 2.25 6.75 h 2.25 M 2.25 11.25 h 2.25 M 13.5 6.75 h 2.25 M 13.5 11.25 h 2.25"/></svg><span style="font-size:11px;line-height:14px">AI</span></div>
+    <div class="nav" style="width:64px;height:52px;padding:6px 0 0;flex-direction:column;justify-content:center;gap:2px"><svg width="18" height="18" class="i" viewBox="0 0 18 18" style="stroke-width:1.312"><path d="M 3 5.25 h 6.75 M 12.75 5.25 h 2.25 M 3 12.75 h 2.25 M 8.25 12.75 h 6.75"/><circle cx="11.25" cy="5.25" r="1.5"/><circle cx="6.75" cy="12.75" r="1.5"/></svg><span style="font-size:11px;line-height:14px">Settings</span></div>
+    <div class="spacer"></div>
+    <div class="col" style="align-items:center;gap:4px"><span class="lamp ok"><i></i></span><span style="font-size:11px;line-height:14px;font-weight:600">Ready</span></div>
+  </aside>
+  <main class="main" style="padding:20px 20px 20px 4px;gap:16px">
+    <section class="card hero" style="padding:16px 20px;gap:20px">
+      <div class="orb" style="width:88px;height:88px"><div class="ring ok" style="width:70px;height:70px"><div class="core" style="width:56px;height:56px"><div class="wave ok" style="gap:3px"><i style="height:5px;width:3px"></i><i style="height:9px;width:3px"></i><i style="height:12px;width:3px"></i><i style="height:9px;width:3px"></i><i style="height:5px;width:3px"></i></div></div></div></div>
+      <div class="grow col" style="gap:6px"><div class="row caption t2" style="gap:8px"><span class="lamp ok"><i></i></span>Ready in any app</div><div class="heading" style="font-size:17px;line-height:24px">Hold <span class="key sm">Ctrl</span><span class="plus">+</span><span class="key sm">Win</span> and talk</div><div class="caption t3">Parakeet on this PC · cleanup by Gemini</div></div>
+    </section>
+    <div class="well readout" style="height:40px;padding:0 16px"><div class="seg-v"><b style="font-size:14px">1,284</b><span>this week</span></div><span class="sep" style="margin:0 12px"></span><div class="seg-v"><b style="font-size:14px">142</b><span>wpm</span></div><span class="sep" style="margin:0 12px"></span><div class="seg-v"><b style="font-size:14px">6</b><span>days</span></div></div>
+    <section class="card list" style="padding:12px 12px 6px">
+      <div class="lh" style="padding:0 6px 6px"><span class="heading">Today</span><span class="spacer"></span><span class="ib" style="width:28px;height:28px"><svg width="16" height="16" class="i s" viewBox="0 0 16 16" style="stroke-width:1.167"><circle cx="7.333" cy="7.333" r="4.333"/><path d="M 13.333 13.333 l -2.8 -2.8"/></svg></span></div>
+      <div class="item" style="height:38px;padding:0 10px"><span class="tm">09:42</span><span class="tx">Can you review the pull request before lunch?</span></div>
+      <div class="item" style="height:38px;padding:0 10px"><span class="tm">09:15</span><span class="tx">Thanks for the quick reply! I'll send the draft this afternoon.</span></div>
+      <div class="item" style="height:38px;padding:0 10px"><span class="tm">08:51</span><span class="tx">Let's move the stand-up to Thursday morning.</span></div>
+      <div class="item" style="height:38px;padding:0 10px"><span class="tm">08:30</span><span class="tx">Please book a room for six people on Friday at 2.</span></div>
+      <div class="item" style="height:38px;padding:0 10px"><span class="tm">08:12</span><span class="tx">Ship the release notes after the review is merged.</span></div>
+      <div class="item" style="height:38px;padding:0 10px"><span class="tm">07:58</span><span class="tx">Remind Priya that the Q3 roadmap review moved to Monday.</span></div>
+    </section>
+  </main>
+</section>
+
+<script>
+/* preview helper only: #only=<frame id> shows one frame (used to render screenshots); without a hash, nothing changes */
+(function () {
+  var m = location.hash.match(/only=([\w-]+)/);
+  if (!m) return;
+  document.querySelectorAll('.frame').forEach(function (f) { if (f.id !== m[1]) f.style.display = 'none'; });
+})();
+</script>
+</body>
+</html>
