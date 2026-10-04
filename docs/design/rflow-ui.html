@@ -134,9 +134,9 @@ body{background:#07080A;padding:64px;display:flex;flex-direction:column;align-it
 /* ================================================================ shell */
 .side{width:216px;padding:24px 16px 24px 20px;display:flex;flex-direction:column;gap:4px;flex:none}
 .brand{display:flex;align-items:center;gap:12px;height:32px;padding:0 4px;margin-bottom:24px}
-.mark{width:32px;height:32px;border-radius:10px;background:var(--key-face);display:flex;align-items:center;justify-content:center;gap:2px;flex:none;
-      box-shadow:var(--sh-3),inset 0 -2px 0 var(--key-lip),inset 0 1px 0 rgba(255,255,255,.06)}
-.mark i{display:block;width:2.5px;border-radius:2px;background:var(--ok)}
+/* the logo since 2.0.1: the owner's blue-to-violet ribbon "R" (docs/brand, scripts/make_brand.py) */
+.mark{width:32px;height:32px;flex:none;background:url(../../sst/static/brand/rflow-mark-128.png) center/contain no-repeat}
+.mark i{display:none}
 .wordmark{font-size:18px;font-weight:600;letter-spacing:-.03em}
 .nav{display:flex;align-items:center;gap:12px;height:40px;padding:0 12px;border-radius:14px;color:var(--text-2);font-size:14px;font-weight:500}
 .nav.on{background:var(--base);box-shadow:var(--in-2);color:var(--text);font-weight:600}
