@@ -1260,10 +1260,23 @@ def self_test() -> int:
     preview = PreviewApp(history=[{"time": "2026-09-30 10:15:00", "text": "Self-test."}])
     window = MainWindow(preview)
     window.show_update("Rflow 9.9.9 is available (you have 1.0.0).", version="9.9.9")
-    for page in ("home", "dictionary", "speech", "reading", "cleanup", "transform", "settings", "welcome"):
-        window.show_page(page)
-        window.grab()
+    if not theme.load_fonts():  # the shipped Geist fonts (sst/static/fonts) made it into the build
+        return 1
+    for name in ("dark", "light"):
+        window.apply_theme(name)
+        for page in window.pages:  # every page, so the icons (Qt SVG) and the soft shadows are drawn in the build too
+            window.show_page(page)
+            window.grab()
     window.pages["reading"].ensure_test().grab()
+    from sst.transformui import TransformMenu
+    from sst.translate import Translation
+    from sst.translateui import TranslatePopup
+    popup = TranslatePopup()
+    popup.show_result(Translation("Self-test.", "English", "Self-test.", 0.1))
+    popup.grab()
+    menu = TransformMenu()
+    menu.items, menu.source = [("concise", "1", "Concise"), ("undo", "U", "Undo")], "Self-test"
+    menu.grab()
     _with_red_dot(QIcon(str(ICON_FILE)))
     import ctranslate2  # noqa: F401 (Whisper's runtime: bundled and its DLLs load, without needing the downloaded model)
     import faster_whisper  # noqa: F401

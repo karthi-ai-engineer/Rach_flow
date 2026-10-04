@@ -87,7 +87,7 @@ def fresh(state: str = "result") -> None:
         popup.show_result(Translation("Next week's regular meeting has been moved to Thursday from 3 PM.",
                                       "English", "", 1.0))
     elif state == "error":
-        popup.show_error("The provider refused the API key. Check it on the AI cleanup page.", "HTTP 401", setup=True)
+        popup.show_error("The provider refused the API key. Check it on AI & models.", "HTTP 401", setup=True)
     elif state == "setup":
         popup.show_setup()
     app.processEvents()
@@ -114,9 +114,9 @@ click(popup, popup.all_languages["Korean"], "Translate: a language in the full l
 fresh("error")
 click(popup, popup.retry_button, "Translate: Try again (after an error)", lambda: ("retry",) in heard)
 fresh("error")
-click(popup, popup.setup_button, "Translate: Set up AI cleanup (after an error)", lambda: ("setup",) in heard)
+click(popup, popup.setup_button, "Translate: AI settings (after an error)", lambda: ("setup",) in heard)
 fresh("setup")
-click(popup, popup.setup_button, "Translate: Set up AI cleanup (no model)", lambda: ("setup",) in heard)
+click(popup, popup.setup_button, "Translate: Connect an AI (no model)", lambda: ("setup",) in heard)
 fresh()
 click(popup, popup.close_button, "Translate: ✕ close", lambda: ("closed",) in heard)
 popup.close_popup()
@@ -128,7 +128,7 @@ items = [("concise", "1", "Concise"), ("professional", "2", "Professional"), ("b
 for i, (key, _, label) in enumerate(items):
     chosen.clear()
     menu.open_at(anchor, items, "Your selected text")
-    click(menu, QPoint(menu.width() // 2, 52 + i * menu.ROW + menu.ROW // 2), f"Text Transform menu: row '{label}'",
+    click(menu, menu._row_rect(i).center().toPoint(), f"Text Transform menu: row '{label}'",
           lambda k=key: chosen == [k])
 menu.close_menu()
 

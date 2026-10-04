@@ -131,6 +131,7 @@ class TranslatePopup(QWidget):
         layout.addLayout(self.head)
 
         self.original = label("", "caption", "3", wrap=False)  # one line: the text is still selected in the app
+        self.original.setMinimumHeight(20)  # Japanese falls back to a taller font than Geist: room for it
         layout.addWidget(self.original)
         self.waiting = label("", tone="2", wrap=False)
         layout.addWidget(self.waiting)
