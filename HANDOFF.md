@@ -11,6 +11,9 @@ _Last updated: 2026-10-04_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-04):**
+- **Rflow 1.10.1** (2026-10-04, the owner's "correct it in 1.10.1"): Translate's popup and the Text Transform menu take
+  clicks. Since they came (1.7.0, 1.8.0) they had the pill's click-through window style, so every click went to the
+  app behind them; only the keyboard worked (Esc, and 1-4 in the menu).
 - **Rflow 1.10.0** (2026-10-04, the owner's "publish + release 1.10.0"): the Translate popup redone (phase 24).
 - **Rflow 1.9.0** (the same day): settings that change only on purpose (phase 23, PR #58) and the fix for a dictation
   typed twice when its last part replaced the one before (PR #57, since 1.7.0). The owner updated to it through the
@@ -110,6 +113,7 @@ _Last updated: 2026-10-04_
 | 16 | **Cloud speech models**: OpenAI, Groq, Google Gemini with the user's key, a warning, a Test, Parakeet as the fallback | done, on `main` (PR #39), released **v1.5.0** |
 | 17 | **Your own server for speech**: vLLM, the company gateway, any OpenAI-compatible transcription server; Load models, Test | done, on `main` (PR #41), released **v1.5.0** |
 | 18 | **Parakeet downloaded on demand**: a speech step in the welcome, the installer 90 MB instead of 571 MB; version 1.5.0 | done, on `main` (PR #43), released **v1.5.0** |
+| fix | **Popups that take clicks**: Translate's popup and the Text Transform menu had the pill's click-through style (`WS_EX_TRANSPARENT`): `_no_activate(hwnd, click_through=False)` now; checked by hand with `scripts/check_popup_clicks.py` (15 of 15) | done, on `main`, released **v1.10.1** |
 | 24 | **The Translate popup, redone** (the owner: "the UX literally sucks"): "Japanese → English" with one-click languages and More, as tall as the text (nothing overlaps) and always on the screen, errors in plain words with Try again, no model leads to AI cleanup, Copy says "Copied", a click outside closes it, never English into English | done, on `main`, released **v1.10.0** |
 | 23 | **Settings that change only on purpose** (the owner's request): the wheel never changes a dropdown, long lists searchable, a Save per section with its state shown, API keys masked with a pen to change them, the model in use and the language at the top of Speech recognition | done, on `main` (PR #58), released **v1.9.0** |
 | fix | A dictation typed twice when its last part replaced the one before: the result read the replacement too early | done, on `main` (PR #57), released **v1.9.0** |
@@ -118,7 +122,7 @@ _Last updated: 2026-10-04_
 | 20 | **Text Transform** (the owner's idea): say "make it concise" (or double-tap Ctrl for a menu) and the selected text or the last dictation becomes Concise, Professional, Bullet points or Action items, checked, with undo; the text is found again if focus moved | done, on `main` (PR #50, with #48), released **v1.7.0** |
 | 19 | **The voice pipeline** (the owner's plan): always-on mic, chunks while speaking, parallel ASR, merge, dictionary, formatting, guarded LLM | done, on `main` (PR #46), released **v1.6.0** |
 
-Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0 and v1.10.0 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
+Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0 and v1.10.1 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
 added on 2026-10-01, and the old https://rachdarlingflow-site.vercel.app stays assigned: installed apps up to 1.6.0
 link there, so never remove it;
 `site/`). The in-app update path is verified end to end: the owner's installed 1.0.0 showed the banner and updated
@@ -1274,6 +1278,10 @@ These were scratch scripts, not in git. The findings:
     (`translate.fallback_second`, `system_language`): the Translate page calls this "Automatic"
 - The empty gap above "Try it" (Translate, Text Transform, the welcome) and "Add a snippet": the text boxes kept their
   growing size policy despite a fixed height, so their card grew and the heading took the room (`fixed_height`).
+- **A popup with buttons must not be click-through** (1.10.1): `sst.app._no_activate` adds `WS_EX_TRANSPARENT` for the
+  pill only; Translate's popup and the Text Transform menu pass `click_through=False`. The tests can't see this (Qt
+  runs off the screen there), so after changing a popup run `uv run python scripts/check_popup_clicks.py` on Windows:
+  it hit-tests every button the way Windows routes a real click and clicks it in Rflow's own window only.
 
 ## Known limitations
 

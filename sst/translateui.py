@@ -229,7 +229,7 @@ class TranslatePopup(QWidget):
         self.show()
         try:
             from sst.app import _no_activate  # clicks never take the app's focus: its selection stays for Replace
-            _no_activate(int(self.winId()))
+            _no_activate(int(self.winId()), click_through=False)  # but they do reach the buttons
         except Exception:  # the off-screen test platform has no real window
             pass
 

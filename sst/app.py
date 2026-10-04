@@ -190,15 +190,18 @@ class Pill(QWidget):
         p.end()
 
 
-def _no_activate(hwnd: int) -> None:
-    # Belt and braces on top of Qt's flags: a window that got focus would receive the paste instead of the user's app.
+def _no_activate(hwnd: int, click_through: bool = True) -> None:
+    """Belt and braces on top of Qt's flags: a window that got focus would receive the paste instead of the user's app.
+    `click_through` (the pill) also lets clicks pass to the window below; a popup with buttons must not: with it, every
+    click on Translate's popup and the Text Transform menu went to the app behind them (until 1.10.1)."""
     user32 = ctypes.windll.user32
     user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
     user32.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
     user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
     GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW = -20, 0x08000000, 0x20, 0x80
-    style = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-    user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW)
+    style = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+    style = style | WS_EX_TRANSPARENT if click_through else style & ~WS_EX_TRANSPARENT
+    user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style)
 
 
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)

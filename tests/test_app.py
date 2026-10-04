@@ -43,6 +43,19 @@ def test_pill_grows_to_fit_long_messages():
     assert pill.width() > short
 
 
+def test_only_the_pill_lets_clicks_through_and_nothing_takes_the_focus(monkeypatch):
+    import ctypes
+    styles = {}
+    user32 = SimpleNamespace(GetWindowLongPtrW=lambda hwnd, index: 0x20 | 0x100,  # click-through already, and another bit
+                             SetWindowLongPtrW=lambda hwnd, index, style: styles.__setitem__(hwnd, style))
+    monkeypatch.setattr(ctypes.windll, "user32", user32)
+    sst_app._no_activate(1)  # the pill
+    sst_app._no_activate(2, click_through=False)  # Translate's popup, the Text Transform menu
+    NOACTIVATE, TRANSPARENT, TOOLWINDOW = 0x08000000, 0x20, 0x80
+    assert styles[1] & NOACTIVATE and styles[1] & TRANSPARENT and styles[1] & TOOLWINDOW
+    assert styles[2] & NOACTIVATE and not styles[2] & TRANSPARENT and styles[2] & 0x100  # other bits kept
+
+
 def _fake_tray_app(settings: Settings):
     """TrayApp's methods on a stand-in: apply_settings only records, so nothing touches the real settings file."""
     from sst.pipeline.dictionary import DictionaryStore
