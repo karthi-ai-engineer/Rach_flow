@@ -760,6 +760,10 @@ class TrayApp:
                  result.seconds, result.attempts, f" ({'; '.join(result.reasons)})" if result.reasons else "")
         return result
 
+    def open_window(self, page: str) -> None:
+        """The window at a page (Translate's "Set up AI cleanup")."""
+        self.window.open(page)
+
     def say(self, state: str, message: str = "") -> None:
         """A short word in the pill (and the log, for warnings)."""
         if state == "warning":

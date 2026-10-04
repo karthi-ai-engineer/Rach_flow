@@ -1,7 +1,38 @@
 """Translate's engine (sst.translate): the language to write in, the prompt, the value check. The model is faked."""
 import pytest
 
-from sst.translate import Translator, already_in, check, choose_target, clean, system_prompt
+from sst.translate import (
+    LANGUAGES,
+    Translator,
+    already_in,
+    check,
+    choose_target,
+    clean,
+    detect,
+    fallback_second,
+    system_language,
+    system_prompt,
+)
+
+
+@pytest.mark.parametrize("text, language", [
+    ("金曜日までに更新したレポートを送っていただけますか？", "Japanese"),
+    ("请在星期五之前把报告发给我。", "Chinese"),
+    ("வெள்ளிக்கிழமைக்குள் அறிக்கையை அனுப்ப முடியுமா?", "Tamil"),
+    ("Could you send me the updated report by Friday?", "English"),
+    ("¿Podrías enviarme el informe actualizado antes del viernes?", ""),  # the Latin alphabet alone can't tell
+    ("क्या आप शुक्रवार तक रिपोर्ट भेज सकते हैं?", ""),  # Devanagari: Hindi or Marathi, so no guess
+])
+def test_the_language_is_named_only_when_the_letters_make_it_certain(text, language):
+    assert detect(text) == language
+
+
+def test_text_already_in_the_language_goes_into_windows_language_or_english():
+    assert fallback_second("English", "Japanese") == "Japanese"  # a Japanese Windows
+    assert fallback_second("Japanese", "Japanese") == "English"  # never into the same language
+    assert fallback_second("English", "English") == ""  # nothing better to offer: the prompt decides
+    assert fallback_second("Tamil", "Klingon") == "English"  # a Windows language Translate doesn't offer
+    assert system_language() in ("", *LANGUAGES)  # this computer's, whatever it is: one Translate offers, or none
 
 
 @pytest.mark.parametrize("text, language, expected", [

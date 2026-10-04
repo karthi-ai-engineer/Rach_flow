@@ -885,7 +885,7 @@ def test_the_translate_page_sets_the_shortcut_and_the_languages():
     page.target.setCurrentText("Japanese")
     page.second.setCurrentIndex(page.second.findData("English"))
     assert (app.settings.translate_to, app.settings.translate_second) == ("Japanese", "English")
-    assert "already in Japanese: into English" in page.how.text()
+    assert "already in Japanese: in English" in page.how.text()
     page.shortcut.setCurrentIndex(page.shortcut.findData(""))
     assert app.settings.translate_shortcut == "" and "off" in page.how.text()
 
