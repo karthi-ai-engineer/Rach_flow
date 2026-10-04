@@ -313,6 +313,16 @@ def test_esc_or_the_shortcut_again_closes_the_menu(qt):
     assert not controller.menu.isVisible() and not app.asked
 
 
+def test_the_menu_s_rows_take_clicks_instead_of_letting_them_through(qt, monkeypatch):
+    from sst import app as sst_app
+    calls = []
+    monkeypatch.setattr(sst_app, "_no_activate", lambda hwnd, click_through=True: calls.append(click_through))
+    controller, access, app = make(selection=ORIGINAL)
+    open_menu(controller)
+    assert calls and calls[-1] is False  # click-through sent every click to the app below (until 1.10.1)
+    controller.menu.close_menu()
+
+
 def test_without_an_ai_model_the_user_is_told(qt):
     controller, access, app = make(selection=ORIGINAL, ready=False)
     controller.trigger()

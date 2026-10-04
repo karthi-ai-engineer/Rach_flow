@@ -113,8 +113,8 @@ class TransformMenu(QWidget):
         self.move(x, max(area.top(), y))
         self.show()
         try:
-            from sst.app import _no_activate  # the same window flags as the pill: clicks never take the app's focus
-            _no_activate(int(self.winId()))
+            from sst.app import _no_activate  # like the pill, clicks never take the app's focus; unlike it, the
+            _no_activate(int(self.winId()), click_through=False)  # menu's rows can be clicked
         except Exception:  # the off-screen test platform has no real window
             pass
         self.update()

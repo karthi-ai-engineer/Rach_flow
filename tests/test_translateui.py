@@ -323,6 +323,14 @@ def test_off_means_no_shortcut(qt):
 
 # ---- the popup's UX (phase 24)
 
+def test_the_popup_s_buttons_take_clicks_instead_of_letting_them_through(qt, monkeypatch):
+    from sst import app as sst_app
+    calls = []
+    monkeypatch.setattr(sst_app, "_no_activate", lambda hwnd, click_through=True: calls.append(click_through))
+    controller, _, _ = make()
+    press(controller)
+    assert shown(controller) and calls == [False]  # click-through sent every click to the app below (until 1.10.1)
+
 def test_the_header_says_from_what_into_what_with_one_click_languages(qt):
     controller, _, app = make(access=FakeAccess(copied=JAPANESE))
     app.settings.translate_to = "English"
