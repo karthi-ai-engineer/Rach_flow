@@ -55,7 +55,9 @@ The layout is in `README.md`. Speech recognition is a building block like the AI
 in the background. Engines live in `sst/engines/`; the cloud ones (`cloud.py`) use the provider keys the AI cleanup
 keeps (`GatewayConfig.key_for`). The dictation logic is `Dictation` in `sst/dictate.py`,
 shared by the app (`sst/app.py`, Qt: tray, pill, `TrayApp`) and the console command. The window is `sst/window.py`: it
-keeps no state and calls `TrayApp`, or `PreviewApp` in tests and screenshots. In-app updates are `sst/updates.py`, and
+keeps no state and calls `TrayApp`, or `PreviewApp` in tests and screenshots. Its look ("Obsidian Signal", Rflow UI 2.0;
+the design is `docs/design/rflow-ui.html`) is `sst/theme.py` (colours with one job each, the Geist fonts, icons, the
+soft depth painted under widgets by their host) and `sst/ui.py` (buttons, toggles, lamps, keycaps, the voice orb). In-app updates are `sst/updates.py`, and
 the text cleanup is `sst/gateway.py` (`PROVIDERS`: each provider's request format). Accuracy work follows
 `docs/accuracy.md`: a change is kept only if `sst eval` (`sst/evaluate.py`) shows it better on the reading test's held-out
 sets (C-E), and an engine's `signature` must change whenever its output can (model, decoding, hotwords), since

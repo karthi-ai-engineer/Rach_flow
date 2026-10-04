@@ -185,7 +185,7 @@ def tray_app(monkeypatch, tmp_path):
 def test_the_tray_app_and_its_window_work_together(tray_app):
     app, saved, history = tray_app
     assert app.dictation and app.listener.running and app.window.ready
-    assert "Ready: hold Ctrl+Win" in app.window.status_label.text()
+    assert "Ready: hold Ctrl+Win" in app.window.status_message
     app.window.open("home")
     app._on_result("hello world", "Hello, world.", 2.0)  # what the dictation reports after typing
     assert history[0]["text"] == "Hello, world." and saved["stats"].words == 2
@@ -259,7 +259,7 @@ def test_another_speech_model_loads_in_the_background_and_takes_over(tray_app, w
     assert saved["settings"].speech_model == "whisper-turbo"
     assert _wait_for(lambda: app.speech_in_use() == "whisper-turbo", QTest.qWait)
     assert app.dictation.engine is not first and app.dictation.engine.words == ["Tamil"]  # Your words go along
-    assert not app.loading_speech and "Ready" in app.window.status_label.text()
+    assert not app.loading_speech and "Ready" in app.window.status_message
 
 
 def test_a_model_not_downloaded_or_unknown_is_not_chosen(tray_app):
@@ -370,7 +370,7 @@ def test_a_cloud_model_needs_its_key_then_takes_over_with_parakeet_behind_it(tra
     engine = app.dictation.engine
     assert (engine.api_key, engine.model, engine.words) == ("sk-test", "gpt-4o-transcribe", ["Karthi"])
     assert engine.fallback() is parakeet  # already in memory: nothing to load when the provider fails
-    assert "speech: Openai" in app.window.status_label.text()
+    assert "speech: Openai" in app.window.status_message
     app.use_cloud_speech("openai", "sk-new", "whisper-1")  # the card's Save: no reload
     assert app.dictation.engine is engine and (engine.api_key, engine.model) == ("sk-new", "whisper-1")
     app.set_speech_language("ta")
@@ -433,7 +433,7 @@ def test_a_new_install_starts_without_a_speech_model_then_downloads_parakeet(no_
     from sst.engines import parakeet
     app, _, _ = tray_app
     assert app.dictation is None and not app.loading_speech
-    assert "Choose a speech model" in app.window.status_label.text()
+    assert "Choose a speech model" in app.window.status_message
     with pytest.raises(RuntimeError, match="isn't downloaded"):
         app._fallback_engine()  # a cloud model has nothing to fall back on yet
     folder = tmp_path / "downloaded"
@@ -446,7 +446,7 @@ def test_a_new_install_starts_without_a_speech_model_then_downloads_parakeet(no_
     monkeypatch.setattr(sst_app.downloads, "download", fake_download)
     app.download_speech_model("parakeet")  # Parakeet was the setting all along: it loads once downloaded
     assert _wait_for(lambda: app.speech_in_use() == "parakeet", QTest.qWait)
-    assert app.listener.running and "Ready: hold Ctrl+Win" in app.window.status_label.text()
+    assert app.listener.running and "Ready: hold Ctrl+Win" in app.window.status_message
 
 
 def test_a_new_install_can_start_with_a_cloud_model_only(no_parakeet, tray_app):

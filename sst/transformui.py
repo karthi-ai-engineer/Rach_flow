@@ -20,9 +20,10 @@ import time
 from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QPoint, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter
+from PySide6.QtGui import QCursor, QFontMetrics, QGuiApplication, QPainter
 from PySide6.QtWidgets import QWidget
 
+from sst import theme
 from sst.hotkey import HotkeyListener, parse_hotkey
 from sst.transform import TRANSFORMS
 
@@ -84,13 +85,16 @@ def place(access, text: str, hwnd: int) -> bool:
 
 
 class TransformMenu(QWidget):
-    """A small panel at the mouse pointer: the source of the text, then one row per transform. It never takes focus."""
+    """A small panel at the mouse pointer, in the design's popup look: "Text Transform" and the source of the text, then
+    one row per transform with its key drawn as a key (Undo apart, below a line). It never takes focus."""
 
     chosen = Signal(str)  # a transform key, or UNDO
     closed = Signal()
 
-    ROW = 30
-    WIDTH = 300
+    ROW = 36
+    WIDTH = 296  # the panel; the window has MARGIN more on each side, for its soft shadow
+    MARGIN = 24
+    TOP = 66  # from the panel's top to its first row: the title and the source above
 
     def __init__(self):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
@@ -101,16 +105,26 @@ class TransformMenu(QWidget):
         self.items: list[tuple[str, str, str]] = []  # (key, hint, label)
         self.source = ""
         self.current = 0
-        self._font, self._small = QFont("Segoe UI", 10), QFont("Segoe UI", 9)
+        theme.load_fonts()
+
+    def _row_rect(self, i: int) -> QRectF:
+        """Where row i is: Undo sits below a line, apart from the transforms."""
+        apart = 9 if self.items and self.items[i][0] == UNDO and i > 0 else 0
+        return QRectF(self.MARGIN + 12, self.MARGIN + self.TOP + i * self.ROW + apart, self.WIDTH - 24, self.ROW - 2)
+
+    def _height(self) -> int:
+        undo = any(key == UNDO for key, _, _ in self.items) and len(self.items) > 1
+        return self.TOP + self.ROW * len(self.items) + (9 if undo else 0) + 12
 
     def open_at(self, pos: QPoint, items: list[tuple[str, str, str]], source: str) -> None:
         self.items, self.source, self.current = items, source, 0
-        self.resize(self.WIDTH, 58 + self.ROW * len(items) + 26)
+        self.resize(self.WIDTH + 2 * self.MARGIN, self._height() + 2 * self.MARGIN)
         screen = QGuiApplication.screenAt(pos) or QGuiApplication.primaryScreen()
         area = screen.availableGeometry()
-        x = min(max(area.left(), pos.x() + 12), area.right() - self.width())
-        y = pos.y() + 16 if pos.y() + 16 + self.height() <= area.bottom() else pos.y() - self.height() - 8
-        self.move(x, max(area.top(), y))
+        height = self._height()
+        x = min(max(area.left(), pos.x() + 12), area.right() - self.WIDTH)
+        y = pos.y() + 16 if pos.y() + 16 + height <= area.bottom() else pos.y() - height - 8
+        self.move(x - self.MARGIN, max(area.top(), y) - self.MARGIN)
         self.show()
         try:
             from sst.app import _no_activate  # like the pill, clicks never take the app's focus; unlike it, the
@@ -148,8 +162,11 @@ class TransformMenu(QWidget):
         self.chosen.emit(self.items[i][0])
 
     def _row_at(self, y: float) -> int | None:
-        i = int((y - 52) // self.ROW)
-        return i if 0 <= i < len(self.items) and y >= 52 else None
+        for i in range(len(self.items)):
+            rect = self._row_rect(i)
+            if rect.top() <= y < rect.top() + self.ROW:
+                return i
+        return None
 
     def mouseMoveEvent(self, event):
         i = self._row_at(event.position().y())
@@ -165,33 +182,32 @@ class TransformMenu(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        p.setPen(QColor(255, 255, 255, 40))
-        p.setBrush(QColor(24, 24, 32, 242))
-        p.drawRoundedRect(rect, 12, 12)
-        p.setPen(QColor(245, 245, 250))
-        p.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
-        p.drawText(QRectF(16, 10, rect.width() - 32, 20), Qt.AlignmentFlag.AlignVCenter, "Text Transform")
-        p.setFont(self._small)
-        p.setPen(QColor(170, 170, 185))
-        p.drawText(QRectF(16, 30, rect.width() - 32, 18), Qt.AlignmentFlag.AlignVCenter,
-                   QFontMetrics(self._small).elidedText(self.source, Qt.TextElideMode.ElideRight, int(rect.width()) - 32))
-        for i, (_, hint, label) in enumerate(self.items):
-            row = QRectF(8, 52 + i * self.ROW, rect.width() - 16, self.ROW - 2)
+        dpr = self.devicePixelRatioF()
+        m, panel = self.MARGIN, QRectF(self.MARGIN, self.MARGIN, self.WIDTH, self._height())
+        theme.paint_surface(p, "float", panel, 20, popup=True, dpr=dpr)
+        text, quiet = theme.tok("text", popup=True), theme.tok("text3", popup=True)
+        p.setPen(text)
+        p.setFont(theme.font(14, 600))
+        p.drawText(QRectF(m + 20, m + 14, self.WIDTH - 40, 20), Qt.AlignmentFlag.AlignVCenter, "Text Transform")
+        small = theme.font(12, 500)
+        p.setFont(small)
+        p.setPen(quiet)
+        p.drawText(QRectF(m + 20, m + 34, self.WIDTH - 40, 18), Qt.AlignmentFlag.AlignVCenter,
+                   QFontMetrics(small).elidedText(self.source, Qt.TextElideMode.ElideRight, self.WIDTH - 40))
+        for i, (key, hint, label) in enumerate(self.items):
+            row = self._row_rect(i)
+            if key == UNDO and i > 0:
+                p.fillRect(QRectF(row.left() + 8, row.top() - 6, row.width() - 16, 1), theme.tok("line", popup=True))
             if i == self.current:
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(59, 130, 246, 200))
-                p.drawRoundedRect(row, 8, 8)
-            p.setPen(QColor(200, 210, 255) if i != self.current else QColor(255, 255, 255))
-            p.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
-            p.drawText(row.adjusted(10, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter, hint)
-            p.setPen(QColor(240, 240, 245))
-            p.setFont(self._font)
-            p.drawText(row.adjusted(38, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter, label)
-        p.setFont(self._small)
-        p.setPen(QColor(150, 150, 165))
-        p.drawText(QRectF(16, 52 + len(self.items) * self.ROW, rect.width() - 32, 22), Qt.AlignmentFlag.AlignVCenter,
-                   "Esc to close")
+                theme.paint_surface(p, "pressed", row, 10, popup=True, dpr=dpr)
+            cap = QRectF(row.left() + 10, row.center().y() - 10, 22, 20)
+            theme.paint_surface(p, "keycap", cap, 6, popup=True, dpr=dpr)
+            p.setPen(text)
+            p.setFont(theme.font(11, 500, mono=True))
+            p.drawText(cap.adjusted(0, -1, 0, -1), Qt.AlignmentFlag.AlignCenter, hint)
+            p.setPen(text if key != UNDO else theme.tok("text2", popup=True))
+            p.setFont(theme.font(14, 600 if i == self.current else 400))
+            p.drawText(row.adjusted(44, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter, label)
         p.end()
 
 

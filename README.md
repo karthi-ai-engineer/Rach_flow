@@ -40,33 +40,35 @@ Click in any text box (Notepad, Chrome, Slack, Teams, VS Code...) and:
 Windows' own Ctrl+Win shortcuts still work: Ctrl+Win+D (new desktop), Ctrl+Win+←/→ and so on simply drop the recording.
 Releasing Win doesn't open the Start menu. The key can be changed in Settings (e.g. the Menu key).
 
-While you speak, a small pill near the bottom of the screen shows a live level; then dots while the text is
-transcribed, and "Typed" when it's done. It never takes the keyboard focus. A recording stops by itself after 3 minutes
-and is typed as usual. The text is pasted where your cursor is, and whatever you had copied is put back on the clipboard
-afterwards. Dictated text is kept out of Windows clipboard history (Win+V).
+While you speak, a small pill near the bottom of the screen shows your voice as a coral waveform with the time; then
+"Typing" (or "Cleaning up" in violet while the AI polishes it), and "Typed" when it's done. It never takes the keyboard
+focus. A recording stops by itself after 3 minutes and is typed as usual. The text is pasted where your cursor is, and
+whatever you had copied is put back on the clipboard afterwards. Dictated text is kept out of Windows clipboard history
+(Win+V).
 
 After a dictation, the microphone stays ready for 5 minutes (Windows shows its microphone icon meanwhile). The next
 dictation then starts at once and keeps the moment before you pressed the key, so first words aren't cut off; nothing
-is recorded or sent until you press the key. It records a moment after you let go too, for the last word. Turn this off
-in Settings if you prefer; a Bluetooth headset's microphone is never kept open.
+is recorded or sent until you press the key. It records a moment after you let go too, for the last word. Change this
+in Settings ("Microphone stays ready"); a Bluetooth headset's microphone is never kept open.
 
-**The window** has a sidebar:
+**The window** (Rflow 2.0's "Obsidian Signal" design: soft depth on graphite, light and dark, one job per colour) has
+five sections:
 
-| Page | What it's for |
+| Section | What it's for |
 |---|---|
-| **Home** | how to dictate, your words this week and in total, words per minute, day streak, and your recent dictations by day, each with a copy button |
-| **Dictionary** | *Your words*: names, products and terms that speech recognition listens for and the AI cleanup spells your way |
-| **Reading test** | how well Rflow understands your voice (below) |
-| **Translate** | select text in any app and press **Ctrl+C twice**: a small window at the pointer shows it translated (English by default; another language when the text is already in English, if you choose one), with the language at the top. Copy the translation, or Replace the text with it. Names, numbers, dates and links stay as written. Uses your AI cleanup model |
-| **Snippets** | say a short phrase, get your own text: **"my email"** types your email address, "my signature" your signature (several lines). Alone by default, or also inside a sentence ("send it to my email"); typed exactly as you wrote it, never sent to the AI. Snippets page |
-| **Text Transform** | speak normally first, transform afterwards: hold Ctrl+Win and say **"make it concise"**, "make it professional", "bullet points" or "action items" (your own phrases too), or **double-tap Ctrl** for a menu. It works on the selected text in any app, or else your last dictation. The result replaces the text (with bold headings and real bullets in Teams, Outlook, Word, Slack), checked so no number, name, date, "not" or "maybe" is lost or invented. If you switched windows meanwhile, Rflow goes back to the text, or leaves the result on the clipboard. "Undo that" (or Ctrl+Z) undoes it. Uses your AI cleanup model |
-| **Voice pipeline** | long dictations are cut at your pauses (or at 20 s) and transcribed while you speak; the parts are merged, then your dictionary fixes known mishearings ("post grass" -> PostgreSQL), numbers, dates, times and money are written as such ("25%", "3:30 PM"), the AI cleanup polishes the text, and a guard keeps it from changing numbers, names or meaning. The microphone can stay on with 2 seconds of pre-roll in memory |
-| **Speech recognition** | the model that turns your voice into text, chosen apart from the AI cleanup: NVIDIA Parakeet (English, fast; downloaded once when chosen, 663 MB) or OpenAI Whisper large-v3 turbo (99 languages, downloaded when chosen, slow without an NVIDIA card). **Scan my computer** checks memory, disk, processor and graphics card, times the downloaded models, and recommends one. **Cloud:** OpenAI, Groq or Google Gemini with your own key (shared with the AI cleanup), after a warning that your voice goes to the provider; Parakeet takes over if the provider can't be reached. **Your own server:** Whisper on vLLM, a company AI gateway, or any server with OpenAI's transcription API, with its address and an optional key |
-| **AI cleanup** | the model that cleans up the text (below) |
-| **Settings** | dictation key, microphone with a live level (and a warning for a Bluetooth headset's microphone, which records in call quality), keeping it ready, Windows' voice effects on or off, beeps, keeping recordings, starting with Windows, updates |
-| **Profiles** | one setup per person (below) |
+| **Home** | the voice orb and how to dictate (drawn as keys), a stats strip (this week, words per minute, days in a row, all time), and your dictations by day, searchable with **Ctrl+K**, with Correct and Copy under the pointer. While Parakeet downloads, it shows the progress and says the key isn't ready yet |
+| **Words** | *Your words*: names, products and terms that speech recognition listens for and the AI cleanup spells your way (type to find one, Enter to add, a chip's ✕ to remove with Undo); sound-alikes ("post grass" -> PostgreSQL) and corrections you made twice, to learn. **Snippets**, its second tab: say a short phrase, get your own text (**"my email"** types your email address), alone or inside a sentence, typed exactly as written and never sent to the AI |
+| **Tools** | **Text Transform** and **Translate**, each with its switch, and a box to try them. Text Transform: hold Ctrl+Win and say **"make it concise"**, "make it professional", "bullet points" or "action items" (your own phrases too), or **double-tap Ctrl** for a menu (1-4, U to undo). It works on the selected text in any app, or else your last dictation, checked so no number, name, date, "not" or "maybe" is lost or invented. Translate: select text and press **Ctrl+C twice**: a window at the pointer shows it translated, with the language at the top; **C** copies it, **Enter** replaces the text. Both use the AI connection |
+| **AI & models** | how Rflow hears you (the speech model and the microphone with a live meter) and the AI connection (provider, model, key, a Test), and the **Clean up dictation** switch. One level down: **How Rflow hears you**, the speech models: NVIDIA Parakeet (English, fast; downloaded once when chosen, 663 MB), OpenAI Whisper large-v3 turbo (99 languages, downloaded when chosen, slow without an NVIDIA card), **Scan this PC**, the **cloud** (OpenAI, Groq or Google Gemini with your own key, after a warning that your voice goes to the provider; Parakeet takes over if the provider can't be reached) and **your own server** (Whisper on vLLM, a company AI gateway, any server with OpenAI's transcription API). And **AI connection**: the provider, key, model and backup model (below) |
+| **Settings** | the dictation key, sounds, starting with Windows, numbers as numbers, keeping recordings, keeping the microphone ready, updates. **Advanced**: the voice pipeline, troubleshooting steps, Windows' voice effects, the **Reading test** (below), **Profiles** (below) and the logs |
 
-It follows Windows' light or dark mode. Changes in Settings apply at once; AI cleanup has a Save button.
+The **voice pipeline** cuts long dictations at your pauses (or at 20 s) and transcribes them while you speak; the parts
+are merged, then your dictionary fixes known mishearings, numbers, dates, times and money are written as such ("25%",
+"3:30 PM"), the AI cleanup polishes the text, and a guard keeps it from changing numbers, names or meaning.
+
+The first run takes three steps: how Rflow should hear you (Parakeet on this PC, or a cloud model), a first dictation,
+and an optional AI connection (paste a key; Rflow picks the provider's fast model). The window follows Windows' light
+or dark mode. Changes in Settings apply at once; the AI connection has a Save button.
 
 **AI cleanup (optional):**
 
@@ -186,7 +188,9 @@ Rach_flow/
 ├─ recordings/                your recordings + transcripts (git-ignored)
 └─ sst/                       the Python package (the app's internal name)
    ├─ app.py                  the app: tray icon, recording pill, dictation, updates; "open Rflow again" (Qt)
-   ├─ window.py               the window: Home, Dictionary, Reading test, AI cleanup, Settings, welcome; light/dark
+   ├─ window.py               the window: Home, Words, Tools, AI & models, Settings, the first run; light/dark
+   ├─ theme.py                the look (Obsidian Signal): colours, Geist fonts, icons, the soft depth Qt paints
+   ├─ ui.py                   the window's widgets: buttons with keycaps, toggles, lamps, keycaps, the voice orb
    ├─ bench.py                the reading test's sets of sentences, test sessions, the fair word comparison
    ├─ evaluate.py             `sst eval`: replays the tests through setups; error rates, 95% ranges, microphones
    ├─ updates.py              in-app updates from GitHub Releases (checksum-verified)
@@ -197,7 +201,7 @@ Rach_flow/
    ├─ hotkey.py               global hotkeys (low-level keyboard hook) and sending keys
    ├─ paste.py                paste text into the focused app, then restore the clipboard
    ├─ web.py                  local server for the web page (127.0.0.1 only)
-   ├─ static/                 the Record / Stop page (index.html), the app icon (sst.ico), the window's images (ui/)
+   ├─ static/                 the Record / Stop page (index.html), the app icon (sst.ico), the window's images (ui/), Geist (fonts/)
    ├─ audio.py                microphone recording, WAV read/write, measuring a recording, splitting long audio
    └─ engines/
       ├─ __init__.py          the speech model catalog (SPEECH_MODELS: where it runs, languages, size) + load_engine()
@@ -209,5 +213,5 @@ Rach_flow/
 Speech recognition is a building block: any engine works with any AI cleanup model. Create `sst/engines/<name>.py` with
 a class that has `name` (its catalog key), `title` (what reports call it), `signature` (what its text depends on;
 `sst eval` caches by it), an optional `words` list (Your words) and `transcribe(audio, sample_rate) -> str`. Then add it
-to `SPEECH_MODELS` and `load_engine()` in `sst/engines/__init__.py`. It shows up on the Speech recognition page, the app
+to `SPEECH_MODELS` and `load_engine()` in `sst/engines/__init__.py`. It shows up on AI & models (How Rflow hears you), the app
 loads it in the background when chosen, and `uv run sst --engine <name> start` or `sst eval --engine <name>` use it.
