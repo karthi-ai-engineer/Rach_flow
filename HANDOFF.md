@@ -11,7 +11,9 @@ _Last updated: 2026-10-04_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-04):**
-- **Rflow 1.10.1** (2026-10-04, the owner's "correct it in 1.10.1"): Translate's popup and the Text Transform menu take
+- **Rflow 2.0.0** (2026-10-04, the owner's "implement it and release v2.0"): the whole UI in the "Obsidian Signal"
+  design approved in Figma (phase 25, PR #64; see **Rflow UI 2.0**): five sections (Home, Words, Tools, AI & models,
+  Settings), a three-step first run, the pill and popups redone, Geist fonts shipped, and the website in the same look.- **Rflow 1.10.1** (2026-10-04, the owner's "correct it in 1.10.1"): Translate's popup and the Text Transform menu take
   clicks. Since they came (1.7.0, 1.8.0) they had the pill's click-through window style, so every click went to the
   app behind them; only the keyboard worked (Esc, and 1-4 in the menu).
 - **Rflow 1.10.0** (2026-10-04, the owner's "publish + release 1.10.0"): the Translate popup redone (phase 24).
@@ -113,6 +115,7 @@ _Last updated: 2026-10-04_
 | 16 | **Cloud speech models**: OpenAI, Groq, Google Gemini with the user's key, a warning, a Test, Parakeet as the fallback | done, on `main` (PR #39), released **v1.5.0** |
 | 17 | **Your own server for speech**: vLLM, the company gateway, any OpenAI-compatible transcription server; Load models, Test | done, on `main` (PR #41), released **v1.5.0** |
 | 18 | **Parakeet downloaded on demand**: a speech step in the welcome, the installer 90 MB instead of 571 MB; version 1.5.0 | done, on `main` (PR #43), released **v1.5.0** |
+| 25 | **Rflow UI 2.0, "Obsidian Signal"** (the owner's request): the Figma design implemented in Qt: soft depth painted by `sst/theme.py`, widgets in `sst/ui.py`, five sections, a three-step first run, Home with orb, stats strip and search, the pill and popups in the popup look (Translate: C copies, Enter replaces), a rail at the smallest size, Geist shipped; the website redone | done, on `main` (PR #64), released **v2.0.0** |
 | fix | **Popups that take clicks**: Translate's popup and the Text Transform menu had the pill's click-through style (`WS_EX_TRANSPARENT`): `_no_activate(hwnd, click_through=False)` now; checked by hand with `scripts/check_popup_clicks.py` (15 of 15) | done, on `main`, released **v1.10.1** |
 | 24 | **The Translate popup, redone** (the owner: "the UX literally sucks"): "Japanese → English" with one-click languages and More, as tall as the text (nothing overlaps) and always on the screen, errors in plain words with Try again, no model leads to AI cleanup, Copy says "Copied", a click outside closes it, never English into English | done, on `main`, released **v1.10.0** |
 | 23 | **Settings that change only on purpose** (the owner's request): the wheel never changes a dropdown, long lists searchable, a Save per section with its state shown, API keys masked with a pen to change them, the model in use and the language at the top of Speech recognition | done, on `main` (PR #58), released **v1.9.0** |
@@ -122,7 +125,7 @@ _Last updated: 2026-10-04_
 | 20 | **Text Transform** (the owner's idea): say "make it concise" (or double-tap Ctrl for a menu) and the selected text or the last dictation becomes Concise, Professional, Bullet points or Action items, checked, with undo; the text is found again if focus moved | done, on `main` (PR #50, with #48), released **v1.7.0** |
 | 19 | **The voice pipeline** (the owner's plan): always-on mic, chunks while speaking, parallel ASR, merge, dictionary, formatting, guarded LLM | done, on `main` (PR #46), released **v1.6.0** |
 
-Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0 and v1.10.1 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
+Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0, v1.10.1 and v2.0.0 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
 added on 2026-10-01, and the old https://rachdarlingflow-site.vercel.app stays assigned: installed apps up to 1.6.0
 link there, so never remove it;
 `site/`). The in-app update path is verified end to end: the owner's installed 1.0.0 showed the banner and updated
@@ -1283,8 +1286,70 @@ These were scratch scripts, not in git. The findings:
   runs off the screen there), so after changing a popup run `uv run python scripts/check_popup_clicks.py` on Windows:
   it hit-tests every button the way Windows routes a real click and clicks it in Rflow's own window only.
 
-## Known limitations
+## Rflow UI 2.0 (phase 25, the owner's request of 2026-10-04)
 
+- **The design**: "Obsidian Signal", made in Figma first ("Rflow UI 2.0",
+  https://www.figma.com/design/PTXZYTNbOrcCIR2eGiXdXF) from `docs/design/rflow-ui.html` (14 frames; `render.ps1`
+  renders them with headless Edge), after a written UI audit and a critic's review. The owner approved it ("perfect
+  work") and asked for the implementation and v2.0.
+- **Colours** (`sst/theme.py`, `TOKENS`): Obsidian (dark, the default) and Porcelain (light), chosen by Windows' mode.
+  One job per colour: Iris = can be pressed, Violet = the AI, Coral = listening, Mint = ready, Amber = attention, Rose
+  = error. Text is 4.5:1 and control edges 3:1 on every surface of its theme (checked for the design). Popups over
+  other apps (the pill, Translate, the Text Transform menu) are always Obsidian (`POPUP`): dark reads on any app.
+- **The soft depth Qt can't do**: style sheets have no shadows, so `theme.paint_surface` draws them: a raised surface
+  has a light and a dark soft shadow and a 145° gradient, a pressed one (a well, a field, the chosen nav item) inner
+  shadows. Shadows are blurred once per radius, blur and colour (numpy) and drawn nine-sliced, snapped to device pixels
+  (no hairlines at 125%/150%); a circle or a pill's round end uses the whole tile, scaled.
+- **Surfaces are painted by their host**: `surface(widget, "key")` gives a widget a surface; its nearest host (a page
+  body, a card, the sidebar, a popup's panel; `make_host` + `paint_hosted` in its paintEvent) paints it beneath it,
+  with its shadow reaching outside the widget. The widgets themselves stay ordinary Qt widgets with transparent
+  backgrounds, so text, focus and keys work as always. A watcher repaints a surface on hover, press, focus, move and
+  show/hide. Pages keep 32 px around their cards: at 24 px the light theme's white highlight showed as a line where
+  the page's edge cut it.
+- **Fonts**: Geist and Geist Mono, the official static TTFs (Regular/Medium/SemiBold/Bold, Mono Regular/Medium/
+  SemiBold; 0.9 MB, `sst/static/fonts`, SIL OFL with `OFL.txt`; from vercel/geist-font v1.7.2, with the owner's OK),
+  registered at start (`theme.load_fonts`). `theme.font(px, weight, mono, spacing, tabular)`. **A style sheet's
+  font-size overrides setFont**: don't set font sizes on `QWidget` in the sheet; labels get theirs from `role`
+  properties, others from `setFont`. Japanese falls back to Yu Gothic, which is taller: give one-line labels room.
+- **Icons**: the design's line icons (`theme.ICONS`, 24-unit SVG paths) drawn with Qt SVG in any colour
+  (`icon_pixmap`). The Segoe Fluent glyphs are gone.
+- **Widgets** (`sst/ui.py`): `Button` (key, primary, ghost, quiet, danger, nav, chip, segment; a keycap `hint` drawn
+  inside, `suffix` for a tab's count, `badge` on nav), `IconButton`, `Toggle` (a QCheckBox drawn as a switch),
+  `Lamp` (always with a word), `KeyCap`/`keys()`, `Orb` (ready, live, ai, loading with %, done, off), `Segmented`,
+  `Meter`, `WaveProgress`, `Mark` (the logo: a keycap with an engraved waveform, mint when ready), `Toast`.
+- **The sections** (`window.py`): `NAV` has five; `SECTION` maps every page to its section and `OPENS` a section to
+  its first page (Words → `dictionary`). The old page keys all stay (`dictionary`, `snippets`, `speech`, `cleanup`,
+  `transform`, `translate`, `reading`, `profiles`), one level down with a "‹ back" link; new pages are `tools` and
+  `models` (overviews). `current_section()`; the welcome hides the sidebar. Below 900 px the sidebar becomes an 84 px
+  rail (icons over names, "AI" for AI & models, the status as a lamp over "Ready").
+- **Home**: the hero shows Ready (orb breathing, keycaps), or what Rflow waits for: Parakeet downloading (orb arc with
+  %, an amber waveform, Use a cloud model instead, Pause, which keeps the partial file: downloads resume), loading,
+  or no model (Download Parakeet / Use a cloud model). Stats strip; the list (30, then "Show all"), search box with
+  Ctrl+K, Correct and Copy on hover.
+- **AI & models** (`ModelsPage`): the speech model and the microphone (moved here from Settings, with the Bluetooth
+  warning), the AI connection with a masked key and Test (`app.check_ai`), the cleanup switch (saves at once through
+  `save_cleanup`). **Settings**: "Microphone stays ready" is one choice (while Rflow runs / 5 minutes after dictating /
+  only while dictating) for `always_on_mic` and `warm_mic`; Advanced holds the voice pipeline, the debug steps, raw
+  audio, Reading test, Profiles, logs, website, issues.
+- **First run** (`WelcomePage`, three steps): how Rflow hears you (On this PC downloads Parakeet and goes on while it
+  downloads; In the cloud leads to the speech page's cloud tab), try it (the orb lights up when the box gets text), and
+  connect an AI: provider tiles, a key, then `app.ai_models` + `window.fast_model` (the newest Flash-Lite, 4.1-mini or
+  4o-mini, Haiku, llama-3.1-8b-instant; never a preview, embedding, TTS or transcription model) + `app.check_ai`, then
+  `save_cleanup(True, model)`. The name question is gone (Profiles renames).
+- **Popups**: drawn in a 24 px transparent margin for their shadow (a tight "float" shadow that fades out inside it,
+  else its edge showed as a box over light apps). `TranslatePopup.contains_global` is the panel without the margin
+  (a click outside the panel closes it). Translate takes C (Copy) and Enter (Replace / Try again / Connect an AI)
+  while those buttons are there (`keys()`, `keys_changed`); `scripts/check_popup_clicks.py`: 14 of 14 clickable.
+  `_fit` resizes twice: the panel's own layout settles after the window's first pass (it came out 150 px too tall).
+- **Gotchas met**: in PySide6 don't set attributes on `self` before `super().__init__()`; a QVBoxLayout with a
+  max-width child centres the whole column (the page titles moved right); a word-wrapped label added with an alignment
+  gets one line.
+- **Screenshots and website**: `scripts/make_site_screenshots.py` renders Home (dark and light), AI & models, Tools,
+  Words, the first run, the popups and the pill from the real widgets (never shown), as if Parakeet were downloaded.
+  `site/index.html` is redone in the same look (Geist from Google Fonts, Obsidian by default, Porcelain in light
+  mode; no horizontal overflow at 390 px).
+
+## Known limitations
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.
 - Ctrl+Win isn't sent through the real hook in automated tests (Wispr Flow on the dev laptop would react). The hook
   plumbing is tested with the Menu key, Esc and Ctrl+Alt+X, and Ctrl+Win by the Matcher unit tests. The owner
@@ -1300,6 +1365,15 @@ These were scratch scripts, not in git. The findings:
 
 ## Next steps
 
+1. **Owner: update to 2.0.0 from the banner and look around** (both themes: Windows Settings → Personalization →
+   Colors):
+   - Home: dictate, then search a word with Ctrl+K; hover a dictation: Correct and Copy
+   - Words: type part of a word to find it; add one with Enter; remove one with its ✕ and Undo
+   - Tools: try Concise and Translate in the box; select text in another app, Ctrl+C twice, then press C (copied) or
+     Enter (replaced)
+   - AI & models: Test the AI connection; switch the cleanup off and on
+   - make the window as small as it goes: the sidebar becomes a rail
+   - on another Windows account (or after deleting `%APPDATA%\sst\settings.json` there), the three-step first run
 1. **The UX review of the other pages** (found while doing phase 23; the owner chooses the order):
    - Text Transform: long phrase lists are cut off in one-line boxes
    - Settings, Text Transform and Translate apply each toggle at once with no word that it was saved
