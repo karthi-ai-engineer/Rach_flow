@@ -1083,7 +1083,14 @@ class HomePage(Page):
         QGuiApplication.clipboard().setText(value)
         source.set_icon("check")
         source.setToolTip("Copied")
-        QTimer.singleShot(1200, lambda: (source.set_icon("copy"), source.setToolTip("Copy")) if source else None)
+
+        def back() -> None:
+            try:
+                source.set_icon("copy")
+                source.setToolTip("Copy")
+            except RuntimeError:  # the list was filled again meanwhile (a new dictation): that button is gone
+                pass
+        QTimer.singleShot(1200, back)
 
 
 # ---------------------------------------------------------------- Words: Your words and Snippets
