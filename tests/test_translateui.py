@@ -169,7 +169,7 @@ def test_ctrl_c_c_shows_the_copied_text_translated(qt):
     assert controller.popup.result.toPlainText() == f"{JAPANESE} [Japanese]"
     assert controller.popup.route.text() == "English →"  # the text's language, then the one it went into
     assert access.copy_calls == 0  # the app copied: Rflow pressed nothing
-    assert controller.listener.captured == {VK_ESCAPE}  # Esc closes the popup
+    assert controller.listener.captured == {VK_ESCAPE, translateui.VK_C, translateui.VK_RETURN}  # Esc, Copy, Replace
 
 
 def test_a_copy_that_landed_before_the_shortcut_is_read_after_a_moment(qt, monkeypatch):
@@ -238,7 +238,7 @@ def test_copy_puts_the_translation_on_the_clipboard(qt):
     assert shown(controller)
     controller.popup.copy.emit()
     assert access.clipboard == f"{JAPANESE} [Japanese]" and controller.popup.isVisible()  # it stays, and says so
-    assert controller.popup.copy_button.text() == "✓ Copied" and not app.said
+    assert controller.popup.copy_button.text() == "Copied" and not app.said
 
 
 def test_replace_puts_the_translation_in_place_of_the_text(qt):
@@ -388,7 +388,7 @@ def test_a_long_translation_never_covers_the_buttons(qt):
     QTest.qWait(30)
     assert popup.result.geometry().bottom() < popup.buttons.geometry().top()  # scrolls inside its box instead
     area = popup.screen().availableGeometry()
-    assert area.contains(popup.frameGeometry())  # and the grown popup is still on the screen
+    assert area.contains(popup.frame.geometry().translated(popup.pos()))  # and the grown panel is still on the screen
 
 
 def test_english_text_with_english_chosen_goes_into_windows_language(qt, monkeypatch):
