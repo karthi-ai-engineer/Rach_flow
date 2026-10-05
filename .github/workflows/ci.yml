@@ -51,7 +51,7 @@ jobs:
       - name: Install
         run: uv sync --locked
       - name: Check that this is x64 on ARM64
-        run: uv run python -c "from sst.scan import machine; m = machine(); print(m); assert m == 'x64 on ARM64 (emulated)', m"
+        run: uv run python -c "import sys; from sst.scan import machine; m = machine(); print(sys.version, '->', m); assert m == 'x64 on ARM64 (emulated)', m"
       - name: Pytest
         run: uv run pytest -v
 

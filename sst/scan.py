@@ -10,9 +10,9 @@ import ctypes
 import json
 import logging
 import os
-import platform
 import shutil
 import struct
+import sysconfig
 import time
 import winreg
 from ctypes import wintypes
@@ -149,20 +149,22 @@ def load(path: Path | None = None) -> dict | None:
 
 # IMAGE_FILE_MACHINE_*: what IsWow64Process2 says the computer itself is
 _MACHINES = {0x8664: "x64", 0xAA64: "ARM64", 0x014C: "x86", 0x01C4: "ARM"}
-_PROGRAMS = {"AMD64": "x64", "ARM64": "ARM64", "x86": "x86"}
+_PROGRAMS = {"win-amd64": "x64", "win-arm64": "ARM64", "win32": "x86"}  # sysconfig.get_platform()
 
 
 def machine() -> str:
     """Which kind of Windows computer this is, and how Rflow runs on it: "x64" on Intel and AMD, "x64 on ARM64
     (emulated)" on an ARM laptop (Snapdragon), where Windows 11 runs the x64 program through its emulation. Rflow is
     built for x64 only: Whisper's runtime (CTranslate2) has no ARM64 build."""
-    program = _PROGRAMS.get(platform.machine(), platform.machine() or "unknown")  # what Python was built for
+    # What this program (Python, or the frozen Rflow.exe) was built for. Not platform.machine(): since Python 3.12 it
+    # asks Windows for the processor, so an emulated x64 program on a Snapdragon gets "ARM64" too.
+    program = _PROGRAMS.get(sysconfig.get_platform(), sysconfig.get_platform())
     native = _native_machine() or program
     return program if native == program else f"{program} on {native} (emulated)"
 
 
 def _native_machine() -> str:
-    """The computer's own processor kind. platform.machine() can't tell: an emulated x64 program is told "AMD64"."""
+    """The computer's own processor kind ("ARM64" on a Snapdragon, whatever kind of program asks)."""
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.GetCurrentProcess.restype = wintypes.HANDLE

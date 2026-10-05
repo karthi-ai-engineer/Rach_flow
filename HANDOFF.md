@@ -1381,7 +1381,9 @@ no native ARM64 build for now, and the Mac later.
   (`UV_PYTHON`), and checks the latter really is "x64 on ARM64 (emulated)"; it also builds the app on both and runs
   `Rflow.exe --self-test` (every window, the fonts, the logo, Whisper's runtime, a Parakeet transcription).
 - **Which computer a log came from:** the first line says it, "Rflow <version> starting (x64)" or "(x64 on ARM64
-  (emulated))" (`scan.machine()`, from `IsWow64Process2`: `platform.machine()` says "AMD64" inside the emulation).
+  (emulated))" (`scan.machine()`: the program's kind from how Python was built, `sysconfig.get_platform()`, and the computer's
+  from `IsWow64Process2`. Not `platform.machine()`: since Python 3.12 it reports the processor, "ARM64" even inside
+  the emulation; CI's ARM job caught that).
   Scan my computer shows it after the processor, and the bug report form asks.
 - **Cost of emulation:** only heavy local work (Parakeet, Whisper on the processor) is slower; cloud speech and the
   AI cleanup are network-bound. Scan my computer measures the real speed, so its verdicts already include it.

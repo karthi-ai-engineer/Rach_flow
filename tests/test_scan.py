@@ -84,13 +84,13 @@ def test_the_last_scan_is_kept_and_a_damaged_one_is_ignored(tmp_path):
 
 
 @pytest.mark.parametrize("program, native, said", [
-    ("AMD64", "x64", "x64"),  # Intel or AMD
-    ("AMD64", "ARM64", "x64 on ARM64 (emulated)"),  # a Snapdragon laptop: Rflow (x64) through Windows' emulation
-    ("ARM64", "ARM64", "ARM64"),  # a native ARM64 Python (a developer's own)
-    ("AMD64", "", "x64"),  # an older Windows without IsWow64Process2: the program's own kind
+    ("win-amd64", "x64", "x64"),  # Intel or AMD
+    ("win-amd64", "ARM64", "x64 on ARM64 (emulated)"),  # a Snapdragon laptop: Rflow (x64) through Windows' emulation
+    ("win-arm64", "ARM64", "ARM64"),  # a native ARM64 Python (a developer's own)
+    ("win-amd64", "", "x64"),  # an older Windows without IsWow64Process2: the program's own kind
 ])
 def test_the_machine_says_how_rflow_runs_on_it(monkeypatch, program, native, said):
-    monkeypatch.setattr(scan.platform, "machine", lambda: program)
+    monkeypatch.setattr(scan.sysconfig, "get_platform", lambda: program)
     monkeypatch.setattr(scan, "_native_machine", lambda: native)
     assert scan.machine() == said
 
