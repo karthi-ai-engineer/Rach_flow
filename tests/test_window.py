@@ -1189,3 +1189,38 @@ def test_the_smallest_window_folds_the_sidebar_into_a_rail():
     assert not window.grab().isNull()
     window._set_compact(False)
     assert window.nav["models"].text() == "AI & models"
+
+
+# ---- the microphone list follows Windows (phase 26)
+
+def test_the_microphone_list_follows_windows_and_keeps_the_choice():
+    laptop, headset = "Microphone (Realtek(R) Audio)", "Headset (Buds)"
+    windows = {"list": ([laptop], laptop)}
+    box = w.MicrophoneBox("", [laptop], laptop, source=lambda: windows["list"])
+    followed = []
+    box.followed.connect(lambda: followed.append(True))
+    assert box.combo.itemText(0) == f"Windows default (now: {laptop})" and box.device() == ""
+    windows["list"] = ([headset, laptop], headset)  # a headset plugged in: Windows makes it the default
+    box._follow()
+    assert [box.combo.itemText(i) for i in range(box.combo.count())] == [f"Windows default (now: {headset})", headset,
+                                                                         laptop]
+    assert box.device() == "" and followed == [True]  # still "Windows default", which now means the headset
+    box._follow()
+    assert followed == [True]  # nothing changed: nothing redone
+
+
+def test_a_chosen_microphone_that_is_unplugged_stays_chosen_and_says_what_records():
+    laptop, headset = "Microphone (Realtek(R) Audio)", "Headset (Buds)"
+    windows = {"list": ([headset, laptop], headset)}
+    box = w.MicrophoneBox(headset, [headset, laptop], headset, source=lambda: windows["list"])
+    chosen = []
+    box.changed.connect(chosen.append)
+    assert box.device() == headset and box.note.isHidden()
+    windows["list"] = ([laptop], laptop)  # unplugged
+    box._follow()
+    assert box.device() == headset and box.combo.currentText() == f"{headset} (not connected)"
+    assert not box.note.isHidden() and box.note.text() == f"Not connected now: Rflow uses {laptop} until it is."
+    assert chosen == []  # following Windows never changes the setting
+    windows["list"] = ([headset, laptop], headset)  # back
+    box._follow()
+    assert box.combo.currentText() == headset and box.note.isHidden()

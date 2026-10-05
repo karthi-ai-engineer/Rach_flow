@@ -644,24 +644,27 @@ def link_row(title: str, caption_text: str, on_click, icon: str = "chevron-right
 # ---------------------------------------------------------------- the microphone box (AI & models and the welcome)
 
 class MicrophoneBox(QWidget):
-    """A microphone choice with a live level meter, so the user sees at once that the microphone hears them."""
+    """A microphone choice with a live level meter, so the user sees at once that the microphone hears them. The list
+    follows Windows while it's shown (a headset plugged in or out shows up within FOLLOW_MS), "Windows default" says
+    which microphone that is now, and a chosen one that isn't connected says what Rflow uses meanwhile."""
 
     changed = Signal(str)  # the chosen device name ("" = the Windows default)
+    followed = Signal()  # the list changed (a microphone plugged in or out, a new default)
 
-    def __init__(self, current: str, microphones: list[str]):
+    FOLLOW_MS = 2000
+
+    def __init__(self, current: str, microphones: list[str], default: str = "", source=None):
+        """`source` () -> (microphones, default name) is asked again every FOLLOW_MS while the box is shown."""
         super().__init__()
+        self._source, self._listed = source, None
         self.combo = Choice()
-        self.combo.addItem("Windows default", "")
-        for name in microphones:
-            self.combo.addItem(name, name)
-        if current and self.combo.findData(current) < 0:
-            self.combo.addItem(f"{current} (not connected)", current)
-        self.combo.setCurrentIndex(max(0, self.combo.findData(current)))
         self.combo.currentIndexChanged.connect(self._chosen)
         self.level = Meter()
         self.level.setToolTip("Say something: the bars light up.")
         self.note = caption("", "3")
         self.note.hide()
+        self.hearing = caption("", "3", wrap=False)  # the microphone the meter (and so dictation) actually opened
+        self.hearing.hide()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -671,26 +674,76 @@ class MicrophoneBox(QWidget):
         line.addWidget(self.level, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(line)
         layout.addWidget(self.note)
+        layout.addWidget(self.hearing)
         self.meter = LevelMeter(current or None)
         self._timer = QTimer(self, interval=50, timeout=self._show_level)
+        self._follow_timer = QTimer(self, interval=self.FOLLOW_MS, timeout=self._follow)
+        self._error = ""
+        self.set_microphones(microphones, default, current)
 
     def device(self) -> str:
-        return self.combo.currentData()
+        return self.combo.currentData() or ""
+
+    def set_microphones(self, microphones: list[str], default: str = "", current: str | None = None) -> None:
+        """The list as Windows has it now; the choice is kept (one not connected stays, marked so)."""
+        current = self.device() if current is None else current
+        self._listed = (list(microphones), default)
+        self.combo.blockSignals(True)
+        self.combo.clear()
+        self.combo.addItem(f"Windows default (now: {default})" if default else "Windows default", "")
+        for name in microphones:
+            self.combo.addItem(name, name)
+        if current and self.combo.findData(current) < 0:
+            self.combo.addItem(f"{current} (not connected)", current)
+        self.combo.setCurrentIndex(max(0, self.combo.findData(current)))
+        self.combo.blockSignals(False)
+        self._show_note()
+
+    def _show_note(self) -> None:
+        microphones, default = self._listed or ([], "")
+        current = self.device()
+        if self._error:
+            text = self._error
+        elif current and current not in microphones:
+            text = f"Not connected now: Rflow uses {default or 'the default microphone'} until it is."
+        else:
+            text = ""
+        self.note.setText(text)
+        self.note.setVisible(bool(text))
+
+    def _follow(self) -> None:
+        if self._source is None:
+            return
+        try:
+            microphones, default = self._source()
+        except Exception as e:  # never break the page over a list
+            log.warning("Couldn't list the microphones: %s", e)
+            return
+        if (list(microphones), default) != self._listed:
+            self.set_microphones(microphones, default)
+            if self._timer.isActive():
+                self._restart()  # the meter listens to the microphone Rflow would use now
+            self.followed.emit()
 
     def _chosen(self) -> None:
         self.meter.device = self.device() or None
         if self._timer.isActive():
             self._restart()
+        self._show_note()
         self.changed.emit(self.device())
 
     def _restart(self) -> None:
         self.meter.stop()
         try:
             self.meter.start()
-            self.note.hide()
+            self._error = ""
+            hearing = self.meter.describe().get("device", "")
+            self.hearing.setText(f"Hearing: {hearing}" if hearing else "")
+            self.hearing.setVisible(bool(hearing))
         except Exception as e:
-            self.note.setText(f"Could not open this microphone: {e}")
-            self.note.show()
+            self._error = f"Could not open this microphone: {e}"
+            self.hearing.hide()
+        self._show_note()
 
     def _show_level(self) -> None:
         db = 20 * math.log10(self.meter.level + 1e-6)  # speech is roughly -45..-15 dBFS
@@ -699,11 +752,14 @@ class MicrophoneBox(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         if QGuiApplication.platformName() != "offscreen":  # tests and the self-test don't open a microphone
+            self._follow()
             self._restart()
             self._timer.start()
+            self._follow_timer.start()
 
     def hideEvent(self, event):
         self._timer.stop()
+        self._follow_timer.stop()
         self.meter.stop()
         self.level.set_value(0)
         super().hideEvent(event)
@@ -2620,8 +2676,10 @@ class ModelsPage(Page):
         column.addLayout(row(names, button("Change", lambda: go_to("speech"), size="sm"), stretch_at=1, spacing=12))
         column.addWidget(divider())
         column.addWidget(caption("Microphone", "2", wrap=False))
-        self.microphone = MicrophoneBox(app.settings.microphone, app.microphones())
+        self.microphone = MicrophoneBox(app.settings.microphone, app.microphones(), app.default_microphone(),
+                                        source=lambda: (app.microphones(), app.default_microphone()))
         self.microphone.changed.connect(self._microphone_chosen)
+        self.microphone.followed.connect(self._show_call_warning)
         column.addWidget(self.microphone)
         self.call_warning = caption("This is a Bluetooth headset's microphone. It records in call quality (like a "
                                     "phone), so Rflow gets more words wrong, and the headset plays sound in call "
@@ -3758,7 +3816,8 @@ class WelcomePage(QWidget):
         self.try_text = label("", tone="2")
         right.addWidget(self.try_text)
         right.addWidget(caption("Microphone", "2", wrap=False))
-        self.microphone = MicrophoneBox(self.app.settings.microphone, self.app.microphones())
+        self.microphone = MicrophoneBox(self.app.settings.microphone, self.app.microphones(), self.app.default_microphone(),
+                                        source=lambda: (self.app.microphones(), self.app.default_microphone()))
         self.microphone.changed.connect(self._microphone_chosen)
         right.addWidget(self.microphone)
         self.typed_well, typed = card(6, (20, 16, 20, 16), kind="well")
@@ -4441,6 +4500,9 @@ class PreviewApp:
 
     def microphones(self) -> list[str]:
         return self._microphones
+
+    def default_microphone(self) -> str:
+        return self._microphones[0] if self._microphones else ""
 
     def new_recorder(self):
         from sst.audio import Recorder
