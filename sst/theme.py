@@ -165,6 +165,8 @@ ICONS = {
             '4 6.5v6A2.5 2.5 0 0 0 6.5 15H9"/>',
     "check": '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
     "close": '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+    "speaker": '<path d="M4 9.5h3l4.5-4v13L7 14.5H4z"/><path d="M15 9.2a4 4 0 0 1 0 5.6M17.6 6.6a7.6 7.6 0 0 1 0 10.8"/>',
+    "speaker-off": '<path d="M4 9.5h3l4.5-4v13L7 14.5H4z"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5"/>',
     "chevron-down": '<path d="M6 9.5l6 6 6-6"/>',
     "chevron-right": '<path d="M9.5 6l6 6-6 6"/>',
     "chevron-left": '<path d="M14.5 6l-6 6 6 6"/>',

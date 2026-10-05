@@ -160,7 +160,10 @@ class FakeSession:
 
     def __init__(self, config, on_event, fail=()):
         self.config, self.on_event, self.fail = config, on_event, fail
-        self.lanes, self.stopped, self.transcript = {}, False, None
+        self.lanes, self.stopped, self.transcript, self.speaker = {}, False, None, None
+
+    def set_speaker(self, speaker):
+        self.speaker = speaker
 
     def add(self, lane, capture, engine_factory):
         if lane in self.fail:
@@ -285,4 +288,58 @@ def test_a_way_switched_off_on_purpose_doesnt_stop_the_rest():
     made[0].on_event(LiveEvent(Kind.STATUS, "Stopped", lane=MIC))  # what the microphone's engine says as it stops
     QApplication.processEvents()
     assert live.running and list(made[0].lanes) == [SYSTEM]
+    live.stop()
+
+
+# ---- the spoken translation on the bar
+
+class FakeSpeaker:
+    language = "en"
+
+    def __init__(self, config):
+        self.lanes, self.speed, self.config = None, None, config
+
+    def set_lanes(self, lanes):
+        self.lanes = tuple(lanes)
+
+    def set_speed(self, speed):
+        self.speed = speed
+
+
+def speaking_captions(ready=True):
+    made, speakers = [], []
+
+    def make_speaker(config):
+        if not ready:
+            return None
+        speakers.append(FakeSpeaker(config))
+        return speakers[-1]
+    live = LiveCaptions(lambda config, on_event: made.append(FakeSession(config, on_event)) or made[-1],
+                        lambda lane, config: (lane, None), make_speaker)
+    return live, made, speakers
+
+
+def test_speaking_starts_with_the_session_and_says_the_ways_into_the_voices_language():
+    live, made, speakers = speaking_captions()
+    live.start(LiveConfig(source="both", target="en", mic_target="ja", speak=True, speak_speed=1.15))
+    assert made[0].speaker is speakers[0] and speakers[0].lanes == (SYSTEM,) and speakers[0].speed == 1.15
+    assert live.bar.speak_button.isChecked()
+    live.set_source("microphone")  # into Japanese: nothing for an English voice
+    assert speakers[0].lanes == () and "speaks English" in live.bar.speak_button.toolTip()
+    live.set_speak(False)
+    assert made[0].speaker is None and not live.bar.speak_button.isChecked()
+    live.stop()
+
+
+def test_the_speaker_button_asks_for_speaking_and_the_bar_follows_what_happened():
+    live, made, speakers = speaking_captions(ready=False)
+    asked = []
+    live.speak_toggled.connect(asked.append)
+    live.start(LiveConfig())
+    live.bar.speak_button.click()
+    assert asked == [True]
+    live.set_speak(True)  # the voice isn't downloaded yet: nothing speaks, the button stays off
+    assert made[0].speaker is None and not live.bar.speak_button.isChecked()
+    live.set_voice_note("Downloading the voice: 40%")
+    assert live.bar.title.text().endswith("Downloading the voice: 40%")
     live.stop()

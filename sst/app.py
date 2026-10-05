@@ -37,11 +37,14 @@ from sst.engines.cloud import CLOUD, REMOTE, SERVER, CloudEngine
 from sst.gateway import SPEECH_SERVER, GatewayConfig, Polisher
 from sst.hotkey import HotkeyListener, parse_hotkey
 from sst.live.captions import LiveCaptions
-from sst.live.contracts import MIC, LiveConfig
+from sst.live.contracts import MIC, Kind, LiveConfig, LiveEvent
 from sst.live.gemini import GeminiLiveTranslate
 from sst.live.session import LiveSession
+from sst.live.speaker import Speaker
 from sst.live.transcript import Transcript
-from sst.live.wasapi import Capture
+from sst.live.voice import DANNY, VOICES, PiperVoice, Voice
+from sst.live.voice import install as install_voice
+from sst.live.wasapi import Capture, Player
 from sst.pipeline.asr import ASRScheduler, EngineBackend
 from sst.pipeline.contracts import VoiceConfig
 from sst.pipeline.dictionary import DictionaryEngine, DictionaryStore, TermMode, speech_hints
@@ -290,6 +293,8 @@ class _Signals(QObject):
     update_failed = Signal(str, bool)  # (message, tell the user)
     download_progress = Signal(str, int, int)  # (speech model, bytes done, bytes in all)
     download_done = Signal(str, str)  # (speech model, "" or "cancelled" or why it failed)
+    voice_progress = Signal(int)  # percent of live translation's voice downloaded
+    voice_done = Signal(str)  # "" or why the voice couldn't be downloaded
     scan_progress = Signal(str)
     scan_done = Signal(object)  # the scan's result (sst.scan.save), or {"error": why}
 
@@ -308,6 +313,8 @@ class TrayApp:
         self.scanning = ""  # what the scan is doing now, while it runs
         self.last_scan = scan.load()
         self._cancel_download = threading.Event()
+        self.voice_downloading: int | None = None  # percent, while live translation's voice downloads
+        self.voice_problem = ""  # why the voice couldn't be downloaded, until it's tried again
         self.listener: HotkeyListener | None = None
         self.quiet_start = quiet_start
         self._cleanup_notice = -1e9  # when the user was last told that the cleanup couldn't help
@@ -331,6 +338,8 @@ class TrayApp:
         self.signals.update_failed.connect(self._on_update_failed)
         self.signals.download_progress.connect(self._on_download_progress)
         self.signals.download_done.connect(self._on_download_done)
+        self.signals.voice_progress.connect(self._on_voice_progress)
+        self.signals.voice_done.connect(self._on_voice_done)
         self.signals.scan_progress.connect(self._on_scan_progress)
         self.signals.scan_done.connect(self._on_scan_done)
 
@@ -344,9 +353,11 @@ class TrayApp:
         self.translator.start(self.settings.translate_shortcut)
         # Live captions: a pipeline of its own (sst.live), started and stopped by the user, never by dictation
         self.live = LiveCaptions(lambda config, on_event: self._live_session(config, on_event),
-                                 lambda lane, config: self._live_lane(lane, config))
+                                 lambda lane, config: self._live_lane(lane, config),
+                                 lambda config: self._live_speaker(config))
         self.live.changed.connect(self._live_changed)
         self.live.moved.connect(self._live_moved)
+        self.live.speak_toggled.connect(lambda on: self.set_live_speak(on))
         self.live_listener = None  # live translation's shortcut (Ctrl+Alt+L), watched by live_keys
         self.live_keys = QTimer(interval=30, timeout=self._live_key_pump)
         self.window = MainWindow(self)
@@ -811,7 +822,81 @@ class TrayApp:
     def live_config(self) -> LiveConfig:
         s = self.settings
         return LiveConfig(target=s.live_target, mic_target=s.live_mic_target, source=s.live_source,
-                          hide_from_capture=s.live_hide_from_share)
+                          hide_from_capture=s.live_hide_from_share, speak=s.live_speak, speak_speed=s.live_speak_speed)
+
+    # -- the spoken translation (sst.live.voice, sst.live.speaker)
+
+    def live_voice(self) -> Voice:
+        return VOICES.get(self.settings.live_voice, DANNY)
+
+    def live_voice_state(self) -> tuple[str, int, str]:
+        """("ready" / "downloading" / "missing", the percent downloaded, why the last download failed)."""
+        if self.voice_downloading is not None:
+            return "downloading", self.voice_downloading, ""
+        return ("ready" if self.live_voice().ready() else "missing"), 0, self.voice_problem
+
+    def _live_speaker(self, config: LiveConfig) -> Speaker | None:
+        """The voice saying the translation aloud; None while it isn't downloaded."""
+        voice = self.live_voice()
+        if not voice.ready():
+            return None
+        return Speaker(lambda: PiperVoice(voice), Player(), config.spoken_lanes(voice.language), voice.language,
+                       config.speak_speed, on_problem=lambda message: self.live.event.emit(
+                           LiveEvent(Kind.ERROR, message, lane="voice")))
+
+    def set_live_speak(self, on: bool) -> None:
+        """The translation spoken aloud, or not: saved, at once while it runs; the voice is downloaded the first time
+        (then it starts speaking by itself)."""
+        self.apply_settings(dataclasses.replace(self.settings, live_speak=on))
+        if on and self.live_voice_state()[0] == "missing":
+            self.download_live_voice()
+        self.live.set_speak(on)
+        if self.window.isVisible():
+            self.window.refresh()
+
+    def set_live_speak_speed(self, speed: float) -> None:
+        self.apply_settings(dataclasses.replace(self.settings, live_speak_speed=speed))
+        self.live.set_speak_speed(speed)
+
+    def download_live_voice(self) -> None:
+        """Download and prepare the voice in the background (once; the progress shows on the bar and the page)."""
+        if self.voice_downloading is not None:
+            return
+        voice, last = self.live_voice(), [-1]
+        self.voice_downloading, self.voice_problem = 0, ""
+
+        def progress(done: int, total: int) -> None:
+            percent = done * 100 // total if total else 0
+            if percent != last[0]:  # the window needn't redraw for every megabyte
+                last[0] = percent
+                self.signals.voice_progress.emit(percent)
+
+        def work() -> None:
+            try:
+                install_voice(voice, progress)
+                self.signals.voice_done.emit("")
+            except Exception as e:
+                log.exception("Downloading the voice %s failed", voice.key)
+                self.signals.voice_done.emit(str(e) or type(e).__name__)
+        threading.Thread(target=work, name="voice-download", daemon=True).start()
+        self.live.set_voice_note("Downloading the voice…")
+
+    def _on_voice_progress(self, percent: int) -> None:
+        self.voice_downloading = percent
+        self.live.set_voice_note(f"Downloading the voice: {percent}%")
+        if self.window.isVisible():
+            self.window.refresh()
+
+    def _on_voice_done(self, error: str) -> None:
+        self.voice_downloading, self.voice_problem = None, error
+        self.live.set_voice_note("")
+        if error:
+            self._notify(APP_NAME, f"The voice couldn't be downloaded: {error}", QSystemTrayIcon.MessageIcon.Warning)
+        else:
+            log.info("The voice %s is ready", self.live_voice().name)
+            self.live.set_speak(self.settings.live_speak)  # here now: it speaks if speaking is still wanted
+        if self.window.isVisible():
+            self.window.refresh()
 
     def _live_session(self, config: LiveConfig, on_event) -> LiveSession:
         return LiveSession(config, Transcript(self.live_folder(), config), on_event)

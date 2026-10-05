@@ -67,6 +67,8 @@ from sst.engines.whisper import LANGUAGES
 from sst.gateway import PROVIDERS, GatewayConfig, Polisher
 from sst.hotkey import parse_hotkey
 from sst.live.contracts import LANGUAGES as LIVE_LANGUAGES
+from sst.live.contracts import LiveConfig, language_name
+from sst.live.voice import DANNY
 from sst.pipeline.dictionary import speech_hints
 from sst.scan import Computer
 from sst.settings import (
@@ -132,6 +134,7 @@ LIVE_SOURCE_WORDS = {
             "Use headphones, or the microphone hears the meeting too.",
 }
 LIVE_DOING = {"computer": "your laptop's sound", "microphone": "your microphone", "both": "your laptop and your microphone"}
+LIVE_SPEEDS = [("Normal", 1.0), ("A little faster", 1.15), ("Faster", 1.3)]
 LIVE_SHORTCUTS = [("Ctrl+Alt+L", "ctrl+alt+l"), ("Ctrl+Shift+L", "ctrl+shift+l"), ("Win+Alt+L", "win+alt+l"), ("Off", "")]
 TRANSLATE_SHORTCUTS = [("Ctrl+C+C (press Ctrl+C twice)", "ctrl+c+c"), ("Ctrl+Alt+L", "ctrl+alt+l"), ("Off", "")]
 TRANSFORM_HOTKEYS = [("Double-tap Ctrl", "double ctrl"), ("Ctrl+Alt+T", "ctrl+alt+t"), ("F8", "f8"), ("Off", "")]
@@ -3132,6 +3135,22 @@ class LivePage(Page):
         column.addWidget(self.mic_row)
         self.add(self.source_card)
 
+        # Hear it: the translation spoken aloud by a voice on the laptop (sst.live.voice)
+        self.voice_card, column = card(4, (20, 10, 20, 14))
+        self.speak = Toggle("Speak the translation")
+        self.speak.toggled.connect(self._speak_toggled)
+        self.speak_row, _, self.speak_caption = setting_row("Speak the translation", "", self.speak)
+        column.addWidget(self.speak_row)
+        column.addWidget(divider())
+        self.speed = Choice(small=True)
+        for label_text, value in LIVE_SPEEDS:
+            self.speed.addItem(label_text, value)
+        self.speed.setMinimumWidth(200)
+        self.speed.currentIndexChanged.connect(self._speed_chosen)
+        self.speed_row = setting_row("Speed", "It speeds up by itself when it falls behind.", self.speed)[0]
+        column.addWidget(self.speed_row)
+        self.add(self.voice_card)
+
         options, column = card(4, (20, 10, 20, 14))
         self.shortcut = Choice(small=True)
         for label_text, value in LIVE_SHORTCUTS:
@@ -3204,6 +3223,7 @@ class LivePage(Page):
         self.hide_share.blockSignals(True)
         self.hide_share.setChecked(s.live_hide_from_share)
         self.hide_share.blockSignals(False)
+        self._refresh_voice(s, source)
         clear(self.session_rows)
         found = app.live_sessions()
         if not found:
@@ -3218,6 +3238,43 @@ class LivePage(Page):
             layout.addWidget(caption(f"{lines} line{'' if lines == 1 else 's'}", "3", wrap=False), 1)
             layout.addWidget(button("Open", lambda _=False, p=path: self.app.open_live_session(p), link=True, size="sm"))
             self.session_rows.addWidget(line)
+
+    def _refresh_voice(self, s, source: str) -> None:
+        voice, (state, percent, problem) = self.app.live_voice(), self.app.live_voice_state()
+        speaks = language_name(voice.language)
+        spoken = LiveConfig(target=s.live_target, mic_target=s.live_mic_target, source=source).spoken_lanes(voice.language)
+        for box, value in ((self.speak, s.live_speak),):
+            box.blockSignals(True)
+            box.setChecked(value)
+            box.blockSignals(False)
+        self.speed.blockSignals(True)
+        self.speed.setCurrentIndex(max(0, self.speed.findData(s.live_speak_speed)))
+        self.speed.blockSignals(False)
+        if state == "downloading":
+            words = f"Downloading the voice {voice.name}: {percent}%. It starts speaking when it's here."
+        elif problem:
+            words = f"The voice couldn't be downloaded ({problem}). Switch it on again to try once more."
+        elif not spoken:
+            words = (f"{voice.name} speaks {speaks}: choose {speaks} above to hear the translation. Until then the "
+                     f"translation is only shown.")
+        elif state == "missing":
+            words = (f"{voice.name}, an {speaks} voice that runs on this laptop, reads each sentence out as it's "
+                     f"translated. Downloaded the first time ({round(voice.size / 1e6)} MB).")
+        else:
+            words = f"{voice.name}, an {speaks} voice on this laptop, reads each sentence out as it's translated."
+            if source != "computer":
+                words += " Through speakers the microphone pauses while it speaks; headphones keep it listening."
+        self.speak_caption.setText(words)
+        self.speak_caption.show()
+        self.speed_row.setVisible(s.live_speak)
+
+    def _speak_toggled(self, on: bool) -> None:
+        self.app.set_live_speak(on)
+        self.refresh()
+
+    def _speed_chosen(self, *_) -> None:
+        self.app.set_live_speak_speed(self.speed.currentData())
+        self.refresh()
 
     def _say(self, message: str) -> None:
         self.note.setText(message)
@@ -4847,6 +4904,22 @@ class PreviewApp:
 
     def open_live_session(self, path) -> None:
         self.calls.append(("open_live_session", path))
+
+    _voice_state: tuple = ("missing", 0, "")  # the voice isn't downloaded in the preview
+
+    def live_voice(self):
+        return DANNY
+
+    def live_voice_state(self) -> tuple:
+        return self._voice_state
+
+    def set_live_speak(self, on: bool) -> None:
+        self.calls.append(("set_live_speak", on))
+        self.apply_settings(dataclasses.replace(self.settings, live_speak=on))
+
+    def set_live_speak_speed(self, speed: float) -> None:
+        self.calls.append(("set_live_speak_speed", speed))
+        self.apply_settings(dataclasses.replace(self.settings, live_speak_speed=speed))
 
     def run_translation(self, text: str, target: str, second: str = ""):
         from sst.translate import Translation
