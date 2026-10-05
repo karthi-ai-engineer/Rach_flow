@@ -53,13 +53,14 @@ is recorded or sent until you press the key. It records a moment after you let g
 in Settings ("Microphone stays ready"); a Bluetooth headset's microphone is never kept open.
 
 **The window** (Rflow 2.0's "Obsidian Signal" design: soft depth on graphite, light and dark, one job per colour) has
-five sections:
+six sections:
 
 | Section | What it's for |
 |---|---|
 | **Home** | the voice orb and how to dictate (drawn as keys), a stats strip (this week, words per minute, days in a row, all time), and your dictations by day, searchable with **Ctrl+K**, with Correct and Copy under the pointer. While Parakeet downloads, it shows the progress and says the key isn't ready yet |
 | **Words** | *Your words*: names, products and terms that speech recognition listens for and the AI cleanup spells your way (type to find one, Enter to add, a chip's ✕ to remove with Undo); sound-alikes ("post grass" -> PostgreSQL) and corrections you made twice, to learn. **Snippets**, its second tab: say a short phrase, get your own text (**"my email"** types your email address), alone or inside a sentence, typed exactly as written and never sent to the AI |
-| **Tools** | **Text Transform** and **Translate**, each with its switch, and a box to try them. Text Transform: hold Ctrl+Win and say **"make it concise"**, "make it professional", "bullet points" or "action items" (your own phrases too), or **double-tap Ctrl** for a menu (1-4, U to undo). It works on the selected text in any app, or else your last dictation, checked so no number, name, date, "not" or "maybe" is lost or invented. Translate: select text and press **Ctrl+C twice**: a window at the pointer shows it translated, with the language at the top; **C** copies it, **Enter** replaces the text. Both use the AI connection. **Live captions**: what the laptop plays (a meeting, a video) translated while people speak, in a bar at the bottom of the screen that screen shares and recordings leave out (or show, for colleagues to read), with a transcript saved; Start here or from the tray menu. **Translate my speech too** adds your own words from the microphone, into Japanese (or another language), marked "You" on the bar. It uses Google Gemini 3.5 Live Translate with your Gemini key (about $2.20 an hour for each way) |
+| **Tools** | **Text Transform** and **Translate**, each with its switch, and a box to try them. Text Transform: hold Ctrl+Win and say **"make it concise"**, "make it professional", "bullet points" or "action items" (your own phrases too), or **double-tap Ctrl** for a menu (1-4, U to undo). It works on the selected text in any app, or else your last dictation, checked so no number, name, date, "not" or "maybe" is lost or invented. Translate: select text and press **Ctrl+C twice**: a window at the pointer shows it translated, with the language at the top; **C** copies it, **Enter** replaces the text. Both use the AI connection. |
+| **Live translation** | speech translated while people speak, in a bar you can **move, resize and scroll back through** (it never takes the keyboard from your app; **✕** stops it). Listen to the **Computer** (a meeting, a video), the **Microphone** (people in the room) or **Both** (an online meeting: your own words marked "You"). Start and stop it with **Ctrl+Alt+L** in any app; the bar stays out of screen shares unless you let colleagues read it; each session's transcript is listed to open. Google Gemini 3.5 Live Translate with your Gemini key (about $2.20 an hour per source) |
 | **AI & models** | how Rflow hears you (the speech model and the microphone with a live meter) and the AI connection (provider, model, key, a Test), and the **Clean up dictation** switch. One level down: **How Rflow hears you**, the speech models: NVIDIA Parakeet (English, fast; downloaded once when chosen, 663 MB), OpenAI Whisper large-v3 turbo (99 languages, downloaded when chosen, slow without an NVIDIA card), **Scan this PC**, the **cloud** (OpenAI, Groq or Google Gemini with your own key, after a warning that your voice goes to the provider; Parakeet takes over if the provider can't be reached) and **your own server** (Whisper on vLLM, a company AI gateway, any server with OpenAI's transcription API). And **AI connection**: the provider, key, model and backup model (below) |
 | **Settings** | the dictation key, sounds, starting with Windows, numbers as numbers, keeping recordings, keeping the microphone ready, updates. **Advanced**: the voice pipeline, troubleshooting steps, Windows' voice effects, the **Reading test** (below), **Profiles** (below) and the logs |
 
@@ -202,9 +203,9 @@ Rach_flow/
    ├─ dictate.py              Dictation: hotkey events -> record -> transcribe -> clean up -> type
    ├─ hotkey.py               global hotkeys (low-level keyboard hook) and sending keys
    ├─ paste.py                paste text into the focused app, then restore the clipboard
-   ├─ live/                   live captions, a pipeline of its own: what the laptop plays (WASAPI loopback) and your
-   │                          microphone -> Gemini Live Translate -> the caption bar and a transcript; never imports
-   │                          dictation's code
+   ├─ live/                   live translation, a pipeline of its own: what the laptop plays (WASAPI loopback) or the
+   │                          microphone -> Gemini Live Translate -> the translation bar and a transcript; never
+   │                          imports dictation's code
    ├─ web.py                  local server for the web page (127.0.0.1 only)
    ├─ static/                 the Record / Stop page (index.html), the app icon (sst.ico), the logo (brand/), the window's images (ui/), Geist (fonts/)
    ├─ audio.py                microphone recording, WAV read/write, measuring a recording, splitting long audio
