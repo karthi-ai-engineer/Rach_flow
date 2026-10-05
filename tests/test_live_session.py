@@ -46,7 +46,7 @@ def engine(session, lane):
 def test_the_session_feeds_the_engine_and_passes_its_events_on(tmp_path):
     shown = []
     capture = FakeCapture()
-    session = LiveSession(LiveConfig(target="en"), Transcript(tmp_path, "en"), shown.append)
+    session = LiveSession(LiveConfig(target="en"), Transcript(tmp_path, LiveConfig(target="en")), shown.append)
     session.add(SYSTEM, capture, FakeEngine)
     capture.on_frame(b"\0" * 3200)
     assert engine(session, SYSTEM).started and engine(session, SYSTEM).frames == [b"\0" * 3200]
@@ -70,7 +70,7 @@ def test_a_way_that_cant_start_leaves_nothing_running_and_the_other_goes_on():
 
 
 def test_each_way_stops_alone():
-    session = LiveSession(LiveConfig(mine=True))
+    session = LiveSession(LiveConfig(source="both"))
     them, me = FakeCapture(), FakeCapture()
     session.add(SYSTEM, them, FakeEngine)
     session.add(MIC, me, FakeEngine)
@@ -80,7 +80,8 @@ def test_each_way_stops_alone():
 
 def test_untranslated_lines_from_the_microphone_are_echo_and_dropped(tmp_path):
     shown = []
-    session = LiveSession(LiveConfig(mine=True), Transcript(tmp_path, "en", mine_target="ja"), shown.append)
+    config = LiveConfig(source="both", target="en", mic_target="ja")
+    session = LiveSession(config, Transcript(tmp_path, config), shown.append)
     session.add(MIC, FakeCapture(), FakeEngine)
     mic = engine(session, MIC)
     mic.on_event(LiveEvent(Kind.LINE, "", source="本日はよろしくお願いします。", lane=MIC))  # the meeting, from the speakers
@@ -90,13 +91,13 @@ def test_untranslated_lines_from_the_microphone_are_echo_and_dropped(tmp_path):
 
 
 def test_the_settings_of_each_way():
-    config = LiveConfig(target="en", mine=True, mine_target="ja")
+    config = LiveConfig(target="en", source="both", mic_target="ja")
     assert config.for_lane(SYSTEM).target == "en" and config.for_lane(MIC).target == "ja"
 
 
 def test_the_transcript_is_bilingual_and_starts_with_the_first_line(tmp_path):
     now = [datetime(2026, 10, 5, 14, 3, 12)]
-    transcript = Transcript(tmp_path / "live", "en", now=lambda: now[0])
+    transcript = Transcript(tmp_path / "live", LiveConfig(target="en"), now=lambda: now[0])
     transcript.add(LiveEvent(Kind.SOURCE, "今日は"))  # only finished lines are written
     assert transcript.path is None
     transcript.add(LiveEvent(Kind.LINE, "Today we have a meeting.", source="今日は会議です"))
@@ -104,19 +105,29 @@ def test_the_transcript_is_bilingual_and_starts_with_the_first_line(tmp_path):
     transcript.add(LiveEvent(Kind.LINE, "", source="Let's start."))  # already English: shown as heard
     text = transcript.path.read_text(encoding="utf-8")
     assert transcript.path.name == "2026-10-05 14-03-12 live captions.txt"
-    assert text == ("Rflow live captions, 2026-10-05 14:03, translated into English\n\n"
+    assert text == ("Rflow live translation, 2026-10-05 14:03, translated into English\n\n"
                     "[14:03:12] 今日は会議です\n           Today we have a meeting.\n\n"
                     "[14:03:20] Let's start.\n\n")
 
 
 def test_the_transcript_marks_the_users_own_lines(tmp_path):
-    transcript = Transcript(tmp_path, "en", now=lambda: datetime(2026, 10, 5, 15, 0, 0), mine_target="ja")
+    config = LiveConfig(source="both", target="en", mic_target="ja")
+    transcript = Transcript(tmp_path, config, now=lambda: datetime(2026, 10, 5, 15, 0, 0))
     transcript.add(LiveEvent(Kind.LINE, "Thank you.", source="ありがとうございます。"))
     transcript.add(LiveEvent(Kind.LINE, "来週にしましょう。", source="Let's do it next week.", lane=MIC))
     assert transcript.path.read_text(encoding="utf-8") == (
-        "Rflow live captions, 2026-10-05 15:00, translated into English; your own speech into Japanese\n\n"
+        "Rflow live translation, 2026-10-05 15:00, translated into English; your own speech into Japanese\n\n"
         "[15:00:00] ありがとうございます。\n           Thank you.\n\n"
         "[15:00:00] You: Let's do it next week.\n           来週にしましょう。\n\n")
+
+
+def test_with_the_microphone_alone_the_transcript_marks_no_one(tmp_path):
+    config = LiveConfig(source="microphone", mic_target="ja")
+    transcript = Transcript(tmp_path, config, now=lambda: datetime(2026, 10, 5, 16, 0, 0))
+    transcript.add(LiveEvent(Kind.LINE, "予算は来週です。", source="The budget is next week.", lane=MIC))
+    assert transcript.path.read_text(encoding="utf-8") == (
+        "Rflow live translation, 2026-10-05 16:00, the microphone, translated into Japanese\n\n"
+        "[16:00:00] The budget is next week.\n           予算は来週です。\n\n")
 
 
 def test_language_names():

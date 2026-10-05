@@ -7,8 +7,8 @@
   uv run sst devices               list microphones (* = default)
   uv run sst eval [<folder>...]    score reading tests (all of them by default); --degrade, --model, --no-cleanup
   uv run sst web                   open a Record / Stop page in the browser
-  uv run sst live [--to ja]        live captions of what the laptop plays, translated (Gemini), until Ctrl+C;
-                                   --mine: your own speech too (the microphone, --mine-to ja)
+  uv run sst live [--to ja]        live translation of what the laptop plays (Gemini), until Ctrl+C;
+                                   --source microphone (or both), --mic-to ja
 
 Options: --engine parakeet (or whisper-turbo; openai, groq, gemini, server as set up in Rflow)
          --device <number from `sst devices`>
@@ -101,35 +101,36 @@ def cmd_dictate(args) -> None:
 
 
 def cmd_live(args) -> None:
-    """Live captions in this console: what the laptop plays (and with --mine the user's own speech), translated line by
-    line, with how far each line trailed the words. The same pipeline as the app's caption bar (sst.live), with the
-    Gemini key of the profile in use."""
+    """Live translation in this console: what the laptop plays, the microphone, or both (--source), line by line, with
+    how far each line trailed the words. The same pipeline as the app's translation bar (sst.live), with the Gemini key
+    of the profile in use."""
     import threading
 
     from sst.gateway import GatewayConfig
-    from sst.live.contracts import LANGUAGES, MIC, SYSTEM, Kind, LiveConfig, language_name
+    from sst.live.contracts import LANGUAGES, MIC, Kind, LiveConfig, language_name
     from sst.live.gemini import GeminiLiveTranslate
     from sst.live.session import LiveSession
-    from sst.live.transcript import Transcript
+    from sst.live.transcript import Transcript, heading
     from sst.live.wasapi import Capture
     from sst.settings import Profiles, Settings
 
     profile = Profiles.load().current
     settings, gateway = Settings.load(profile.settings_file), GatewayConfig.load(profile.gateway_file)
-    target, mine_target = args.to or settings.live_target, args.mine_to or settings.live_mine_target
-    for code in (target, mine_target):
+    target, mic_target = args.to or settings.live_target, args.mic_to or settings.live_mic_target
+    for code in (target, mic_target):
         if code not in LANGUAGES.values():
-            raise ValueError(f"--to and --mine-to take a language code: {', '.join(sorted(LANGUAGES.values()))}")
+            raise ValueError(f"--to and --mic-to take a language code: {', '.join(sorted(LANGUAGES.values()))}")
     key = gateway.key_for("gemini")
     if not key:
         raise ValueError("Live captions need a Gemini key: add one in Rflow, AI & models.")
-    config = LiveConfig(target=target, mine=args.mine, mine_target=mine_target)
+    config = LiveConfig(target=target, mic_target=mic_target, source=args.source or settings.live_source)
     stopped = threading.Event()
 
     def show(event) -> None:
-        who = "You: " if event.lane == MIC else ""
+        who = "You: " if event.lane == MIC and config.marks_mine else ""
         if event.kind is Kind.LINE:
-            print(f"\n  {who}{event.source}\n  -> {event.text or '(already ' + language_name(target) + ')'}"
+            into = language_name(config.for_lane(event.lane).target)
+            print(f"\n  {who}{event.source}\n  -> {event.text or '(already ' + into + ')'}"
                   + (f"   [complete {event.seconds:.1f} s after the voice paused]" if event.seconds else ""), flush=True)
         elif event.kind is Kind.ERROR:
             print(f"\n  ! {who}{event.text}", flush=True)
@@ -138,14 +139,11 @@ def cmd_live(args) -> None:
             if event.text == "Stopped":
                 stopped.set()
 
-    session = LiveSession(config, Transcript(profile.folder() / "live captions", target,
-                                             mine_target=mine_target if args.mine else ""), show)
-    mine = f"; your own speech into {language_name(mine_target)}" if args.mine else ""
-    print(f"Live captions into {language_name(target)}{mine}: play a meeting or a video. Ctrl+C stops.")
-    session.add(SYSTEM, Capture.speakers(), lambda emit: GeminiLiveTranslate(key, config, emit))
-    if args.mine:
-        session.add(MIC, Capture.microphone(),
-                    lambda emit: GeminiLiveTranslate(key, config.for_lane(MIC), emit, lane=MIC))
+    session = LiveSession(config, Transcript(profile.folder() / "live captions", config), show)
+    print(f"Live translation ({config.source}): {heading(config)}. Ctrl+C stops.")
+    for lane in config.lanes:
+        capture = Capture.microphone() if lane == MIC else Capture.speakers()
+        session.add(lane, capture, lambda emit, lane=lane: GeminiLiveTranslate(key, config.for_lane(lane), emit, lane=lane))
     try:
         stopped.wait(args.seconds or None)
     finally:
@@ -230,8 +228,9 @@ def main() -> None:
     p_live = sub.add_parser("live", help="live captions of what the laptop plays, translated (Gemini Live Translate)")
     p_live.add_argument("--to", help="language code to translate into, e.g. en, ja (default: the one set in Rflow)")
     p_live.add_argument("--seconds", type=float, help="stop after this long (default: until Ctrl+C)")
-    p_live.add_argument("--mine", action="store_true", help="translate your own speech (the microphone) too")
-    p_live.add_argument("--mine-to", help="language code for your own speech (default: the one set in Rflow, ja)")
+    p_live.add_argument("--source", choices=["computer", "microphone", "both"],
+                        help="what to translate: what the laptop plays, the microphone, or both (default: as set in Rflow)")
+    p_live.add_argument("--mic-to", help="language code for what the microphone hears (default: as set in Rflow, ja)")
     p_web = sub.add_parser("web", help="open the record/stop page in your browser")
     p_web.add_argument("--port", type=int, default=8765)
     p_web.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")

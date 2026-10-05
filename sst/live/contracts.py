@@ -16,7 +16,9 @@ from dataclasses import dataclass, field
 
 RATE = 16_000  # what the live translation models take: 16 kHz mono, 16-bit
 FRAME_MS = 100  # the frame Google recommends for latency: 3,200 bytes at 16 kHz
-SYSTEM, MIC = "system", "mic"  # the two ways (lanes): what the laptop plays, and the user's own speech
+SYSTEM, MIC = "system", "mic"  # the two ways (lanes): what the laptop plays, and what the microphone hears
+# What live translation listens to, as the user chooses it, and the ways each one runs
+SOURCES: dict[str, tuple[str, ...]] = {"computer": (SYSTEM,), "microphone": (MIC,), "both": (SYSTEM, MIC)}
 
 
 class Kind(enum.Enum):
@@ -33,7 +35,7 @@ class LiveEvent:
     text: str = ""  # SOURCE/TRANSLATION: the whole line so far; LINE: the translation; STATUS/ERROR: the message
     source: str = ""  # LINE: the original words of the finished line
     language: str = ""  # the language the engine says the text is in (BCP-47), if it says
-    lane: str = SYSTEM  # SYSTEM: what the laptop plays; MIC: the user's own speech
+    lane: str = SYSTEM  # SYSTEM: what the laptop plays; MIC: what the microphone hears
     seconds: float = 0.0  # LINE: how long after the voice paused its translation was complete (0 = it didn't pause)
     at: float = field(default_factory=time.monotonic)
 
@@ -47,12 +49,22 @@ class LiveConfig:
     reconnect_s: float = 540.0  # a Live API connection lasts ~10 min: a new one is opened before that
     caption_lines: int = 2  # finished translation lines kept on screen above the one being spoken
     hide_from_capture: bool = True  # the caption bar isn't in screen shares and recordings
-    mine: bool = False  # the user's own speech too (the microphone), translated into mine_target
-    mine_target: str = "ja"
+    source: str = "computer"  # a key of SOURCES: what's translated (the laptop, the microphone, or both)
+    mic_target: str = "ja"  # the language what the microphone hears is translated into
+
+    @property
+    def lanes(self) -> tuple[str, ...]:
+        return SOURCES.get(self.source, SOURCES["computer"])
+
+    @property
+    def marks_mine(self) -> bool:
+        """With both, the microphone is the user in an online meeting: their lines are marked "You". With the
+        microphone alone it hears everyone in the room, so nothing is marked."""
+        return self.source == "both"
 
     def for_lane(self, lane: str) -> "LiveConfig":
-        """The settings one way's engine works with: the user's own speech goes into mine_target."""
-        return dataclasses.replace(self, target=self.mine_target) if lane == MIC else self
+        """The settings one way's engine works with: what the microphone hears goes into mic_target."""
+        return dataclasses.replace(self, target=self.mic_target) if lane == MIC else self
 
 
 # The languages captions can be translated into: the name shown, and the code the model takes. Gemini 3.5 Live

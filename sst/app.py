@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 from collections import deque
-from datetime import date
+from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -346,6 +346,9 @@ class TrayApp:
         self.live = LiveCaptions(lambda config, on_event: self._live_session(config, on_event),
                                  lambda lane, config: self._live_lane(lane, config))
         self.live.changed.connect(self._live_changed)
+        self.live.moved.connect(self._live_moved)
+        self.live_listener = None  # live translation's shortcut (Ctrl+Alt+L), watched by live_keys
+        self.live_keys = QTimer(interval=30, timeout=self._live_key_pump)
         self.window = MainWindow(self)
 
         self.tray = QSystemTrayIcon(self.icon)
@@ -361,9 +364,10 @@ class TrayApp:
         menu.addAction(f"Open {APP_NAME}", lambda: self.window.open("home"))
         menu.addAction("Words", lambda: self.window.open("dictionary"))
         menu.addAction("Tools", lambda: self.window.open("tools"))
-        self.live_action = QAction("Live captions", menu, checkable=True)
+        self.live_action = QAction("Live translation", menu, checkable=True)
         self.live_action.triggered.connect(lambda: self.toggle_live())
         menu.addAction(self.live_action)
+        self._start_live_shortcut()
         menu.addAction("AI && models", lambda: self.window.open("models"))
         menu.addAction("Reading test", lambda: self.window.open("reading"))
         menu.addAction("Settings", lambda: self.window.open("settings"))
@@ -729,6 +733,9 @@ class TrayApp:
             self.transforms.start(new.transform_shortcut)
         if new.translate_shortcut != old.translate_shortcut and hasattr(self, "translator"):
             self.translator.start(new.translate_shortcut)
+        if (new.live_shortcut, new.translate_shortcut, new.transform_shortcut) != (
+                old.live_shortcut, old.translate_shortcut, old.transform_shortcut) and hasattr(self, "live_action"):
+            self._start_live_shortcut()
         if new.speech_model != old.speech_model:
             self._load_speech()
         self.window.refresh()
@@ -772,32 +779,51 @@ class TrayApp:
     def translate_ready(self) -> bool:
         return self.transform_ready()  # the same model as the AI cleanup
 
-    # -- live captions (sst.live)
+    # -- live translation (sst.live)
 
     def live_problem(self) -> str:
-        """Why live captions can't start, or "" when they can."""
+        """Why live translation can't start, or "" when it can."""
         if not self.gateway.key_for("gemini"):
-            return "Live captions use Google Gemini 3.5 Live Translate: add a Gemini key in AI & models."
+            return "Live translation uses Google Gemini 3.5 Live Translate: add a Gemini key in AI & models."
         return ""
 
     def live_running(self) -> bool:
         return self.live.running
 
     def live_folder(self) -> Path:
-        return self.profile.folder() / "live captions"
+        return self.profile.folder() / "live captions"  # its name since 2.1.0, so earlier sessions stay listed
+
+    def live_sessions(self, limit: int = 8) -> list[tuple[datetime, int, Path]]:
+        """The latest transcripts, newest first: when each began, how many lines it has, its file."""
+        found = []
+        for path in sorted(self.live_folder().glob("* live captions.txt"), reverse=True)[:limit]:
+            try:
+                began = datetime.strptime(path.name[:19], "%Y-%m-%d %H-%M-%S")
+                lines = path.read_text(encoding="utf-8").count("\n[")
+            except (ValueError, OSError):
+                continue
+            found.append((began, lines, path))
+        return found
+
+    def open_live_session(self, path: Path) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def live_config(self) -> LiveConfig:
+        s = self.settings
+        return LiveConfig(target=s.live_target, mic_target=s.live_mic_target, source=s.live_source,
+                          hide_from_capture=s.live_hide_from_share)
 
     def _live_session(self, config: LiveConfig, on_event) -> LiveSession:
-        transcript = Transcript(self.live_folder(), config.target, mine_target=config.mine_target if config.mine else "")
-        return LiveSession(config, transcript, on_event)
+        return LiveSession(config, Transcript(self.live_folder(), config), on_event)
 
     def _live_lane(self, lane: str, config: LiveConfig) -> tuple:
-        """One way of live captions: what the laptop plays, or the user's microphone; each its own Gemini session."""
+        """One way of live translation: what the laptop plays, or the microphone; each its own Gemini session."""
         key, lane_config = self.gateway.key_for("gemini"), config.for_lane(lane)
         capture = Capture.microphone() if lane == MIC else Capture.speakers()
         return capture, lambda emit: GeminiLiveTranslate(key, lane_config, emit, lane=lane)
 
     def start_live(self) -> str:
-        """Start live captions of what the laptop plays; "" or why they didn't start."""
+        """Start live translation of what the chosen source hears; "" or why it didn't start."""
         if self.live.running:
             return ""
         problem = self.live_problem()
@@ -806,36 +832,33 @@ class TrayApp:
         s = self.settings
         if not s.live_told:
             answer = QMessageBox.question(
-                None, f"{APP_NAME}: live captions",
-                "Live captions send what your laptop plays (a meeting, a video) to Google, which translates it with "
-                "Gemini 3.5 Live Translate, a preview model, and show the translation at the bottom of the screen. "
-                "With \"Translate my speech too\", your microphone goes to Google as well.\n\n"
-                "With a paid Gemini key this costs about $2.20 an hour for each (what you hear, your own speech); "
-                "with a free key Google may use the audio to improve its products. Each session's transcript is "
-                "saved on this laptop.\n\nStart?")
+                None, f"{APP_NAME}: live translation",
+                "Live translation sends what it listens to (what your laptop plays, your microphone, or both, as you "
+                "choose) to Google, which translates it with Gemini 3.5 Live Translate, a preview model, and shows "
+                "the translation in a bar you can move anywhere.\n\n"
+                "With a paid Gemini key this costs about $2.20 an hour for each source (both: twice); with a free key "
+                "Google may use the audio to improve its products. Each session's transcript is saved on this "
+                "laptop.\n\nStart?")
             if answer != QMessageBox.StandardButton.Yes:
                 return "Not started."
             self.apply_settings(dataclasses.replace(s, live_told=True))
-        s = self.settings
-        config = LiveConfig(target=s.live_target, hide_from_capture=s.live_hide_from_share, mine=s.live_mine,
-                            mine_target=s.live_mine_target)
         try:
-            self.live.start(config)
-        except Exception as e:  # e.g. no output device to listen to
-            log.warning("Live captions didn't start: %s", e)
-            return f"Live captions couldn't start: {e}"
+            self.live.start(self.live_config(), geometry=list(self.settings.live_bar) or None)
+        except Exception as e:  # e.g. no output device or microphone to listen to
+            log.warning("Live translation didn't start: %s", e)
+            return f"Live translation couldn't start: {e}"
         return ""
 
     def stop_live(self) -> None:
         self.live.stop()
 
-    def set_live_mine(self, on: bool) -> str:
-        """Translate the user's own speech too, or not: saved, and at once while the captions run; "" or why not."""
-        self.apply_settings(dataclasses.replace(self.settings, live_mine=on))
-        return self.live.set_mine(on) if self.live.running else ""
+    def set_live_source(self, source: str) -> str:
+        """Listen to the computer, the microphone or both: saved, and at once while it runs; "" or why not."""
+        self.apply_settings(dataclasses.replace(self.settings, live_source=source))
+        return self.live.set_source(source) if self.live.running else ""
 
     def set_live_hidden(self, hidden: bool) -> None:
-        """The caption bar left out of screen shares, or shown in them: saved, and at once while the captions run."""
+        """The bar left out of screen shares, or shown in them: saved, and at once while it runs."""
         self.apply_settings(dataclasses.replace(self.settings, live_hide_from_share=hidden))
         self.live.set_hidden(hidden)
 
@@ -851,10 +874,49 @@ class TrayApp:
     def _live_changed(self, running: bool) -> None:
         self.live_action.setChecked(running)
         if not running and self.live.last_problem:
-            self._notify(APP_NAME, f"Live captions stopped: {self.live.last_problem}", QSystemTrayIcon.MessageIcon.Warning)
+            self._notify(APP_NAME, f"Live translation stopped: {self.live.last_problem}",
+                         QSystemTrayIcon.MessageIcon.Warning)
             self.live.last_problem = ""
         if self.window.isVisible():
             self.window.refresh()
+
+    def _live_moved(self, geometry: list) -> None:
+        """Where the user put the bar, for the next start (saved quietly: nothing else depends on it)."""
+        self.settings = dataclasses.replace(self.settings, live_bar=list(geometry))
+        self.settings.save(self.profile.settings_file)
+
+    def live_shortcut_clash(self) -> str:
+        """The tool already using live translation's shortcut, or "": the shortcut then stays with that tool."""
+        s = self.settings
+        for name, shortcut in (("Translate", s.translate_shortcut), ("Text Transform", s.transform_shortcut)):
+            if s.live_shortcut and shortcut == s.live_shortcut:
+                return name
+        return ""
+
+    def _start_live_shortcut(self) -> None:
+        """Ctrl+Alt+L (or the user's choice) starts and stops live translation from any app."""
+        if self.live_listener is not None:
+            self.live_listener.stop()
+            self.live_listener = None
+        self.live_keys.stop()
+        shortcut, label = self.settings.live_shortcut, ""
+        if shortcut and not self.live_shortcut_clash():
+            try:
+                self.live_listener = HotkeyListener(parse_hotkey(shortcut))
+                self.live_listener.start()
+                self.live_keys.start()
+                label = parse_hotkey(shortcut).label
+            except (ValueError, OSError) as e:
+                log.warning("Live translation's shortcut %r doesn't work: %s", shortcut, e)
+                self.live_listener = None
+        self.live_action.setText(f"Live translation\t{label.title()}" if label else "Live translation")
+
+    def _live_key_pump(self) -> None:
+        listener = self.live_listener
+        while listener is not None and not listener.events.empty():
+            event, _ = listener.events.get_nowait()
+            if event == "press":
+                self.toggle_live()
 
     def open_live_folder(self) -> None:
         folder = self.live_folder()
@@ -1213,6 +1275,8 @@ class TrayApp:
             self._load_speech()  # the other profile may use another speech model
         self.transforms.start(self.settings.transform_shortcut)
         self.translator.start(self.settings.translate_shortcut)
+        self.live.stop()  # the other profile may use another key, and keeps its own transcripts
+        self._start_live_shortcut()
         # Every page shows the profile's own data: build the window again rather than update each field.
         old, self.window = self.window, MainWindow(self)
         self.window.set_status(*self._status)
@@ -1317,6 +1381,8 @@ class TrayApp:
         self.transforms.stop()
         self.translator.stop()
         self.live.stop()
+        if self.live_listener is not None:
+            self.live_listener.stop()
         if self.listener:
             self.listener.stop()
         if self.dictation:

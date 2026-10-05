@@ -1,12 +1,12 @@
 """One live captions session: one or two ways (lanes), each a capture feeding its own engine, and their events going to
 one transcript, the log and whoever shows them (the caption bar). Qt-free: the app moves the events to its own thread.
 
-    SYSTEM  what the laptop plays (a meeting, a video)  -> the chosen language
-    MIC     the user's own speech (the microphone)      -> mine_target (Japanese)
+    SYSTEM  what the laptop plays (a meeting, a video)       -> target
+    MIC     what the microphone hears (the room, or the user)  -> mic_target (Japanese)
 
-Without headphones the microphone hears the meeting too. Its lines that come back untranslated (speech already in
-mine_target: the meeting's Japanese from the speakers, or the user speaking Japanese) are echo, not the user's words
-to show: they are dropped, never shown or saved.
+The microphone's lines that come back untranslated (speech already in mic_target: a meeting's Japanese from the
+speakers when there are no headphones, or someone speaking Japanese) are dropped, never shown or saved: with Both they
+are echo, and with the microphone alone they need no translation.
 """
 import logging
 import statistics

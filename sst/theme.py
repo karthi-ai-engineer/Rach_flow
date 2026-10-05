@@ -189,6 +189,7 @@ ICONS = {
               '0 1 3.5 18z"/>',
     "warning": '<path d="M12 4 21 19.5H3zM12 10v4M12 17v.3"/>',
     "reading": '<path d="M5 5h14M5 9.5h14M5 14h9M5 18.5h6"/>',
+    "live": '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10.5h5M14.5 10.5h2.5M7 14.5h2.5M12 14.5h5"/>',
 }
 
 

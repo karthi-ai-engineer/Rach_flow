@@ -1,12 +1,15 @@
-"""The caption bar and the Qt side of a live captions session, off-screen (no window shown, no focus taken)."""
+"""The translation bar and the Qt side of a live translation session, off-screen: no window shown, no focus taken,
+no real mouse (Qt's test events only)."""
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
+from PySide6.QtCore import QPoint, QRect, QSize, Qt  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from sst.live.captions import CaptionBar, LiveCaptions  # noqa: E402
+from sst.live.captions import CaptionBar, LiveCaptions, dragged  # noqa: E402
 from sst.live.contracts import MIC, SYSTEM, Kind, LiveConfig, LiveEvent  # noqa: E402
 
 
@@ -15,58 +18,142 @@ def qt():
     return QApplication.instance() or QApplication([])
 
 
-def test_the_bar_shows_the_words_heard_and_the_translations_finished_dimmer():
-    bar = CaptionBar(lines=2)
-    bar.show_event(LiveEvent(Kind.LINE, "Thank you for joining.", source="ご参加ありがとうございます。"))
-    bar.show_event(LiveEvent(Kind.LINE, "Let's review last week.", source="先週を振り返りましょう。"))
-    bar.show_event(LiveEvent(Kind.LINE, "First, the deployment.", source="まずデプロイです。"))  # the oldest scrolls away
+def line(text, source="", lane=SYSTEM):
+    return LiveEvent(Kind.LINE, text, source=source, lane=lane)
+
+
+# ---- what the bar shows
+
+def test_each_line_shows_the_words_heard_above_its_translation_and_the_whole_session_stays():
+    bar = CaptionBar()
+    for i in range(40):
+        bar.show_event(line(f"Line {i} in English.", f"日本語の{i}行目。"))
     bar.show_event(LiveEvent(Kind.SOURCE, "問題が一つ"))
     bar.show_event(LiveEvent(Kind.TRANSLATION, "One issue"))
-    assert bar.heard_line() == "問題が一つ"
-    shown = bar.translation_html()
-    assert "Thank you" not in shown and "Let&#x27;s review last week." in shown and "One issue" in shown
-    assert shown.index("deployment") < shown.index("One issue")  # the line being spoken is last, at the bottom
-    bar.grab()  # paints without errors
-
-
-def test_a_line_already_in_the_target_language_shows_as_heard():
-    bar = CaptionBar()
-    bar.show_event(LiveEvent(Kind.LINE, "", source="Let's start."))
-    assert "Let&#x27;s start." in bar.translation_html() and bar.heard_line() == "Let's start."
-
-
-def test_before_anyone_speaks_the_bar_says_it_listens_and_a_problem_is_shown():
-    bar = CaptionBar()
-    bar.target = "ja"
-    bar.show_event(LiveEvent(Kind.STATUS, "Listening"))
-    assert "Listening: captions into Japanese appear when someone speaks." in bar.translation_html()
-    bar.show_event(LiveEvent(Kind.ERROR, "Can't reach Google: check the internet connection."))
-    assert "Can&#x27;t reach Google" in bar.translation_html()
-    bar.show_event(LiveEvent(Kind.SOURCE, "もしもし"))  # back: the problem goes
-    assert "Google" not in bar.translation_html()
-
-
-def test_the_users_own_lines_are_marked_and_the_small_line_stays_with_the_others():
-    bar = CaptionBar(lines=3)
-    bar.show_event(LiveEvent(Kind.LINE, "Shall we start?", source="始めましょうか。"))
-    bar.show_event(LiveEvent(Kind.LINE, "はい、始めましょう。", source="Yes, let's start.", lane=MIC))
-    bar.show_event(LiveEvent(Kind.TRANSLATION, "予算について", lane=MIC))
-    shown = bar.translation_html()
-    assert shown.count("You&nbsp;·&nbsp;") == 2 and "Shall we start?" in shown
-    assert shown.index("Shall we start?") < shown.index("はい、始めましょう。") < shown.index("予算について")
-    assert bar.heard_line() == "始めましょうか。"  # not the user's own words
-    bar.drop_lane(MIC)  # their way stopped: the line in progress goes, the finished one stays
-    assert "予算について" not in bar.translation_html() and "はい、始めましょう。" in bar.translation_html()
+    text = bar.text()
+    assert "日本語の0行目。\nLine 0 in English." in text  # nothing scrolls away: the session is all there to read back
+    assert text.index("Line 39") < text.index("問題が一つ") < text.index("One issue")
     bar.grab()
 
 
-def test_a_problem_on_the_users_own_way_says_whose_it_is():
+def test_words_in_progress_are_redrawn_not_repeated():
     bar = CaptionBar()
+    for words in ("One", "One issue", "One issue left."):
+        bar.show_event(LiveEvent(Kind.TRANSLATION, words))
+    assert bar.text().count("One") == 1
+    bar.show_event(line("One issue left.", "問題が一つ残っています。"))
+    bar.show_event(LiveEvent(Kind.TRANSLATION, "Next"))
+    assert bar.text().count("One issue left.") == 1 and bar.text().endswith("Next")
+
+
+def test_a_line_already_in_the_target_language_shows_once():
+    bar = CaptionBar()
+    bar.show_event(line("", "Let's start."))
+    assert bar.text().count("Let's start.") == 1
+
+
+def test_with_both_the_users_own_lines_are_marked_and_their_words_left_out():
+    bar = CaptionBar(LiveConfig(source="both"))
+    bar.show_event(line("Shall we start?", "始めましょうか。"))
+    bar.show_event(line("はい、始めましょう。", "Yes, let's start.", lane=MIC))
+    bar.show_event(LiveEvent(Kind.SOURCE, "The budget", lane=MIC))  # the user's own words aren't shown
+    text = bar.text()
+    assert "You · はい、始めましょう。" in text and "始めましょうか。\nShall we start?" in text
+    assert "Yes, let's start." not in text and "The budget" not in text
+
+
+def test_with_the_microphone_alone_nothing_is_marked():
+    bar = CaptionBar(LiveConfig(source="microphone"))
+    bar.show_event(line("Shall we start?", "始めましょうか。", lane=MIC))
+    assert "You" not in bar.text() and "始めましょうか。\nShall we start?" in bar.text()
+
+
+def test_the_title_says_what_is_translated_into_what():
+    assert CaptionBar(LiveConfig(target="en")).title.text() == "Live translation  ·  into English  ·  Starting…"
+    both = CaptionBar(LiveConfig(source="both", target="en", mic_target="ja"))
+    both.show_event(LiveEvent(Kind.STATUS, "Listening"))
+    assert both.title.text() == "Live translation  ·  into English  ·  you into Japanese"
+    assert "microphone into Japanese" in CaptionBar(LiveConfig(source="microphone", mic_target="ja")).title.text()
+
+
+def test_before_anyone_speaks_it_says_it_listens():
+    bar = CaptionBar(LiveConfig(target="ja"))
+    bar.show_event(LiveEvent(Kind.STATUS, "Listening"))
+    assert bar.text() == "Listening: translations into Japanese appear when someone speaks."
+
+
+def test_a_problem_says_whose_it_is_and_goes_when_words_come():
+    bar = CaptionBar(LiveConfig(source="both"))
     bar.show_event(LiveEvent(Kind.TRANSLATION, "We'll decide next week."))
     bar.show_event(LiveEvent(Kind.ERROR, "The microphone couldn't be opened.", lane=MIC))
-    assert "We&#x27;ll decide next week." in bar.translation_html()
-    assert "Your speech: The microphone couldn&#x27;t be opened." in bar.translation_html()
+    assert "We'll decide next week.\nYour speech: The microphone couldn't be opened." in bar.text()
+    bar.show_event(LiveEvent(Kind.TRANSLATION, "はい", lane=MIC))
+    assert "couldn't" not in bar.text()
 
+
+def test_it_follows_new_lines_until_the_user_scrolls_up():
+    bar = CaptionBar()
+    bar.setGeometry(0, 0, 400, 160)
+    bar.show()
+    for i in range(30):
+        bar.show_event(line(f"Line {i}.", f"{i}行目。"))
+    QApplication.processEvents()
+    scroll = bar.view.verticalScrollBar()
+    assert scroll.maximum() > 0 and scroll.value() == scroll.maximum()
+    scroll.setValue(0)  # the user reads back
+    bar.show_event(LiveEvent(Kind.TRANSLATION, "New words"))
+    bar.show_event(line("A new line.", "新しい行。"))
+    QApplication.processEvents()
+    assert scroll.value() == 0  # left where they were reading
+    scroll.setValue(scroll.maximum())  # back at the bottom: it follows again
+    bar.show_event(line("Another line.", "もう一行。"))
+    QApplication.processEvents()
+    assert scroll.value() == scroll.maximum()
+    bar.close()
+
+
+# ---- moving it, resizing it, closing it
+
+def test_a_drag_moves_it_and_an_edge_resizes_it_never_below_its_smallest():
+    start, smallest = QRect(100, 100, 600, 200), QSize(360, 140)
+    assert dragged(start, (False, False, False, False), QPoint(50, 40), smallest) == QRect(150, 140, 600, 200)
+    assert dragged(start, (False, False, True, False), QPoint(50, 0), smallest) == QRect(100, 100, 650, 200)
+    assert dragged(start, (True, True, False, False), QPoint(-20, -30), smallest) == QRect(80, 70, 620, 230)
+    assert dragged(start, (False, False, True, True), QPoint(-500, -500), smallest).size() == smallest
+
+
+def test_the_mouse_moves_and_resizes_it_and_where_it_ends_up_is_remembered():
+    bar = CaptionBar()
+    bar.setGeometry(100, 100, 600, 200)
+    bar.show()
+    ended = []
+    bar.moved.connect(ended.append)
+    QTest.mousePress(bar, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(300, 15))
+    QTest.mouseMove(bar, QPoint(350, 55))
+    QTest.mouseRelease(bar, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(350, 55))
+    assert bar.geometry() == QRect(150, 140, 600, 200) and ended == [[150, 140, 600, 200]]
+    QTest.mousePress(bar, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(597, 100))  # right edge
+    QTest.mouseMove(bar, QPoint(677, 100))
+    QTest.mouseRelease(bar, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(677, 100))
+    assert bar.geometry() == QRect(150, 140, 680, 200) and ended[-1] == [150, 140, 680, 200]
+    viewport = bar.view.viewport()  # the text moves it too
+    QTest.mousePress(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(40, 40))
+    QTest.mouseMove(viewport, QPoint(30, 40))
+    QTest.mouseRelease(viewport, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(30, 40))
+    assert bar.geometry().topLeft() == QPoint(140, 140)
+    bar.close()
+
+
+def test_it_opens_where_it_was_left_if_that_is_still_on_a_screen():
+    area = QApplication.primaryScreen().availableGeometry()
+    bar = CaptionBar()
+    bar.place([area.left() + 50, area.top() + 60, 500, 180])
+    assert bar.geometry() == QRect(area.left() + 50, area.top() + 60, 500, 180)
+    bar.place([area.right() + 5000, area.top(), 500, 180])  # on a screen that's gone
+    assert area.contains(bar.geometry().center())
+
+
+# ---- the session behind it
 
 class FakeSession:
     """A LiveSession's ways, without captures or engines."""
@@ -91,7 +178,7 @@ class FakeSession:
 def live_captions(fail=()):
     made = []
     live = LiveCaptions(lambda config, on_event: made.append(FakeSession(config, on_event, fail)) or made[-1],
-                        lambda lane, config: (f"{lane} capture for {config.for_lane(lane).target}", None))
+                        lambda lane, config: (f"{lane} into {config.for_lane(lane).target}", None))
     return live, made
 
 
@@ -100,38 +187,67 @@ def test_start_shows_the_bar_and_stop_removes_it():
     running = []
     live.changed.connect(running.append)
     live.start(LiveConfig(target="ja"))
-    assert live.running and live.bar is not None and live.bar.isVisible() and live.bar.target == "ja"
-    assert made[0].lanes == {SYSTEM: "system capture for ja"}  # the user's own speech only when asked
-    made[0].on_event(LiveEvent(Kind.SOURCE, "hello"))  # from the engine's thread in real life: queued to Qt's
+    assert live.running and live.bar is not None and live.bar.isVisible()
+    assert made[0].lanes == {SYSTEM: "system into ja"}
+    made[0].on_event(LiveEvent(Kind.TRANSLATION, "hello"))  # from the engine's thread in real life: queued to Qt's
     QApplication.processEvents()
-    assert live.bar.source == "hello"
+    assert "hello" in live.bar.text()
     live.stop()
     assert not live.running and live.bar is None and made[0].stopped and running == [True, False]
 
 
-def test_both_ways_start_together_and_the_users_own_can_stop_alone():
+@pytest.mark.parametrize(("source", "ways"), [("computer", {SYSTEM: "system into en"}),
+                                              ("microphone", {MIC: "mic into ja"}),
+                                              ("both", {SYSTEM: "system into en", MIC: "mic into ja"})])
+def test_each_source_runs_its_ways(source, ways):
     live, made = live_captions()
-    live.start(LiveConfig(target="en", mine=True, mine_target="ja"))
-    assert made[0].lanes == {SYSTEM: "system capture for en", MIC: "mic capture for ja"}
-    assert live.set_mine(False) == "" and list(made[0].lanes) == [SYSTEM] and live.running
-    assert live.set_mine(True) == "" and MIC in made[0].lanes
+    live.start(LiveConfig(source=source, target="en", mic_target="ja"))
+    assert made[0].lanes == ways
     live.stop()
 
 
-def test_a_microphone_that_cant_open_is_said_on_the_bar_and_the_captions_go_on():
+def test_the_source_can_change_while_it_runs():
+    live, made = live_captions()
+    live.start(LiveConfig(source="computer"))
+    assert live.set_source("both") == "" and set(made[0].lanes) == {SYSTEM, MIC} and live.bar.config.source == "both"
+    assert live.set_source("microphone") == "" and set(made[0].lanes) == {MIC} and live.running
+    live.stop()
+
+
+def test_a_microphone_that_cant_open_is_said_on_the_bar_and_the_computer_goes_on():
     live, made = live_captions(fail=(MIC,))
-    live.start(LiveConfig(mine=True))
+    live.start(LiveConfig(source="both"))
     QApplication.processEvents()
     assert live.running and list(made[0].lanes) == [SYSTEM]
-    assert "Your speech: The microphone couldn&#x27;t be opened (no microphone)." in live.bar.translation_html()
+    assert "Your speech: The microphone couldn't be opened (no microphone)." in live.bar.text()
     live.stop()
 
 
-def test_a_session_that_cant_start_leaves_nothing_behind():
-    live, _ = live_captions(fail=(SYSTEM,))
+def test_nothing_that_can_start_leaves_nothing_behind():
+    live, _ = live_captions(fail=(MIC,))
     with pytest.raises(OSError):
-        live.start(LiveConfig())
+        live.start(LiveConfig(source="microphone"))
     assert not live.running and live.bar is None
+
+
+def test_the_close_button_stops_live_translation():
+    live, made = live_captions()
+    running = []
+    live.changed.connect(running.append)
+    live.start(LiveConfig())
+    live.bar.close_button.click()
+    assert not live.running and made[0].stopped and running == [True, False]
+
+
+def test_where_the_bar_is_put_is_passed_on_to_remember():
+    live, _ = live_captions()
+    places = []
+    live.moved.connect(places.append)
+    live.start(LiveConfig(), geometry=[40, 50, 500, 180])
+    assert live.bar.geometry() == QRect(40, 50, 500, 180)
+    live.bar.moved.emit([60, 50, 500, 180])
+    assert places == [[60, 50, 500, 180]]
+    live.stop()
 
 
 def test_showing_the_bar_in_screen_shares_applies_at_once():
@@ -143,7 +259,7 @@ def test_showing_the_bar_in_screen_shares_applies_at_once():
     live.stop()
 
 
-def test_when_the_engine_gives_up_the_captions_stop_and_keep_the_reason():
+def test_when_the_engine_gives_up_the_bar_goes_and_the_reason_stays():
     live, made = live_captions()
     live.start(LiveConfig())
     made[0].on_event(LiveEvent(Kind.ERROR, "Google refused the key: check the Gemini key in AI & models."))
@@ -152,11 +268,21 @@ def test_when_the_engine_gives_up_the_captions_stop_and_keep_the_reason():
     assert not live.running and live.last_problem.startswith("Google refused the key")
 
 
-def test_when_only_the_users_own_way_gives_up_the_captions_go_on():
+def test_when_one_way_gives_up_the_other_goes_on():
     live, made = live_captions()
-    live.start(LiveConfig(mine=True))
+    live.start(LiveConfig(source="both"))
     made[0].on_event(LiveEvent(Kind.ERROR, "Google's quota for this key is used up for now.", lane=MIC))
     made[0].on_event(LiveEvent(Kind.STATUS, "Stopped", lane=MIC))
     QApplication.processEvents()
     assert live.running and list(made[0].lanes) == [SYSTEM] and live.last_problem.startswith("Your speech:")
+    live.stop()
+
+
+def test_a_way_switched_off_on_purpose_doesnt_stop_the_rest():
+    live, made = live_captions()
+    live.start(LiveConfig(source="both"))
+    live.set_source("computer")
+    made[0].on_event(LiveEvent(Kind.STATUS, "Stopped", lane=MIC))  # what the microphone's engine says as it stops
+    QApplication.processEvents()
+    assert live.running and list(made[0].lanes) == [SYSTEM]
     live.stop()
