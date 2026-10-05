@@ -47,7 +47,7 @@ def test_the_session_feeds_the_engine_and_passes_its_events_on(tmp_path):
     assert session.engine.started and session.engine.frames == [b"\0" * 3200]
     session.engine.on_event(LiveEvent(Kind.SOURCE, "今日は"))
     session.engine.on_event(LiveEvent(Kind.LINE, "Hello today.", source="今日は", seconds=2.4))
-    assert [e.kind for e in shown] == [Kind.SOURCE, Kind.LINE] and session.lags == [2.4]
+    assert [e.kind for e in shown] == [Kind.SOURCE, Kind.LINE] and session.lags == [2.4] and session.lines == 1
     session.stop()
     assert capture.stopped and session.engine.stopped
     assert session.transcript.lines == 1

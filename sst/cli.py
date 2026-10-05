@@ -126,7 +126,7 @@ def cmd_live(args) -> None:
     def show(event) -> None:
         if event.kind is Kind.LINE:
             print(f"\n  {event.source}\n  -> {event.text or '(already ' + language_name(target) + ')'}"
-                  + (f"   [{event.seconds:.1f} s behind]" if event.seconds else ""), flush=True)
+                  + (f"   [complete {event.seconds:.1f} s after the voice paused]" if event.seconds else ""), flush=True)
         elif event.kind is Kind.ERROR:
             print(f"\n  ! {event.text}", flush=True)
         elif event.kind is Kind.STATUS:

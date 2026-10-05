@@ -13,8 +13,11 @@
 
 The model translates continuously, a few seconds behind the speaker. It only produces audio (and bills it), so the
 voice is thrown away and its transcript shown. A line ends when the model ends its turn, or after LiveConfig.line_pause_s
-without new words, or once a long translation reaches a full stop. A connection lives ~10 minutes: before that a new
-one is opened (frames wait in the queue meanwhile, so no audio is lost). The key is never logged.
+without new words, or once a long translation reaches a sentence end that the words heard have reached too (the
+translation runs ahead of the transcript). How far a line trailed the speaker is measured from when the audio last had
+a voice in it to when the line's translation was complete, and only when the voice had paused. A connection lives ~10
+minutes: before that a new one is opened (frames wait in the queue meanwhile, so no audio is lost). The key is never
+logged.
 """
 import base64
 import contextlib
@@ -26,12 +29,20 @@ import threading
 import time
 from collections.abc import Callable
 
+import numpy as np
+
 from sst.live.contracts import Kind, LiveConfig, LiveEvent
 
 URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 QUEUE_FRAMES = 50  # 5 s of audio: when the network falls further behind, the oldest frames go (captions stay live)
-LONG_LINE = 120  # characters: a translation this long ends its line at the next full stop
+LONG_LINE = 120  # characters: a translation this long ends its line at a sentence end (the words heard's too)
+VOICE_LEVEL = 10 ** (-45 / 20)  # a frame louder than -45 dBFS has a voice in it (for measuring the lag only)
+VOICE_PAUSE = 0.3  # seconds: the voice has paused, so a translation arriving now is measured from that pause
 _SENTENCE_END = re.compile(r"[.!?。！？]\s*$")
+_SENTENCES = re.compile(r"[。！？!?]+|\.+(?!\w)")  # each sentence end once ("?!", "..."); "3.5" is none
+_CJK = "".join(f"{chr(a)}-{chr(b)}" for a, b in (
+    (0x3000, 0x303F), (0x3040, 0x30FF), (0x31F0, 0x31FF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xFF00, 0xFFEF)))
+_CJK_GAP = re.compile(rf"(?<=[{_CJK}])\s+(?=[{_CJK}?!])")  # Japanese and Chinese put no spaces between words
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +63,10 @@ class GeminiLiveTranslate:
         self._stop = threading.Event()
         self._lock = threading.Lock()  # the line being built: touched by the receiving and the sending thread
         self._source = self._translation = self._language = ""
-        self._first_source = self._first_translation = self._last_text = 0.0
+        self._last_text = 0.0
+        self._lag = 0.0  # the line's: how long after the voice paused its latest translated words came (0 = unknown)
+        self._cut, self._cut_sentences, self._cut_lag = 0, 0, 0.0  # where a long line may end, waiting for the source
+        self._voice_at = 0.0  # when the last frame with a voice in it was captured
         self._ws = None
         self._goaway = False
         self._opened = 0.0
@@ -69,6 +83,8 @@ class GeminiLiveTranslate:
 
     def feed(self, frame: bytes) -> None:
         """A 100 ms frame of 16 kHz mono PCM16. Never blocks the capture: a full queue loses its oldest frame."""
+        if _level(frame) >= VOICE_LEVEL:
+            self._voice_at = self._clock()
         try:
             self._frames.put_nowait(frame)
         except queue.Full:
@@ -191,18 +207,35 @@ class GeminiLiveTranslate:
         with self._lock:
             if kind is Kind.SOURCE:
                 self._source = _join(self._source, piece)
-                self._first_source = self._first_source or now
                 self._language = language or self._language
                 text = self._source
             else:
                 self._translation = _join(self._translation, piece)
-                self._first_translation = self._first_translation or now
                 text = self._translation
             self._last_text = now
-            long_done = kind is Kind.TRANSLATION and len(text) >= LONG_LINE and _SENTENCE_END.search(text)
-        self.on_event(LiveEvent(kind, text, language=language, lane=self.lane))
-        if long_done:
-            self._finish_line()
+            if kind is Kind.TRANSLATION or not self._translation:  # the line's latest translated (or heard) words
+                quiet = now - self._voice_at
+                self._lag = quiet if self._voice_at and quiet >= VOICE_PAUSE else 0.0  # still speaking: unknown
+            cut = self._find_cut()
+        self.on_event(LiveEvent(kind, _tidy(text), language=language, lane=self.lane))
+        if cut:
+            self._finish_line(*cut)
+
+    def _find_cut(self) -> tuple[int, int, float] | None:
+        """Where a long line ends: at a sentence end of its translation, once the words heard have as many sentences.
+        Google's translation runs ahead of its transcript, so a cut at the translation's full stop alone split the words
+        heard mid-word ("…びっくり" | "しました。"). What follows either cut begins the next line. Under the lock."""
+        t, s = self._translation, self._source
+        if not self._cut and len(t) >= LONG_LINE and _SENTENCE_END.search(t):
+            self._cut, self._cut_sentences, self._cut_lag = len(t), len(_SENTENCES.findall(t)), self._lag
+        if not self._cut:
+            return None
+        ends = [m.end() for m in _SENTENCES.finditer(s)]
+        if len(ends) >= self._cut_sentences:
+            return self._cut, ends[self._cut_sentences - 1], self._cut_lag
+        if len(t) >= self._cut + LONG_LINE:  # the words heard never got there: the line ends anyway
+            return self._cut, len(s), self._cut_lag
+        return None
 
     def _check_pause(self) -> None:
         with self._lock:
@@ -211,16 +244,22 @@ class GeminiLiveTranslate:
         if pending and quiet >= self.config.line_pause_s:
             self._finish_line()
 
-    def _finish_line(self) -> None:
+    def _finish_line(self, t_cut: int | None = None, s_cut: int | None = None, lag: float | None = None) -> None:
+        """Ends the line being built: all of it, or up to the cuts (what follows them begins the next line)."""
         with self._lock:
-            source, translation = self._source.strip(), self._translation.strip()
-            lag = self._first_translation - self._first_source if self._first_translation and self._first_source else 0.0
-            language = self._language
-            self._source = self._translation = ""
-            self._first_source = self._first_translation = 0.0
+            t_cut = len(self._translation) if t_cut is None else t_cut
+            s_cut = len(self._source) if s_cut is None else s_cut
+            source, translation = self._source[:s_cut].strip(), self._translation[:t_cut].strip()
+            self._source, self._translation = self._source[s_cut:].lstrip(), self._translation[t_cut:].lstrip()
+            lag = self._lag if lag is None else lag
+            language, rest = self._language, (self._source, self._translation)
+            self._cut, self._lag = 0, 0.0
         if source or translation:
-            self.on_event(LiveEvent(Kind.LINE, translation, source=source, language=language, lane=self.lane,
-                                    seconds=max(0.0, lag)))
+            self.on_event(LiveEvent(Kind.LINE, _tidy(translation), source=_tidy(source), language=language,
+                                    lane=self.lane, seconds=lag))
+        for kind, text in zip((Kind.SOURCE, Kind.TRANSLATION), rest, strict=True):
+            if text:  # carried past the cut: the next line has begun
+                self.on_event(LiveEvent(kind, _tidy(text), language=language, lane=self.lane))
 
     # -- words for the user
 
@@ -259,6 +298,17 @@ def _describe(error: Exception) -> str:
     if close is not None:
         return f"Google closed the connection ({close.code}): {close.reason}"
     return f"{type(error).__name__}: {error}"
+
+
+def _level(frame: bytes) -> float:
+    """A frame's loudness: RMS, 1.0 = full scale."""
+    samples = np.frombuffer(frame[: len(frame) // 2 * 2], dtype="<i2").astype(np.float32)
+    return float(np.sqrt(np.mean(samples * samples))) / 32768 if len(samples) else 0.0
+
+
+def _tidy(text: str) -> str:
+    """Google's pieces of Japanese (or Chinese) come with spaces between them ("なんと 。そうなんです"): gone."""
+    return _CJK_GAP.sub("", text)
 
 
 def _join(text: str, piece: str) -> str:

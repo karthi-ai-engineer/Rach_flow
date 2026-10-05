@@ -32,7 +32,7 @@ class LiveEvent:
     source: str = ""  # LINE: the original words of the finished line
     language: str = ""  # the language the engine says the text is in (BCP-47), if it says
     lane: str = "system"  # "system": what the laptop plays; "mic": the user's own speech (part 2)
-    seconds: float = 0.0  # LINE: from the line's first words to its finished translation (the delay a reader sees)
+    seconds: float = 0.0  # LINE: how long after the voice paused its translation was complete (0 = it didn't pause)
     at: float = field(default_factory=time.monotonic)
 
 

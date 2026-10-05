@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 
+import numpy as np
 import pytest
 from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
@@ -134,15 +135,21 @@ def test_frames_stream_as_base64_pcm(live):
     assert audio["mimeType"] == "audio/pcm;rate=16000"
 
 
+VOICE = (np.sin(np.arange(1600) / 3) * 8000).astype("<i2").tobytes()  # 100 ms of something loud
+SILENCE = bytes(3200)
+
+
 def test_pieces_build_a_line_and_the_turn_finishes_it(live):
     server = FakeServer()
     engine, events, clock = live([server])
     engine.start()
     assert wait_until(lambda: server.sent)
+    engine.feed(VOICE)  # the speaker's last words at 100.0, then silence
+    engine.feed(SILENCE)
     server.say(inputTranscription={"text": "今日は", "languageCode": "ja"})
     server.say(inputTranscription={"text": "会議です", "languageCode": "ja"})
     assert wait_until(lambda: len(kinds(events, Kind.SOURCE)) == 2)
-    clock.now += 2.5  # the translation trails the words
+    clock.now += 2.5  # the translation is complete 2.5 s after the voice paused
     server.say(outputTranscription={"text": "Today we", "languageCode": "en"})
     server.say(outputTranscription={"text": " have a meeting.", "languageCode": "en"})
     server.say(turnComplete=True)
@@ -178,12 +185,71 @@ def test_a_long_translation_ends_its_line_at_a_full_stop(live):
     engine, events, _ = live([server])
     engine.start()
     assert wait_until(lambda: server.sent)
+    server.say(inputTranscription={"text": "まずサーバーは三十五台で、予算は当面二万五千ドル、残りは後で。"})
     long = "We will start with thirty five servers, and the budget should be twenty five thousand dollars for now"
     server.say(outputTranscription={"text": long})
     assert wait_until(lambda: len(kinds(events, Kind.TRANSLATION)) == 1)
     assert not kinds(events, Kind.LINE)  # long, but mid-sentence
     server.say(outputTranscription={"text": " and the rest later."})
     assert wait_until(lambda: kinds(events, Kind.LINE))
+
+
+def test_a_long_line_waits_for_the_words_heard_to_finish_its_sentence(live):
+    """The owner's first run: the translation reached its full stop while the words heard were mid-word."""
+    server = FakeServer()
+    engine, events, _ = live([server])
+    engine.start()
+    assert wait_until(lambda: server.sent)
+    server.say(inputTranscription={"text": "なんと 。そうなんです 。で 、なんかコメントで僕もなんと"
+                                           "住んでますみたいなコメントとかが来てびっくり"})
+    server.say(outputTranscription={"text": "Oh my god. That's right. And then in the comments, I was like, I actually live "
+                                            "there too, or something like that, and I was really surprised."})
+    server.say(outputTranscription={"text": " Yeah, yeah."})  # the translation runs on ahead
+    assert wait_until(lambda: len(kinds(events, Kind.TRANSLATION)) == 2)
+    assert not kinds(events, Kind.LINE)  # the words heard are mid-sentence: wait
+    server.say(inputTranscription={"text": "しました 。うん 、はい 。"})
+    assert wait_until(lambda: kinds(events, Kind.LINE))
+    line = kinds(events, Kind.LINE)[0]
+    assert line.source == ("なんと。そうなんです。で、なんかコメントで僕もなんと"
+                           "住んでますみたいなコメントとかが来てびっくりしました。")
+    assert line.text.endswith("I was really surprised.")
+    # what came after the cuts begins the next line
+    assert wait_until(lambda: kinds(events, Kind.SOURCE)[-1].text == "うん、はい。")
+    assert kinds(events, Kind.TRANSLATION)[-1].text == "Yeah, yeah."
+
+
+def test_a_long_line_ends_anyway_when_the_words_heard_never_catch_up(live):
+    server = FakeServer()
+    engine, events, _ = live([server])
+    engine.start()
+    assert wait_until(lambda: server.sent)
+    server.say(inputTranscription={"text": "えーと"})
+    server.say(outputTranscription={"text": "A" * 130 + "."})
+    server.say(outputTranscription={"text": " " + "B" * 125})
+    assert wait_until(lambda: kinds(events, Kind.LINE))
+    line = kinds(events, Kind.LINE)[0]
+    assert line.text == "A" * 130 + "." and line.source == "えーと"
+
+
+def test_japanese_pieces_lose_the_spaces_between_them():
+    assert gemini._tidy("なんと 。そうなんです 。で 、なんか") == "なんと。そうなんです。で、なんか"
+    assert gemini._tidy("そんな大きい街 ?ですか ?まあ") == "そんな大きい街?ですか?まあ"
+    assert gemini._tidy("GitHub のリポジトリ is ready. Yes .") == "GitHub のリポジトリ is ready. Yes ."  # only between Japanese
+
+
+def test_no_lag_is_claimed_while_the_voice_goes_on(live):
+    server = FakeServer()
+    engine, events, clock = live([server])
+    engine.start()
+    assert wait_until(lambda: server.sent)
+    engine.feed(VOICE)
+    server.say(inputTranscription={"text": "はい"})
+    clock.now += 0.1
+    engine.feed(VOICE)  # still speaking when the translation arrives
+    server.say(outputTranscription={"text": "Yes."})
+    server.say(turnComplete=True)
+    assert wait_until(lambda: kinds(events, Kind.LINE))
+    assert kinds(events, Kind.LINE)[0].seconds == 0.0
 
 
 def test_speech_already_in_the_target_language_finishes_as_heard(live):

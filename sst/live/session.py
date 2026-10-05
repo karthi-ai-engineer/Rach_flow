@@ -18,7 +18,8 @@ class LiveSession:
                  on_event: Callable[[LiveEvent], None] = lambda event: None):
         self.config, self.capture, self.transcript, self.on_event = config, capture, transcript, on_event
         self.engine = engine_factory(self._event)
-        self.lags: list[float] = []  # per line: how far the translation trailed the words (seconds)
+        self.lags: list[float] = []  # per line that ended in a pause: its translation complete this long after it
+        self.lines = 0
         self.running = False
 
     def start(self) -> None:
@@ -38,16 +39,17 @@ class LiveSession:
         self.capture.stop()
         self.engine.stop()
         if self.lags:
-            log.info("Live captions stopped: %d lines, translation %.1f s behind the words (median), %.1f s at most",
-                     len(self.lags), statistics.median(self.lags), max(self.lags))
+            log.info("Live captions stopped: %d lines; translation complete %.1f s after the voice paused (median of %d), "
+                     "%.1f s at most", self.lines, statistics.median(self.lags), len(self.lags), max(self.lags))
         else:
-            log.info("Live captions stopped")
+            log.info("Live captions stopped: %d lines", self.lines)
 
     def _event(self, event: LiveEvent) -> None:
         if event.kind is Kind.LINE:
+            self.lines += 1
             if event.seconds:
                 self.lags.append(event.seconds)
-            log.debug("Live line (%.1f s behind): %s -> %s", event.seconds, event.source, event.text)
+            log.debug("Live line (complete %.1f s after the pause): %s -> %s", event.seconds, event.source, event.text)
             if self.transcript is not None:
                 self.transcript.add(event)
         self.on_event(event)
