@@ -148,3 +148,51 @@ def test_live_captions_import_nothing_from_dictation():
                 [node.module or ""] if isinstance(node, ast.ImportFrom) else []
             for name in names:
                 assert not name.startswith(FORBIDDEN), f"{path.name} imports {name}: keep live captions apart"
+
+
+# ---- the spoken translation: a way that could hear the voice gets silence while it speaks
+
+class FakeSpeaker:
+    def __init__(self, speaking=True, private=False):
+        self.speaking, self.private, self.heard, self.started, self.stopped = speaking, private, [], False, False
+        self.said = self.skipped = 0
+
+    def hear(self, event):
+        self.heard.append(event)
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
+
+
+@pytest.mark.parametrize(("lane", "hears_self", "private", "speaking", "silenced"), [
+    (MIC, False, False, True, True),  # the microphone near speakers would hear the voice
+    (MIC, False, True, True, False),  # headphones: it can't
+    (MIC, False, False, False, False),  # the voice is quiet
+    (SYSTEM, True, True, True, True),  # the whole output, Rflow's voice in it (before Windows 11)
+    (SYSTEM, False, False, True, False),  # process loopback: Rflow's voice is left out already
+])
+def test_a_way_that_could_hear_the_voice_gets_silence_while_it_speaks(lane, hears_self, private, speaking, silenced):
+    session = LiveSession(LiveConfig(source="both"))
+    capture = FakeCapture()
+    capture.hears_self = hears_self
+    session.add(lane, capture, FakeEngine)
+    session.set_speaker(FakeSpeaker(speaking=speaking, private=private))
+    capture.on_frame(b"\x01\x02" * 1600)
+    assert engine(session, lane).frames == [bytes(3200) if silenced else b"\x01\x02" * 1600]
+
+
+def test_the_speaker_hears_what_is_shown_and_stops_with_the_session(tmp_path):
+    config = LiveConfig(source="both", target="en", mic_target="ja")
+    session = LiveSession(config, Transcript(tmp_path, config))
+    session.add(MIC, FakeCapture(), FakeEngine)
+    speaker = FakeSpeaker()
+    session.set_speaker(speaker)
+    mic = engine(session, MIC)
+    mic.on_event(LiveEvent(Kind.LINE, "", source="本日は。", lane=MIC))  # echo: dropped before anyone hears it
+    mic.on_event(LiveEvent(Kind.TRANSLATION, "予算は", lane=MIC))
+    assert speaker.started and [e.text for e in speaker.heard] == ["予算は"]
+    session.stop()
+    assert speaker.stopped and session.speaker is None

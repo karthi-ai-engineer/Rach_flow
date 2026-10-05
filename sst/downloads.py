@@ -82,6 +82,7 @@ def download(model: Download, progress: Callable[[int, int], None] = lambda done
         target = folder / f.name
         if _verified(target, f):
             continue
+        target.parent.mkdir(parents=True, exist_ok=True)  # a file in a subfolder (a voice's "lang/gmw/en-US")
         done = _fetch(model.base_url + f.name, target, f, done, model.size, progress, cancelled)
     (folder / MARKER).write_text(json.dumps({"files": [f.name for f in model.files], "version": __version__}),
                                  encoding="utf-8")
