@@ -322,3 +322,49 @@ def test_the_classic_way_puts_an_anywhere_snippet_in_after_the_cleanup(make, kee
     d.cleanup = cleanup
     feed(d, (0, "press"), (0.7, "release"))
     assert typed == [expected]  # a cleanup that lost the placeholder: the words heard, with the snippet
+
+
+class DeadRecorder(FakeRecorder):
+    """A microphone that opens but sends no sound (unplugged, muted, or switched off when a headset was plugged in)."""
+    notice = ""
+
+    def stop(self):
+        return np.zeros(int(self.seconds * self.rate), dtype=np.float32)
+
+    def describe(self):
+        return {"device": "Headset (Buds)"}
+
+
+class CountingEngine(FakeEngine):
+    calls = 0
+
+    def transcribe(self, audio, rate):
+        self.calls += 1
+        return super().transcribe(audio, rate)
+
+
+def test_a_recording_with_no_sound_is_not_transcribed_and_names_the_microphone():
+    typed, states = [], []
+    engine = CountingEngine()
+    d = Dictation(engine, DeadRecorder(), paste=typed.append, sounds=False, save=False)
+    d.listener = FakeListener()
+    d.on_state = lambda state, message: states.append((state, message))
+    feed(d, (0, "press"), (0.7, "release"))
+    assert typed == [] and engine.calls == 0  # nothing sent to the speech model
+    state, message = states[-1]
+    assert state == "error" and "No sound came from the microphone (Headset (Buds))" in message
+
+
+def test_the_recorders_notice_is_shown_once_per_change(make):
+    d, typed, _ = make()
+    notices = []
+    d.on_notice = notices.append
+    d.recorder.notice = "Headset (Buds) isn't connected: Rflow uses Microphone (Realtek(R) Audio) until it is."
+    feed(d, (0, "press"), (0.7, "release"))
+    feed(d, (2, "press"), (2.7, "release"))
+    assert notices == [d.recorder.notice]  # once, not at every dictation
+    d.recorder.notice = ""  # connected again
+    feed(d, (4, "press"), (4.7, "release"))
+    d.recorder.notice = "Headset (Buds) isn't connected: Rflow uses Microphone (Realtek(R) Audio) until it is."
+    feed(d, (6, "press"), (6.7, "release"))
+    assert len(notices) == 2 and typed == ["hello world "] * 4  # unplugged again: said again; dictation goes on

@@ -37,6 +37,9 @@ MIN_SECONDS = 0.3    # shorter recordings are treated as accidental presses
 MAX_SECONDS = 180    # recordings stop by themselves after 3 minutes (the text is still typed)
 DEFAULT_HOTKEY = "ctrl+win"
 START_BEEP = 880  # Hz: the voice pipeline filters it out of the recording (sst.pipeline.session._ToneNotch)
+# A recording whose loudest sample is below this (-80 dBFS) has no sound at all: a muted, unplugged or switched-off
+# microphone. Any working microphone hears more, even in a quiet room.
+SILENT = 1e-4
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +76,9 @@ class Dictation:
         self.command: Callable[[str], str | None] | None = None
         self.on_command: Callable[[str], None] = lambda command: None
         self.snippets: Callable[[], Sequence[Snippet]] = tuple  # the user's snippets (sst.snippets), for the classic way
+        # A word about the microphone (the chosen one isn't connected), once per change: the app shows a notification.
+        self.on_notice: Callable[[str], None] = lambda message: None
+        self._told = ""
         self.recording = False
         self._holding = False  # the press that started this recording has not been released yet
         self._started = 0.0
@@ -130,6 +136,11 @@ class Dictation:
             log.exception("Could not open the microphone")
             self.on_state("error", f"Could not open the microphone: {e}")
             return
+        notice = getattr(self.recorder, "notice", "")
+        if notice and notice != self._told:
+            log.info(notice)
+            self.on_notice(notice)
+        self._told = notice
         self._beep(START_BEEP)
         prepare = getattr(self.engine, "prepare", None)
         if prepare:
@@ -213,6 +224,8 @@ class Dictation:
                 continue
             try:
                 audio, rate = take.audio(), take.rate
+                if self._no_sound(audio):
+                    continue
                 t0 = time.perf_counter()
                 engine = self.engine  # read once: the app may swap it meanwhile
                 try:
@@ -259,10 +272,25 @@ class Dictation:
             finally:
                 self._jobs.task_done()
 
+    def _no_sound(self, audio: np.ndarray) -> bool:
+        """A recording with no sound at all isn't sent to the speech model (it would only say it heard nothing): the user
+        is told which microphone gave nothing, and where to choose another."""
+        if len(audio) and float(np.abs(audio).max()) >= SILENT:
+            return False
+        describe = getattr(self.recorder, "describe", None)
+        name = (describe() if describe else {}).get("device", "")
+        log.warning("No sound from the microphone (%s): not transcribed", name or "unknown")
+        self.on_state("error", f"No sound came from the microphone{f' ({name})' if name else ''}. Check that it isn't "
+                               "muted or switched off, or choose another one in AI & models.")
+        return True
+
     def _finish_session(self, take: Take, session) -> None:
         # Without the pre-roll the session left out (speech before the key press that isn't part of the dictation):
         # the whole-recording last resort, a retry and the saved recording see what the session saw.
         audio, rate = take.audio()[getattr(session, "trimmed", 0):], take.rate
+        if self._no_sound(audio):
+            session.result()  # let the session end; with no sound it sent nothing to wait for
+            return
         final = session.result()
         if final.command:
             self.on_state("idle", "")

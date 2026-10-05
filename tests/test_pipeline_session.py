@@ -385,3 +385,19 @@ def test_an_ai_that_drops_the_placeholder_is_overruled_and_the_snippet_still_typ
 def test_without_snippets_nothing_changes():
     final = run("I checked my email this morning", snippet_stages())
     assert final.text == "I checked my email this morning"
+
+
+def test_the_pipeline_says_which_microphone_gave_no_sound():
+    typed, states = [], []
+    recorder = LiveRecorder(np.zeros(RATE // 5, dtype=np.float32))
+    recorder.describe = lambda: {"device": "Headset (Buds)"}
+    backend = ScriptedBackend(["never asked"])
+    d = Dictation(None, recorder, paste=typed.append, sounds=False, save=False)
+    d.pipeline = pipeline(backend)
+    d.on_state = lambda state, message: states.append((state, message))
+    d.handle("press", 0.0)
+    recorder.current_take.chunks += [np.zeros(int(1.5 * RATE), dtype=np.float32)]
+    d.handle("release", 2.0)
+    d.wait()
+    assert typed == [] and backend.calls == []
+    assert states[-1][0] == "error" and "(Headset (Buds))" in states[-1][1]
