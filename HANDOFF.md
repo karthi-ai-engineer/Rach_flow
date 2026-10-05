@@ -1468,10 +1468,22 @@ no native ARM64 build for now, and the Mac later.
     menu a **Live captions** check item. Settings: `live_target`, `live_hide_from_share`, `live_told`. The first start
     asks once: the audio goes to Google, about $2.20 an hour with a paid key, a free key's audio may be used by Google.
   - `sst live [--to ja] [--seconds 60]`: the same pipeline in a console, each line printed with its lag.
-- **Not tested against Google yet:** the owner's Gemini key is private, so the engine is tested with a scripted fake
-  server (`tests/test_live_gemini.py`). **Owner to try:** `uv run sst live --seconds 120` with a Japanese video
-  playing (or `UV_PROJECT_ENVIRONMENT=build/venv uv run sst live` while the app runs), then the Tools card; note the
-  lag the log reports and whether lines split well.
+- **The owner's runs against Google (2026-10-05, `sst live`, a Japanese conversation video → English):**
+  1. Refused: Google's Live Translate guide puts `inputAudioTranscription`/`outputAudioTranscription` inside
+     `generationConfig`; the server closes with 1007 "Unknown name". The API reference has them on the setup: fixed.
+     Errors that retrying can't fix (refused request, key, model) now stop the captions with the reason.
+  2. Working, good translations. Fixed after it: a long line cut at the translation's full stop split the Japanese
+     mid-word (the translation runs ahead of the transcript); the "s behind" number compared Google's two texts
+     (0.2 s, meaningless); Japanese pieces had spaces between them.
+  3. Lines whole, but matching sentence counts drifted once one Japanese sentence became two English ones. Now a long
+     line ends when both texts are at a sentence end; a slip stays in one line.
+  - The lag shown is "complete X s after the voice paused", from the loudness of the frames sent, and only when the
+    voice paused (a fast conversation rarely does: few numbers, none of them wrong). First measured: 1.0 s.
+  - **Every start waited 10 s and failed once:** the first of the eight addresses `generativelanguage.googleapis.com`
+    gives never answers from this laptop's network (5 s timeout there, 0.03 s for the other seven), and Python waits
+    out the whole timeout on it. `gemini._socket` gives each address 2 s: the first connection takes ~2.2 s. This is
+    likely also the "first connection stalls" in Known limitations (GitHub, the gateway): not checked yet.
+- **Owner to try next:** the Tools card (Start, the caption bar over a video, a Teams screen share to see it left out).
 - **Next:** part 2 (the microphone, English → Japanese, without captioning the meeting's own audio twice); option B
   engines (local streaming recognition, e.g. Nemotron in sherpa-onnx or Soniox, plus clause-by-clause translation)
   if Gemini's preview is too slow, too costly or goes away.
