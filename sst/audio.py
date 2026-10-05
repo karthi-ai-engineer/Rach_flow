@@ -4,10 +4,17 @@ Capture goes through WASAPI, Windows' own audio interface, at the microphone's o
 the old MME interface reports 44.1 kHz for every microphone and resamples silently, which hid that a Bluetooth headset
 only delivers call-quality audio. A microphone can be kept open ("warm") for a while after a dictation: opening one
 takes about 0.4 s, which cut off first words, and a warm one also keeps the moment before the key press.
+
+Microphones come and go (a headset plugged in, a Bluetooth one connecting, a new Windows default). PortAudio knows only
+the devices it found when it started, and restarting it closes every open stream, so Rflow asks Windows (sst.devices)
+what exists, and when that changed, refresh_devices() closes the open microphones, restarts PortAudio and opens them
+again: between dictations, never during one. An open microphone that stops sending sound is opened again too.
 """
+import logging
 import threading
 import time
 import wave
+import weakref
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,12 +24,16 @@ from typing import BinaryIO
 import numpy as np
 import sounddevice as sd
 
-from sst import RECORDINGS_DIR
+from sst import RECORDINGS_DIR, devices
 
 TARGET_RATE = 16_000  # what speech models expect; other rates are resampled by the engine
 PREROLL_SECONDS = 0.4  # kept from before the key press while the microphone is warm
 TAIL_SECONDS = 0.3  # recorded after the key is let go: the last word often runs past it
 WASAPI_RAW = 1  # AUDCLNT_STREAMOPTIONS_RAW: no Windows or driver voice effects (noise suppression, gain, gating)
+STALL_SECONDS = 1.5  # an open microphone that sent nothing this long has stopped (unplugged, switched off)
+WATCH_SECONDS = 2.0  # how often an idle open microphone looks for new microphones and checks it still sends sound
+
+log = logging.getLogger(__name__)
 
 
 def _pick_rate(device: int | None) -> int:
@@ -41,25 +52,60 @@ def _host_api() -> int:
     return sd.query_devices(kind="input")["hostapi"]
 
 
-_open_streams = 0  # recordings and level meters running right now
+_live: "weakref.WeakSet[Recorder]" = weakref.WeakSet()  # recorders and level meters with an open stream
+_seen: devices.Snapshot | None = None  # Windows' microphones when PortAudio last read its list
+_seen_ready = False  # PortAudio was (re)started by refresh_devices() at least once
 
 
-def _refresh_devices() -> None:
-    # PortAudio reads the device list only once; re-reading it (~45 ms) shows a headset plugged in since, or a new
-    # Windows default. It restarts PortAudio, which would pull the rug from under any open stream, so not while one
-    # is open (e.g. a warm microphone, or the settings page's level meter while a dictation starts).
-    if not _open_streams:
-        sd._terminate()
-        sd._initialize()
+def refresh_devices(force: bool = False) -> bool:
+    """Make PortAudio's list of devices match Windows' (a headset plugged in or out, a new default), or re-read it
+    anyway with `force`. Restarting PortAudio (~45 ms) closes every open stream, so the open microphones (the always-on
+    one, a level meter) are closed first and opened again after, each on the device it should have now. Never while
+    one is recording: False then (the next check does it), and when nothing changed."""
+    global _seen, _seen_ready
+    now = devices.snapshot()
+    live = list(_live)
+    if not force:
+        if now is None:  # Windows can't be asked: as before, re-read only when nothing is open
+            if live:
+                return False
+        elif _seen_ready and now == _seen:
+            return False
+    if any(r.busy for r in live):
+        return False
+    for r in live:
+        r._pause()
+    sd._terminate()
+    sd._initialize()
+    if _seen_ready and now != _seen and now is not None:
+        log.info("Microphones changed: default %s; can record: %s", now.default.name if now.default else "none",
+                 ", ".join(now.names) or "none")
+    _seen, _seen_ready = now, True
+    for r in live:
+        r._resume()
+    return True
 
 
 def input_device_names(refresh: bool = True) -> list[str]:
-    """Microphones as Windows lists them, for the settings window."""
-    if refresh:
-        _refresh_devices()
+    """Microphones that can record now, for the window: Windows' own list (always current, and asking disturbs no open
+    microphone); PortAudio's, as it last read it, with `refresh` False or when Windows can't be asked."""
+    snapshot = devices.snapshot() if refresh else None
+    if snapshot is not None:
+        return [name for name in snapshot.names if "Sound Mapper" not in name]
     api = _host_api()
     return [d["name"] for d in sd.query_devices() if d["max_input_channels"] > 0 and d["hostapi"] == api
             and "Sound Mapper" not in d["name"]]
+
+
+def default_microphone() -> str:
+    """The name of Windows' default microphone now ("" if there is none)."""
+    snapshot = devices.snapshot()
+    if snapshot is not None:
+        return snapshot.default.name if snapshot.default else ""
+    try:
+        return sd.query_devices(_default_input())["name"]
+    except Exception:
+        return ""
 
 
 def _resolve(device: int | str | None) -> int | None:
@@ -81,6 +127,7 @@ def call_quality(device: int | str | None) -> bool:
     """A Bluetooth headset's microphone: Windows opens it in call mode (16 or 8 kHz, "Hands-Free"). It hears worse,
     and while it is open the headset plays everything in call quality too."""
     try:
+        refresh_devices()  # a headset connected since PortAudio last looked
         index = _resolve(device)
         info = sd.query_devices(_default_input() if index is None else index)
         return info["default_samplerate"] <= 16_000 or "hands-free" in info["name"].lower()
@@ -140,6 +187,21 @@ class Recorder:
         self._opened_for: tuple | None = None
         self._idle_since = 0.0
         self._lock = threading.Lock()
+        self._last_audio = 0.0  # when the microphone last delivered a block (its health)
+        self._watched = 0.0  # when tick() last looked at the microphones
+        self._paused = False  # closed by refresh_devices(), to be opened again
+        self._using = ""  # the microphone actually opened last
+        self.notice = ""  # a change the user should hear of (the chosen microphone missing); Dictation takes it
+
+    @property
+    def busy(self) -> bool:
+        """Recording, or recording a tail: the microphone mustn't be closed under it."""
+        return self._take is not None or bool(self._closing)
+
+    @property
+    def healthy(self) -> bool:
+        """Closed, or open and still sending sound (a microphone unplugged or switched off goes quiet, with no error)."""
+        return self._stream is None or time.monotonic() - self._last_audio < STALL_SECONDS
 
     @property
     def warm(self) -> bool:
@@ -164,11 +226,17 @@ class Recorder:
     def start(self) -> None:
         if self._take is not None:
             self.stop_later()
+        if self._stream is not None:
+            refresh_devices()  # microphones plugged in or out since it was opened: it is opened again, on the right one
         if self._stream is not None and self._opened_for != (self.device, self.raw):
             self.close()  # another microphone or mode was chosen meanwhile
+        stalled = not self.healthy
+        if stalled:
+            log.warning("The microphone (%s) stopped sending sound: opening it again", self._using or "default")
+            self.close()
         preroll = self._stream is not None
         if self._stream is None:
-            self._open()
+            self._open(force_refresh=stalled)
         with self._lock:
             chunks = list(self._ring) if preroll else []
             self._ring.clear()
@@ -199,14 +267,41 @@ class Recorder:
         return audio
 
     def tick(self, now: float) -> None:
-        """Close the microphone once its tail is recorded and it has been idle for warm_seconds."""
+        """Close the microphone once its tail is recorded and it has been idle for warm_seconds. Every WATCH_SECONDS,
+        an open, idle microphone also follows Windows' microphones and is opened again if it went quiet."""
+        if self._stream is not None and not self.busy and now - self._watched >= WATCH_SECONDS:
+            self._watched = now
+            self._watch()
         if self._stream is None or self._take is not None or self._closing:
             return
         if not self._keep_warm() or now - self._idle_since > self.warm_seconds:
             self.close()
 
+    def _watch(self) -> None:
+        refresh_devices()
+        if self._stream is not None and not self.healthy:
+            log.warning("The microphone (%s) stopped sending sound: opening it again", self._using or "default")
+            self.close()
+            try:
+                self._open(force_refresh=True)
+            except Exception as e:  # gone for good: the next dictation opens whatever is there then
+                log.warning("Couldn't open the microphone again: %s", e)
+
+    def _pause(self) -> None:
+        """Closed by refresh_devices() while PortAudio re-reads its list; _resume() opens it again."""
+        self.close()
+        self._paused = True
+
+    def _resume(self) -> None:
+        if not self._paused:
+            return
+        self._paused = False
+        try:
+            self._open()
+        except Exception as e:  # e.g. the only microphone was unplugged: the next dictation says so
+            log.warning("Couldn't open the microphone again: %s", e)
+
     def close(self) -> None:
-        global _open_streams
         with self._lock:
             stream, self._stream = self._stream, None
             closing, self._closing = self._closing, []
@@ -214,16 +309,15 @@ class Recorder:
             self._ring_samples = 0
         for take in closing:
             take.done.set()
+        _live.discard(self)
         if stream is not None:
             stream.close()
-            _open_streams -= 1
 
     def _keep_warm(self) -> bool:
         return self.warm_seconds > 0 and not self.info.get("call_quality")
 
-    def _open(self) -> None:
-        global _open_streams
-        _refresh_devices()  # a long-running app must follow the microphones plugged in since the last recording
+    def _open(self, force_refresh: bool = False) -> None:
+        refresh_devices(force=force_refresh)  # PortAudio's list caught up with Windows' first: the headset is in it
         device = _resolve(self.device)
         try:
             stream = self._open_wasapi(device)
@@ -234,7 +328,23 @@ class Recorder:
             self.info = self._describe(index, "windows")
         stream.start()
         self._stream, self._opened_for = stream, (self.device, self.raw)
-        _open_streams += 1
+        self._last_audio = time.monotonic()  # a moment's grace before "no sound" counts
+        _live.add(self)
+        self._note(device)
+
+    def _note(self, device: int | None) -> None:
+        """Log the microphone actually opened when it changes, and keep a notice when the chosen one isn't connected."""
+        using = self.info.get("device", "")
+        wanted = self.device if isinstance(self.device, str) else ""
+        if wanted and device is None:  # chosen by name, but not connected: Windows' default records instead
+            self.info["wanted"] = wanted
+            if not self.notice.startswith(wanted):
+                self.notice = f"{wanted} isn't connected: Rflow uses {using or 'the default microphone'} until it is."
+        else:
+            self.notice = ""
+        if using and using != self._using:
+            log.info("Microphone: %s (%s, %s Hz)", using, self.info.get("mode", ""), self.info.get("rate", ""))
+        self._using = using
 
     def _open_wasapi(self, device: int | None):
         index = _default_input() if device is None else device
@@ -275,6 +385,7 @@ class Recorder:
             return {"rate": self.rate, "mode": mode}
 
     def _on_audio(self, indata, frames, time_info, status):
+        self._last_audio = time.monotonic()
         block = indata[:, 0].copy()
         self.level = float(np.sqrt(np.mean(block * block)))
         with self._lock:
@@ -307,7 +418,12 @@ class Recorder:
 class LevelMeter(Recorder):
     """Only the loudness, for a level bar in the window (e.g. while choosing a microphone); no audio is kept."""
 
-    def _on_audio(self, indata, frames, time, status):
+    @property
+    def busy(self) -> bool:
+        return False  # nothing is recorded: refresh_devices() may close and reopen it at any time
+
+    def _on_audio(self, indata, frames, time_info, status):
+        self._last_audio = time.monotonic()
         block = indata[:, 0]
         self.level = float(np.sqrt(np.mean(block * block)))
 

@@ -29,7 +29,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
 from sst import __version__, bench, downloads, evaluate, scan, theme, updates
-from sst.audio import PREROLL_SECONDS, TAIL_SECONDS, Recorder, input_device_names
+from sst.audio import PREROLL_SECONDS, TAIL_SECONDS, Recorder, default_microphone, input_device_names
 from sst.commands import UNDO, match_command, phrases_for
 from sst.dictate import DEFAULT_HOTKEY, Dictation, already_running, wispr_flow_running
 from sst.engines import DEFAULT_MODEL, SPEECH_MODELS, load_engine, usable
@@ -464,6 +464,7 @@ class TrayApp:
             self.dictation.command = self.voice_command
             self.dictation.snippets = self.snippets
             self.dictation.on_command = self.signals.command.emit
+            self.dictation.on_notice = lambda message: self._notify(APP_NAME, message)  # e.g. the chosen mic is missing
         else:
             self.dictation.engine = engine  # the next dictation uses it; one being transcribed finishes with the old
         self._apply_cleanup()  # also gives the new model Your words, and builds its voice pipeline
@@ -658,6 +659,10 @@ class TrayApp:
 
     def microphones(self) -> list[str]:
         return input_device_names()
+
+    def default_microphone(self) -> str:
+        """Windows' default microphone now: what "Windows default" records."""
+        return default_microphone()
 
     def new_recorder(self) -> Recorder:
         """A recorder set up as the settings say (dictation's, and the reading test's, so a test hears what dictation
