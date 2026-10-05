@@ -1,18 +1,31 @@
-"""The bilingual transcript of a live captions session: one text file per session in the profile's folder, written
+"""The bilingual transcript of a live translation session: one text file per session in the profile's folder, written
 line by line as lines finish, so a crash loses at most the line being spoken."""
 import logging
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from sst.live.contracts import Kind, LiveEvent, language_name
+from sst.live.contracts import MIC, SYSTEM, Kind, LiveConfig, LiveEvent, language_name
 
 log = logging.getLogger(__name__)
 
 
+def heading(c: LiveConfig) -> str:
+    """What a session translates, in words: "translated into English", "the microphone, translated into Japanese"."""
+    into = {lane: language_name(c.for_lane(lane).target) for lane in (SYSTEM, MIC)}
+    if c.source == "microphone":
+        return f"the microphone, translated into {into[MIC]}"
+    if c.source == "both":
+        return f"translated into {into[SYSTEM]}; your own speech into {into[MIC]}"
+    return f"translated into {into[SYSTEM]}"
+
+
 class Transcript:
-    def __init__(self, folder: Path, target: str, now: Callable[[], datetime] = datetime.now):
-        self.folder, self.target, self._now = folder, target, now
+    """`config` says what's listened to and into which languages (the heading); with both, the user's own lines say
+    "You:". Set it again when the source changes during a session."""
+
+    def __init__(self, folder: Path, config: LiveConfig, now: Callable[[], datetime] = datetime.now):
+        self.folder, self.config, self._now = folder, config, now
         self.path: Path | None = None  # made with the first finished line: an empty session leaves no file
         self.lines = 0
 
@@ -24,13 +37,14 @@ class Transcript:
                 self.folder.mkdir(parents=True, exist_ok=True)
                 started = self._now()
                 self.path = self.folder / f"{started:%Y-%m-%d %H-%M-%S} live captions.txt"
-                self.path.write_text(f"Rflow live captions, {started:%Y-%m-%d %H:%M}, translated into "
-                                     f"{language_name(self.target)}\n\n", encoding="utf-8")
-            entry = f"[{self._now():%H:%M:%S}] {event.source or '(not heard)'}\n"
+                self.path.write_text(f"Rflow live translation, {started:%Y-%m-%d %H:%M}, {heading(self.config)}\n\n",
+                                     encoding="utf-8")
+            who = "You: " if event.lane == MIC and self.config.marks_mine else ""
+            entry = f"[{self._now():%H:%M:%S}] {who}{event.source or '(not heard)'}\n"
             if event.text and event.text != event.source:
                 entry += f"           {event.text}\n"
             with self.path.open("a", encoding="utf-8") as out:
                 out.write(entry + "\n")
             self.lines += 1
-        except OSError as e:  # never stop the captions over a file
-            log.warning("Couldn't write the live captions transcript: %s", e)
+        except OSError as e:  # never stop the translation over a file
+            log.warning("Couldn't write the live translation transcript: %s", e)

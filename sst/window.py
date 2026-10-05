@@ -123,6 +123,16 @@ HOTKEY_CHOICES = [("Ctrl+Win (like Wispr Flow)", "ctrl+win"), ("Menu key", "menu
 # Text Transform's menu shortcut: not Ctrl+Win+... (that starts a dictation) and not a plain Ctrl+letter (apps use those).
 # A double tap of Ctrl is the easiest; PowerToys' "Find My Mouse" uses a double Ctrl too (Rflow's still works with it).
 # Translate's shortcut: a double copy (the app copies; Rflow reads it), or a shortcut after which Rflow copies.
+LIVE_SOURCES = [("computer", "Computer"), ("microphone", "Microphone"), ("both", "Both")]
+LIVE_SOURCE_WORDS = {
+    "computer": "What your laptop plays: a Teams or Zoom meeting, a video.",
+    "microphone": "What your microphone hears: people talking in the room. Speech already in the language you choose "
+                  "isn't shown.",
+    "both": "An online meeting: the others from your laptop, and your own words from the microphone, marked “You”. "
+            "Use headphones, or the microphone hears the meeting too.",
+}
+LIVE_DOING = {"computer": "your laptop's sound", "microphone": "your microphone", "both": "your laptop and your microphone"}
+LIVE_SHORTCUTS = [("Ctrl+Alt+L", "ctrl+alt+l"), ("Ctrl+Shift+L", "ctrl+shift+l"), ("Win+Alt+L", "win+alt+l"), ("Off", "")]
 TRANSLATE_SHORTCUTS = [("Ctrl+C+C (press Ctrl+C twice)", "ctrl+c+c"), ("Ctrl+Alt+L", "ctrl+alt+l"), ("Off", "")]
 TRANSFORM_HOTKEYS = [("Double-tap Ctrl", "double ctrl"), ("Ctrl+Alt+T", "ctrl+alt+t"), ("F8", "f8"), ("Off", "")]
 WHERE_LABELS = {"local": "On this PC", "cloud": "In the cloud", "server": "Your own server"}
@@ -2949,34 +2959,6 @@ class ToolsPage(Page):
         pair.addWidget(self.translate_card, 1, Qt.AlignmentFlag.AlignTop)
         self.add(pair)
 
-        # Live captions (sst.live): what the laptop plays, translated while people speak; started and stopped here
-        self.live_card, column = card(12, (20, 20, 20, 20))
-        head = QVBoxLayout()
-        head.setSpacing(4)
-        head.addWidget(label("Live captions", "heading"))
-        head.addWidget(caption("A meeting or a video, translated while people speak: captions at the bottom of the "
-                               "screen, a transcript saved on this laptop.", "2"))
-        self.live_button = button("Start", self._live_clicked, primary=True, size="sm")
-        top = row(head, self.live_button, spacing=16)
-        top.setStretch(0, 1)  # the description takes the width, the button stays at the right
-        top.setAlignment(self.live_button, Qt.AlignmentFlag.AlignTop)
-        column.addLayout(top)
-        self.live_target = Choice(search=True)
-        for name, code in LIVE_LANGUAGES.items():
-            self.live_target.addItem(name, code)
-        self.live_target.currentIndexChanged.connect(self._apply_live)
-        column.addLayout(row(caption("Translate into", "2", wrap=False), self.live_target, stretch_at=2, spacing=12))
-        self.live_hide = Toggle("Hide the captions from screen sharing")
-        self.live_hide.toggled.connect(self._apply_live)
-        column.addLayout(row(caption("Hide the captions from screen sharing and recordings", "2", wrap=False),
-                             self.live_hide, stretch_at=1))
-        self.live_note = caption("", "3")
-        self.live_note.hide()
-        column.addWidget(self.live_note)
-        column.addWidget(button("Open the transcripts", lambda: self.app.open_live_folder(), link=True, size="sm",
-                                icon="chevron-right", icon_after=True), 0, Qt.AlignmentFlag.AlignLeft)
-        self.add(self.live_card)
-
         self.trial_card, column = card(14, (20, 18, 20, 20))
         self.trial_tabs = Segmented([("concise", "Concise"), ("professional", "Professional"), ("translate", "Translate")])
         self.trial_tabs.set_current("concise")
@@ -3047,21 +3029,6 @@ class ToolsPage(Page):
                 box.setCurrentIndex(max(0, box.findData(value)))
             box.blockSignals(False)
         self.second_caption.setText(f"When it's already in {s.translate_to}, into")
-        self.live_target.blockSignals(True)
-        self.live_target.setCurrentIndex(max(0, self.live_target.findData(s.live_target)))
-        self.live_target.blockSignals(False)
-        self.live_hide.blockSignals(True)
-        self.live_hide.setChecked(s.live_hide_from_share)
-        self.live_hide.blockSignals(False)
-        running, problem = self.app.live_running(), self.app.live_problem()
-        self.live_button.setText("Stop" if running else "Start")
-        self.live_button.setEnabled(running or not problem)
-        if problem and not running:
-            self._live_say(problem)
-        elif running:
-            self._live_say("On: the captions follow what your laptop plays. Stop here, or from the tray menu.")
-        elif self.live_note.text().startswith(("On:", "Live captions use")):
-            self._live_say("")
         for key in ("concise", "professional"):
             self.trial_tabs.buttons[key].setText(TRANSFORMS[key].name)
         for b in self.trial_tabs.buttons.values():
@@ -3083,27 +3050,6 @@ class ToolsPage(Page):
         self.app.apply_settings(dataclasses.replace(self.app.settings, translate_to=self.target.currentText(),
                                                     translate_second=self.second.currentData()))
         self.refresh()
-
-    def _live_say(self, message: str) -> None:
-        self.live_note.setText(message)
-        self.live_note.setVisible(bool(message))
-
-    def _live_clicked(self) -> None:
-        if self.app.live_running():
-            self.app.stop_live()
-        else:
-            problem = self.app.start_live()
-            if problem and problem != "Not started.":
-                self._live_say(problem)
-        self.refresh()
-
-    def _apply_live(self, *_) -> None:
-        s = self.app.settings
-        target, hide = self.live_target.currentData(), self.live_hide.isChecked()
-        if (target, hide) != (s.live_target, s.live_hide_from_share):
-            self.app.apply_settings(dataclasses.replace(s, live_target=target, live_hide_from_share=hide))
-            if self.app.live_running():
-                self._live_say("Saved: the next start uses it.")
 
     def _say(self, message: str) -> None:
         self.note.setText(message)
@@ -3137,6 +3083,174 @@ class ToolsPage(Page):
             run_in_background(self, lambda: self.app.run_translation(sample, s.translate_to, second), done)
         else:
             run_in_background(self, lambda: self.app.run_transform(sample, key), done)
+
+
+class LivePage(Page):
+    """Live translation (sst.live): start and stop it, what it listens to and into which languages, its shortcut, how
+    the bar shows in screen shares, and the past sessions' transcripts."""
+
+    def __init__(self, app, go_to):
+        super().__init__("Live translation", "Speech translated while people speak, in a bar you can move anywhere: a "
+                                             "meeting, a video, or the people in the room.")
+        self.app = app
+        self.connect_card, connect = card(12, (16, 12, 12, 12), kind="well", horizontal=True)
+        info = QLabel()
+        info.setPixmap(theme.icon_pixmap("info", tok("warn").name(), 16, 1.0))
+        connect.addWidget(info)
+        connect.addWidget(caption("Live translation uses Google Gemini 3.5 Live Translate: add a Gemini key.", "2"), 1)
+        connect.addWidget(button("Add a Gemini key", lambda: go_to("cleanup"), primary=True, size="sm"))
+        self.add(self.connect_card)
+
+        self.start_card, column = card(10, (24, 22, 24, 22))
+        head = QVBoxLayout()
+        head.setSpacing(6)
+        self.state = label("", "heading")
+        head.addWidget(self.state)
+        self.how = QHBoxLayout()
+        self.how.setSpacing(6)
+        head.addLayout(self.how)
+        self.start_button = button("Start", self._start_clicked, primary=True)
+        top = row(head, self.start_button, spacing=16)
+        top.setStretch(0, 1)
+        column.addLayout(top)
+        self.note = caption("", "3")
+        self.note.hide()
+        column.addWidget(self.note)
+        self.add(self.start_card)
+
+        self.source_card, column = card(6, (20, 20, 20, 10))
+        column.addWidget(label("Listen to", "heading"))
+        self.sources = Segmented(LIVE_SOURCES)
+        self.sources.changed.connect(self._source_changed)
+        column.addWidget(self.sources, 0, Qt.AlignmentFlag.AlignLeft)
+        self.source_words = caption("", "2")
+        column.addWidget(self.source_words)
+        self.target, self.mic_target = self._languages(), self._languages()
+        self.target_row = setting_row("Computer sound into", "", self.target)[0]
+        column.addWidget(self.target_row)
+        self.mic_row, self.mic_title, _ = setting_row("Microphone into", "", self.mic_target)
+        column.addWidget(self.mic_row)
+        self.add(self.source_card)
+
+        options, column = card(4, (20, 10, 20, 14))
+        self.shortcut = Choice(small=True)
+        for label_text, value in LIVE_SHORTCUTS:
+            self.shortcut.addItem(label_text, value)
+        self.shortcut.setMinimumWidth(200)
+        self.shortcut.currentIndexChanged.connect(self._apply)
+        self.shortcut_row, _, self.shortcut_caption = setting_row("Shortcut", "", self.shortcut)
+        column.addWidget(self.shortcut_row)
+        column.addWidget(divider())
+        self.hide_share = Toggle("Hide the bar from screen sharing")
+        self.hide_share.toggled.connect(self._apply)
+        column.addWidget(setting_row("Hide the bar from screen sharing", "On: screen shares and recordings leave it "
+                                     "out. Off: colleagues can read it in your share.", self.hide_share)[0])
+        self.add(options)
+
+        sessions, column = card(4, (20, 18, 20, 16))
+        column.addLayout(row(label("Past sessions", "heading"), button("Open the folder", lambda: app.open_live_folder(),
+                                                                         link=True, size="sm", icon="folder"),
+                             stretch_at=1))
+        self.session_rows = QVBoxLayout()
+        self.session_rows.setSpacing(0)
+        column.addLayout(self.session_rows)
+        self.add(sessions)
+        self.add(caption("About $2.20 an hour for each source with a paid Gemini key (Both: twice). The audio goes to "
+                         "Google, and with a free key Google may use it to improve its products; the transcripts stay "
+                         "on this laptop.", "3"))
+        self.body.addStretch()
+
+    def _languages(self) -> Choice:
+        box = Choice(search=True, small=True)
+        for name, code in LIVE_LANGUAGES.items():
+            box.addItem(name, code)
+        box.setMinimumWidth(220)
+        box.currentIndexChanged.connect(self._apply)
+        return box
+
+    def refresh(self) -> None:
+        s, app = self.app.settings, self.app
+        problem, running = app.live_problem(), app.live_running()
+        self.connect_card.setVisible(bool(problem))
+        self.state.setText(f"On: translating {LIVE_DOING.get(s.live_source, LIVE_DOING['computer'])}" if running
+                           else "Off")
+        self.start_button.setText("Stop" if running else "Start")
+        self.start_button.setEnabled(running or not problem)
+        clash = app.live_shortcut_clash()
+        clear(self.how)
+        if s.live_shortcut and not clash:
+            self.how.addWidget(caption("Start and stop it in any app with", "2", wrap=False))
+            self.how.addWidget(_shortcut_caps(s.live_shortcut))
+        else:
+            self.how.addWidget(caption("Start it here, or from the tray menu", "2", wrap=False))
+        self.how.addStretch()
+        self.shortcut_caption.setText(f"{key_names(parse_hotkey(s.live_shortcut).label)} is {clash}'s shortcut, so it "
+                                      f"stays with {clash}: choose another." if clash
+                                      else "Starts and stops live translation in any app.")
+        self.shortcut_caption.show()
+        source = s.live_source if s.live_source in LIVE_SOURCE_WORDS else "computer"
+        self.sources.set_current(source)
+        self.source_words.setText(LIVE_SOURCE_WORDS[source])
+        for box, value in ((self.target, s.live_target), (self.mic_target, s.live_mic_target),
+                           (self.shortcut, s.live_shortcut)):
+            box.blockSignals(True)
+            if box.findData(value) < 0:  # a shortcut set by hand
+                box.insertItem(box.count() - 1, value, value)
+            box.setCurrentIndex(box.findData(value))
+            box.blockSignals(False)
+        self.target_row.setVisible(source != "microphone")
+        self.mic_row.setVisible(source != "computer")
+        self.mic_title.setText("Your speech into" if source == "both" else "Microphone into")
+        self.hide_share.blockSignals(True)
+        self.hide_share.setChecked(s.live_hide_from_share)
+        self.hide_share.blockSignals(False)
+        clear(self.session_rows)
+        found = app.live_sessions()
+        if not found:
+            self.session_rows.addWidget(caption("Each session's transcript is kept here once someone has spoken: both "
+                                                "languages, line by line.", "3"))
+        for began, lines, path in found:
+            line = QWidget()
+            layout = QHBoxLayout(line)
+            layout.setContentsMargins(0, 6, 0, 6)
+            layout.setSpacing(12)
+            layout.addWidget(label(f"{began:%a} {began.day} {began:%b}, {began:%H:%M}", wrap=False))
+            layout.addWidget(caption(f"{lines} line{'' if lines == 1 else 's'}", "3", wrap=False), 1)
+            layout.addWidget(button("Open", lambda _=False, p=path: self.app.open_live_session(p), link=True, size="sm"))
+            self.session_rows.addWidget(line)
+
+    def _say(self, message: str) -> None:
+        self.note.setText(message)
+        self.note.setVisible(bool(message))
+
+    def _start_clicked(self) -> None:
+        if self.app.live_running():
+            self.app.stop_live()
+            self._say("")
+        else:
+            problem = self.app.start_live()
+            self._say("" if problem == "Not started." else problem)
+        self.refresh()
+
+    def _source_changed(self, source: str) -> None:
+        problem = self.app.set_live_source(source)
+        self.refresh()
+        if problem:
+            self._say(problem)
+
+    def _apply(self, *_) -> None:
+        s = self.app.settings
+        if self.hide_share.isChecked() != s.live_hide_from_share:
+            self.app.set_live_hidden(self.hide_share.isChecked())  # at once, also while it runs
+            s = self.app.settings
+        chosen = (self.target.currentData(), self.mic_target.currentData(), self.shortcut.currentData())
+        if chosen != (s.live_target, s.live_mic_target, s.live_shortcut):
+            new_language = chosen[:2] != (s.live_target, s.live_mic_target)
+            self.app.apply_settings(dataclasses.replace(s, live_target=chosen[0], live_mic_target=chosen[1],
+                                                        live_shortcut=chosen[2]))
+            if new_language and self.app.live_running():
+                self._say("Saved: the next start uses the new language.")
+        self.refresh()
 
 
 class TransformPage(Page):
@@ -4216,16 +4330,17 @@ class ProfilesPage(Page):
 
 # ---------------------------------------------------------------- the window
 
-NAV = [("home", "Home"), ("words", "Words"), ("tools", "Tools"), ("models", "AI & models"), ("settings", "Settings")]
-NAV_ICONS = {"home": "home", "words": "words", "tools": "tools", "models": "models", "settings": "settings"}
-RAIL_NAMES = {"models": "AI"}  # shorter names under the icons of the narrow rail
+NAV = [("home", "Home"), ("words", "Words"), ("tools", "Tools"), ("live", "Live translation"), ("models", "AI & models"),
+       ("settings", "Settings")]
+NAV_ICONS = {"home": "home", "words": "words", "tools": "tools", "live": "live", "models": "models", "settings": "settings"}
+RAIL_NAMES = {"models": "AI", "live": "Live"}  # shorter names under the icons of the narrow rail
 # The section each page belongs to (its sidebar button), and the page a section opens on.
-SECTION = {"home": "home", "dictionary": "words", "snippets": "words", "tools": "tools", "transform": "tools",
+SECTION = {"home": "home", "dictionary": "words", "snippets": "words", "tools": "tools", "live": "live", "transform": "tools",
            "translate": "tools", "models": "models", "speech": "models", "cleanup": "models", "settings": "settings",
            "reading": "settings", "profiles": "settings"}
 OPENS = {"words": "dictionary"}
 REFRESHED = ("home", "dictionary", "snippets", "profiles", "speech", "cleanup", "transform", "translate", "tools",
-             "models", "settings")
+             "live", "models", "settings")
 
 
 class MainWindow(QWidget):
@@ -4310,6 +4425,7 @@ class MainWindow(QWidget):
 
         self.pages = {"home": HomePage(app, self.show_page), "dictionary": DictionaryPage(app, self.show_page),
                       "snippets": SnippetsPage(app, self.show_page), "tools": ToolsPage(app, self.show_page),
+                      "live": LivePage(app, self.show_page),
                       "transform": TransformPage(app, self.show_page), "translate": TranslatePage(app, self.show_page),
                       "models": ModelsPage(app, self.show_page), "speech": SpeechPage(app, self.show_page),
                       "cleanup": CleanupPage(app, self.show_page), "settings": SettingsPage(app, self.show_page),
@@ -4688,17 +4804,28 @@ class PreviewApp:
     def translate_ready(self) -> bool:
         return bool(self.transform_model())
 
-    _live = False  # live captions never really start in the preview
+    _live = False  # live translation never really starts in the preview
+    _live_sessions: tuple = ()  # (began, lines, path) of past sessions, for screenshots and tests
 
     def live_problem(self) -> str:
         return "" if self.gateway.key_for("gemini") else \
-            "Live captions use Google Gemini 3.5 Live Translate: add a Gemini key in AI & models."
+            "Live translation uses Google Gemini 3.5 Live Translate: add a Gemini key in AI & models."
 
     def live_running(self) -> bool:
         return self._live
 
+    def live_sessions(self, limit: int = 8) -> list:
+        return list(self._live_sessions)[:limit]
+
+    def live_shortcut_clash(self) -> str:
+        s = self.settings
+        for name, shortcut in (("Translate", s.translate_shortcut), ("Text Transform", s.transform_shortcut)):
+            if s.live_shortcut and shortcut == s.live_shortcut:
+                return name
+        return ""
+
     def start_live(self) -> str:
-        self.calls.append(("start_live", self.settings.live_target))
+        self.calls.append(("start_live", self.settings.live_source))
         self._live = not self.live_problem()
         return self.live_problem()
 
@@ -4706,8 +4833,20 @@ class PreviewApp:
         self.calls.append(("stop_live",))
         self._live = False
 
+    def set_live_source(self, source: str) -> str:
+        self.calls.append(("set_live_source", source))
+        self.apply_settings(dataclasses.replace(self.settings, live_source=source))
+        return ""
+
+    def set_live_hidden(self, hidden: bool) -> None:
+        self.calls.append(("set_live_hidden", hidden))
+        self.apply_settings(dataclasses.replace(self.settings, live_hide_from_share=hidden))
+
     def open_live_folder(self) -> None:
         self.calls.append(("open_live_folder",))
+
+    def open_live_session(self, path) -> None:
+        self.calls.append(("open_live_session", path))
 
     def run_translation(self, text: str, target: str, second: str = ""):
         from sst.translate import Translation

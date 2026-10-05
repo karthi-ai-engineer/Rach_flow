@@ -1226,32 +1226,77 @@ def test_a_chosen_microphone_that_is_unplugged_stays_chosen_and_says_what_record
     assert box.combo.currentText() == headset and box.note.isHidden()
 
 
-# ---- live captions (sst.live) on the Tools page
+# ---- live translation (sst.live): a section of its own
 
-def test_live_captions_start_and_stop_from_tools():
-    window, app = _window(gateway=GatewayConfig(provider="gemini", api_key="AIza-test"),
-                          settings=Settings(welcomed=True, live_target="ja"))
-    window.show_page("tools")
-    page = window.pages["tools"]
-    assert page.live_target.currentData() == "ja" and page.live_hide.isChecked() and page.live_button.text() == "Start"
-    page.live_button.click()
-    assert ("start_live", "ja") in app.calls and page.live_button.text() == "Stop"
-    assert page.live_note.text().startswith("On:")
-    page.live_button.click()
-    assert ("stop_live",) in app.calls and page.live_button.text() == "Start" and page.live_note.isHidden()
+def _live_window(**settings):
+    return _window(gateway=GatewayConfig(provider="gemini", api_key="AIza-test"), settings=Settings(welcomed=True, **settings))
 
 
-def test_live_captions_language_and_screen_sharing_are_saved():
-    window, app = _window(gateway=GatewayConfig(provider="gemini", api_key="AIza-test"), settings=Settings(welcomed=True))
-    window.show_page("tools")
-    page = window.pages["tools"]
-    page.live_target.setCurrentIndex(page.live_target.findData("ta"))
-    page.live_hide.setChecked(False)
-    assert (app.settings.live_target, app.settings.live_hide_from_share) == ("ta", False)
+def test_live_translation_is_a_section_of_its_own_and_starts_and_stops_there():
+    window, app = _live_window()
+    assert ("live", "Live translation") in w.NAV and not hasattr(window.pages["tools"], "live_card")
+    window.show_page("live")
+    page = window.pages["live"]
+    assert page.state.text() == "Off" and page.start_button.text() == "Start" and page.connect_card.isHidden()
+    page.start_button.click()
+    assert ("start_live", "computer") in app.calls and page.start_button.text() == "Stop"
+    assert page.state.text() == "On: translating your laptop's sound"
+    page.start_button.click()
+    assert ("stop_live",) in app.calls and page.start_button.text() == "Start" and page.state.text() == "Off"
 
 
-def test_live_captions_without_a_gemini_key_say_where_to_add_one():
-    window, app = _window(gateway=GatewayConfig(provider="openai", api_key="sk-test"), settings=Settings(welcomed=True))
-    window.show_page("tools")
-    page = window.pages["tools"]
-    assert not page.live_button.isEnabled() and "add a Gemini key in AI & models" in page.live_note.text()
+def test_the_source_decides_which_languages_are_asked_for():
+    window, app = _live_window()
+    window.show_page("live")
+    page = window.pages["live"]
+    assert not page.target_row.isHidden() and page.mic_row.isHidden()
+    page.sources.buttons["microphone"].click()
+    assert ("set_live_source", "microphone") in app.calls and app.settings.live_source == "microphone"
+    assert page.target_row.isHidden() and not page.mic_row.isHidden() and page.mic_title.text() == "Microphone into"
+    page.sources.buttons["both"].click()
+    assert not page.target_row.isHidden() and not page.mic_row.isHidden() and page.mic_title.text() == "Your speech into"
+    assert "headphones" in page.source_words.text()
+
+
+def test_the_languages_the_shortcut_and_screen_sharing_are_saved():
+    window, app = _live_window()
+    window.show_page("live")
+    page = window.pages["live"]
+    page.target.setCurrentIndex(page.target.findData("ta"))
+    page.mic_target.setCurrentIndex(page.mic_target.findData("ko"))
+    page.shortcut.setCurrentIndex(page.shortcut.findData("win+alt+l"))
+    page.hide_share.setChecked(False)
+    s = app.settings
+    assert (s.live_target, s.live_mic_target, s.live_shortcut, s.live_hide_from_share) == ("ta", "ko", "win+alt+l", False)
+    assert ("set_live_hidden", False) in app.calls  # applied at once, also while it runs
+
+
+def test_the_shortcut_is_shown_as_keys_and_one_another_tool_uses_stays_with_it():
+    window, _ = _live_window()
+    window.show_page("live")
+    page = window.pages["live"]
+    assert [cap.key_text for cap in page.start_card.findChildren(KeyCap)] == ["Ctrl", "Alt", "L"]
+    window, _ = _live_window(translate_shortcut="ctrl+alt+l")
+    window.show_page("live")
+    page = window.pages["live"]
+    assert "is Translate's shortcut, so it stays with Translate" in page.shortcut_caption.text()
+    assert not page.start_card.findChildren(KeyCap)
+
+
+def test_without_a_gemini_key_it_says_where_to_add_one():
+    window, _ = _window(gateway=GatewayConfig(provider="openai", api_key="sk-test"), settings=Settings(welcomed=True))
+    window.show_page("live")
+    page = window.pages["live"]
+    assert not page.connect_card.isHidden() and not page.start_button.isEnabled()
+
+
+def test_past_sessions_are_listed_to_open():
+    from pathlib import Path
+    window, app = _live_window()
+    app._live_sessions = ((datetime(2026, 10, 5, 14, 3, 12), 23, Path("a.txt")), (datetime(2026, 10, 4, 9, 0), 1, Path("b.txt")))
+    window.show_page("live")
+    page = window.pages["live"]
+    texts = [label.text() for label in page.findChildren(QLabel)]
+    assert datetime(2026, 10, 5).strftime("%a 5 %b, 14:03") in texts and "23 lines" in texts and "1 line" in texts
+    next(b for b in page.findChildren(QPushButton) if b.text() == "Open").click()
+    assert ("open_live_session", Path("a.txt")) in app.calls

@@ -11,6 +11,10 @@ _Last updated: 2026-10-04_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-05):**
+- **Rflow 2.2.0** (2026-10-05, the owner's "release it"): live translation, a section of its own (phase 28, PR #74):
+  its own sidebar section, Ctrl+Alt+L, a bar to move, resize and scroll back through with a ✕, and the source:
+  Computer, Microphone or Both (the owner's own lines marked "You"). Released before the owner tried the section, the
+  bar and the microphone by hand. See **Live translation, a section of its own**.
 - **Rflow 2.1.0** (2026-10-05, the owner's "merge + release 2.1.0"): live captions, part 1 (phase 27, PR #72): what the
   laptop plays (a meeting, a video) translated while people speak, in a caption bar left out of screen shares, with a
   transcript; Gemini 3.5 Live Translate with the profile's Gemini key; a pipeline of its own (`sst/live/`). Tried by
@@ -140,9 +144,10 @@ _Last updated: 2026-10-04_
 | 20 | **Text Transform** (the owner's idea): say "make it concise" (or double-tap Ctrl for a menu) and the selected text or the last dictation becomes Concise, Professional, Bullet points or Action items, checked, with undo; the text is found again if focus moved | done, on `main` (PR #50, with #48), released **v1.7.0** |
 | 19 | **The voice pipeline** (the owner's plan): always-on mic, chunks while speaking, parallel ASR, merge, dictionary, formatting, guarded LLM | done, on `main` (PR #46), released **v1.6.0** |
 | 26 | **Microphones that follow you**: Windows' own device list, open microphones reopened when devices change, silent recordings caught | done, on `main` (PR #70), released **v2.0.2** |
+| 28 | **Live translation, a section of its own** (the owner's redesign): a sidebar section, Ctrl+Alt+L, a movable, resizable, scrollable bar with ✕, and the source: Computer, Microphone or Both (your words marked "You") | done, on `main` (PR #74), released **v2.2.0** |
 | 27 | **Live captions, part 1** (the owner's idea): what the laptop plays → WASAPI loopback → Gemini 3.5 Live Translate → a caption bar left out of screen shares, and a transcript; a separate pipeline (`sst/live/`) | done, on `main` (PR #72), released **v2.1.0** |
 
-Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0, v1.10.1, v2.0.0, v2.0.1, v2.0.2 and v2.1.0 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
+Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0, v1.10.1, v2.0.0, v2.0.1, v2.0.2, v2.1.0 and v2.2.0 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
 added on 2026-10-01, and the old https://rachdarlingflow-site.vercel.app stays assigned: installed apps up to 1.6.0
 link there, so never remove it;
 `site/`). The in-app update path is verified end to end: the owner's installed 1.0.0 showed the banner and updated
@@ -1493,6 +1498,41 @@ no native ARM64 build for now, and the Mac later.
 - **Next:** part 2 (the microphone, English → Japanese, without captioning the meeting's own audio twice); option B
   engines (local streaming recognition, e.g. Nemotron in sherpa-onnx or Soniox, plus clause-by-clause translation)
   if Gemini's preview is too slow, too costly or goes away.
+
+## Live translation, a section of its own (phase 28, the owner's redesign of 2026-10-05)
+
+- **How it came about:** part 2 first added "Translate my speech too" to the Tools card (the owner's choice "both
+  ways in one bar"). The owner then asked for live translation as a section of its own, more visible and easier to
+  use: a shortcut, a bar to move, resize and scroll back through with a ✕, and two pipelines to choose between:
+  the computer, or the microphone in real time. Their choices: the microphone translates into **one** language;
+  **Both** is kept as a third source for online meetings; the shortcut is **Ctrl+Alt+L**.
+- **The section** (`LivePage` in `window.py`, between Tools and AI & models; its icon is `live` in `theme.ICONS`):
+  Start/Stop with the shortcut drawn as keys; "Listen to" Computer / Microphone / Both with a line on each and only
+  the languages that source needs ("Computer sound into", "Microphone into" or "Your speech into"); the shortcut
+  (Ctrl+Alt+L, Ctrl+Shift+L, Win+Alt+L or off); "Hide the bar from screen sharing" (applied at once); the past
+  sessions (date, lines, Open; "Open the folder"); the cost. The live card left Tools.
+- **The shortcut** (`TrayApp._start_live_shortcut`, a `HotkeyListener` polled by `live_keys`): a press toggles live
+  translation. Translate also offers Ctrl+Alt+L: when two tools have the same keys, live translation steps aside
+  (`live_shortcut_clash`) and the section says which tool has them. The tray item shows the keys.
+- **The bar** (`CaptionBar` in `captions.py`, rewritten): a header (what's translated into what, the status) with a
+  ✕ that stops live translation; a `QTextBrowser` with the whole session (up to 2,000 lines; the transcript has them
+  all), each line the words heard (small) above the translation; only the lines in progress are redrawn
+  (`_tail_at`), so reading back isn't disturbed, and it follows new lines only while at the bottom. Drag anywhere to
+  move it, 8 px from an edge to resize (`dragged()`, done in Qt so tests can drive it with QTest); the geometry is
+  saved (`live_bar`) and used at the next start if it's still on a screen. Not click-through any more (it has to take
+  the mouse), but still never activated (`WS_EX_NOACTIVATE`): checked on a real window, the app in front kept focus.
+- **The pipelines:** `LiveConfig.source` → `SOURCES` → the ways (`SYSTEM`, `MIC`); the session starts each, a way that
+  can't start is said on the bar while the others go on, and the source can change while it runs
+  (`LiveCaptions.set_source`). The microphone is Windows' default communications microphone (`Capture.microphone()`,
+  checked here: 48 kHz, room sound at -46 dBFS). Its lines that come back untranslated are dropped (speech already
+  in that language; with Both, the meeting heard through the speakers). Only with Both are its lines marked "You"
+  (on the bar and in the transcript); with the microphone alone it hears everyone in the room.
+- **Settings:** `live_source`, `live_mic_target` (Japanese), `live_shortcut`, `live_bar`; the folder and file names
+  stay `live captions` (2.1.0's), so earlier sessions are listed too.
+- **`sst live --source computer|microphone|both [--to en] [--mic-to ja]`.**
+- **Owner to try:** the section (Start, the shortcut from another app, moving, resizing and scrolling the bar, ✕);
+  Microphone with someone speaking Japanese or English near the laptop; Both with headphones in a meeting; a Teams
+  share with "Hide the bar…" off.
 
 ## Known limitations
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.

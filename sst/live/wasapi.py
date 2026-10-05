@@ -1,14 +1,15 @@
-"""What the laptop plays, captured through WASAPI loopback (Core Audio, through ctypes), as the live models want it:
-16 kHz mono 16-bit frames of 100 ms.
+"""What the laptop plays (WASAPI loopback) or what its microphone hears, through Core Audio (ctypes), as the live
+models want it: 16 kHz mono 16-bit frames of 100 ms.
 
-    the default output device (speakers or headphones) -> IAudioClient in shared loopback mode -> its mix format
-    (usually 48 kHz stereo float) -> mono -> 16 kHz (a box filter, then interpolation; state kept across packets)
-    -> 100 ms frames
+    Capture.speakers()    the default output device (speakers or headphones), in shared loopback mode
+    Capture.microphone()  the default communications microphone (the one Teams and Zoom use unless told otherwise)
+    -> IAudioClient -> its mix format (usually 48 kHz float) -> mono -> 16 kHz (a box filter, then interpolation; state
+    kept across packets) -> 100 ms frames
 
-Windows sends no packets at all while nothing plays, so silence is filled in to keep the stream's clock going (the
-model hears a pause, not a jump). When the default output changes (headphones plugged in) or the device goes away, the
+Windows sends no loopback packets at all while nothing plays, so silence is filled in to keep the stream's clock going
+(the model hears a pause, not a jump). When the default device changes (headphones plugged in) or goes away, the
 capture opens the new one. Read-only: nothing here plays or changes a sound. Its own small COM helpers, on purpose:
-live captions share no code with dictation's microphone (sst.audio, sst.devices).
+live captions share no code with dictation's microphone (sst.audio, sst.devices); shared mode lets both have it open.
 """
 import ctypes
 import logging
@@ -126,7 +127,8 @@ _IID_ENUMERATOR = _GUID.of("A95664D2-9614-4F35-A746-DE8DB63617E6")
 _IID_AUDIO_CLIENT = _GUID.of("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2")
 _IID_CAPTURE_CLIENT = _GUID.of("C8ADBD64-E71E-48A0-A4DE-185C395CD317")
 _FLOAT = uuid.UUID("00000003-0000-0010-8000-00AA00389B71").bytes_le
-E_RENDER, E_CONSOLE = 0, 0
+E_RENDER, E_CAPTURE = 0, 1  # EDataFlow: what's played, what's heard
+E_CONSOLE, E_COMMUNICATIONS = 0, 2  # ERole: the default device, the default for calls
 _CLSCTX_ALL, _SHARED, _LOOPBACK, _SILENT = 0x17, 0, 0x00020000, 0x2
 
 
@@ -141,10 +143,12 @@ def _release(obj) -> None:
         ctypes.WINFUNCTYPE(wintypes.ULONG, ctypes.c_void_p)(vtable[2])(obj)
 
 
-class _Loopback:
-    """One opened loopback stream on the default output device (call from one thread, with COM set up there)."""
+class _Stream:
+    """One opened stream on a default device: the output device in loopback, or a microphone (call from one thread,
+    with COM set up there)."""
 
-    def __init__(self):
+    def __init__(self, flow: int = E_RENDER, role: int = E_CONSOLE):
+        self.flow, self.role = flow, role
         self.enumerator, self.device, self.client, self.capture = (ctypes.c_void_p() for _ in range(4))
         ctypes.WinDLL("ole32").CoCreateInstance.restype = ctypes.HRESULT
         ctypes.WinDLL("ole32").CoCreateInstance(ctypes.byref(_CLSID_ENUMERATOR), None, _CLSCTX_ALL,
@@ -152,7 +156,7 @@ class _Loopback:
         try:
             self.device_id = self._default_id()
             _method(self.enumerator, 4, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(
-                E_RENDER, E_CONSOLE, ctypes.byref(self.device))
+                self.flow, self.role, ctypes.byref(self.device))  # GetDefaultAudioEndpoint
             _method(self.device, 3, ctypes.POINTER(_GUID), wintypes.DWORD, ctypes.c_void_p,
                     ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(_IID_AUDIO_CLIENT), _CLSCTX_ALL, None,
                                                      ctypes.byref(self.client))  # IMMDevice::Activate
@@ -167,7 +171,8 @@ class _Loopback:
                 else:
                     self.is_float = f.wFormatTag == 3
                 _method(self.client, 3, ctypes.c_int, wintypes.DWORD, ctypes.c_longlong, ctypes.c_longlong,
-                        ctypes.POINTER(_WAVEFORMATEX), ctypes.c_void_p)(_SHARED, _LOOPBACK, _BUFFER, 0, mix, None)
+                        ctypes.POINTER(_WAVEFORMATEX), ctypes.c_void_p)(
+                    _SHARED, _LOOPBACK if self.flow == E_RENDER else 0, _BUFFER, 0, mix, None)
             finally:
                 ctypes.WinDLL("ole32").CoTaskMemFree(mix)
             _method(self.client, 14, ctypes.POINTER(_GUID), ctypes.POINTER(ctypes.c_void_p))(
@@ -180,7 +185,7 @@ class _Loopback:
     def _default_id(self) -> str:
         device, raw = ctypes.c_void_p(), ctypes.c_wchar_p()
         _method(self.enumerator, 4, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(
-            E_RENDER, E_CONSOLE, ctypes.byref(device))
+            self.flow, self.role, ctypes.byref(device))
         try:
             _method(device, 5, ctypes.POINTER(ctypes.c_wchar_p))(ctypes.byref(raw))  # GetId
             value = raw.value or ""
@@ -192,7 +197,7 @@ class _Loopback:
     def default_changed(self) -> bool:
         try:
             return self._default_id() != self.device_id
-        except OSError:  # no output device at all for a moment
+        except OSError:  # no such device at all for a moment
             return True
 
     def read(self) -> list[np.ndarray]:
@@ -228,21 +233,31 @@ class _Loopback:
         self.capture = self.client = self.device = self.enumerator = ctypes.c_void_p()
 
 
-class LoopbackCapture:
-    """start(on_frame) calls on_frame(bytes) with each 100 ms frame of what the laptop plays, from its own thread."""
+class Capture:
+    """start(on_frame) calls on_frame(bytes) with each 100 ms frame, from its own thread: of what the laptop plays
+    (speakers()) or of what its microphone hears (microphone())."""
 
-    def __init__(self, opener: Callable = _Loopback, clock: Callable[[], float] = time.monotonic):
-        self._opener, self._clock = opener, clock
+    def __init__(self, opener: Callable = _Stream, clock: Callable[[], float] = time.monotonic,
+                 what: str = "output device"):
+        self._opener, self._clock, self.what = opener, clock, what
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self.device_rate = 0  # the output device's own rate, once opened (for the log)
+        self.device_rate = 0  # the device's own rate, once opened (for the log)
+
+    @classmethod
+    def speakers(cls) -> "Capture":
+        return cls(lambda: _Stream(E_RENDER, E_CONSOLE), what="output device")
+
+    @classmethod
+    def microphone(cls) -> "Capture":
+        return cls(lambda: _Stream(E_CAPTURE, E_COMMUNICATIONS), what="microphone")
 
     def start(self, on_frame: Callable[[bytes], None]) -> None:
         self._stop.clear()
         opened = threading.Event()
         problem: list[Exception] = []
-        self._thread = threading.Thread(target=self._run, args=(on_frame, opened, problem), name="live-loopback",
-                                        daemon=True)
+        self._thread = threading.Thread(target=self._run, args=(on_frame, opened, problem),
+                                        name=f"live-{self.what.split()[0]}", daemon=True)
         self._thread.start()
         opened.wait(5)
         if problem:  # the first open failed: say so to the caller rather than capturing nothing quietly
@@ -267,18 +282,18 @@ class LoopbackCapture:
                         problem.append(e)
                         opened.set()
                         return
-                    log.warning("Live captions: couldn't open the output device: %s", e)
+                    log.warning("Live captions: couldn't open the %s: %s", self.what, e)
                     self._stop.wait(1.0)
                     continue
                 if first:
                     first = False
                     opened.set()
                 self.device_rate = stream.rate
-                log.info("Live captions hear the output device (%d Hz, %d channels)", stream.rate, stream.channels)
+                log.info("Live captions hear the %s (%d Hz, %d channels)", self.what, stream.rate, stream.channels)
                 try:
                     self._pump(stream, on_frame)
                 except OSError as e:  # unplugged, or the format changed: open whatever is the default now
-                    log.info("Live captions: the output device changed (%s)", e)
+                    log.info("Live captions: the %s changed (%s)", self.what, e)
                 finally:
                     stream.close()
         finally:
@@ -300,6 +315,6 @@ class LoopbackCapture:
             if now - last_check >= CHECK_DEVICE_EVERY:
                 last_check = now
                 if stream.default_changed():
-                    log.info("Live captions: a new default output device")
+                    log.info("Live captions: a new default %s", self.what)
                     return
             self._stop.wait(0.01)

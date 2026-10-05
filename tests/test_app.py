@@ -529,7 +529,7 @@ def test_text_transform_starts_with_its_shortcut_and_uses_the_cleanup_model(tray
     assert history[0]["text"] == "Short."
 
 
-def test_live_captions_need_a_gemini_key_and_ask_once_before_the_first_start(tray_app, monkeypatch):
+def test_live_translation_needs_a_gemini_key_and_asks_once_before_the_first_start(tray_app, monkeypatch):
     app, _, _ = tray_app
     assert "add a Gemini key" in app.start_live() and not app.live_running()
     app.gateway = GatewayConfig(provider="gemini", api_key="AIza-test")
@@ -539,13 +539,24 @@ def test_live_captions_need_a_gemini_key_and_ask_once_before_the_first_start(tra
     assert app.start_live() == "Not started." and len(asked) == 1 and not app.settings.live_told
     started = []
 
-    class FakeSession:
-        def start(self):
+    class FakeSession:  # a LiveSession's ways, without devices or Google
+        transcript = None
+
+        def __init__(self):
+            self.lanes = {}
+
+        def add(self, lane, capture, engine_factory):
+            self.lanes[lane] = capture
             started.append(True)
 
+        def remove(self, lane):
+            self.lanes.pop(lane, None)
+
         def stop(self):
+            self.lanes.clear()
             started.append(False)
     monkeypatch.setattr(app, "_live_session", lambda config, on_event: FakeSession())
+    monkeypatch.setattr(app, "_live_lane", lambda lane, config: (lane, None))  # no device is built
     monkeypatch.setattr(sst_app.QMessageBox, "question", lambda *args: asked.append(args) or
                         sst_app.QMessageBox.StandardButton.Yes)
     assert app.start_live() == "" and app.live_running() and app.settings.live_told and app.live_action.isChecked()
@@ -555,13 +566,74 @@ def test_live_captions_need_a_gemini_key_and_ask_once_before_the_first_start(tra
     app.stop_live()
 
 
-def test_a_live_session_hears_the_laptop_and_saves_its_transcript_in_the_profile(tray_app):
+def test_live_translation_hears_the_laptop_and_the_microphone_and_saves_in_the_profile(tray_app):
     app, _, _ = tray_app
     app.gateway = GatewayConfig(provider="gemini", api_key="AIza-test")
-    from sst.live.contracts import LiveConfig
+    from sst.live.contracts import MIC, SYSTEM
     from sst.live.gemini import GeminiLiveTranslate
-    from sst.live.wasapi import LoopbackCapture
-    session = app._live_session(LiveConfig(target="ja"), lambda event: None)
-    assert isinstance(session.capture, LoopbackCapture) and isinstance(session.engine, GeminiLiveTranslate)
-    assert session.engine.key == "AIza-test" and session.engine.config.target == "ja"
-    assert session.transcript.folder == app.profile.folder() / "live captions"
+    from sst.live.wasapi import Capture
+    app.apply_settings(dataclasses.replace(app.settings, live_source="both", live_target="en", live_mic_target="ja"))
+    config = app.live_config()
+    assert config.lanes == (SYSTEM, MIC) and (config.target, config.mic_target) == ("en", "ja")
+    session = app._live_session(config, lambda event: None)
+    assert session.transcript.folder == app.profile.folder() / "live captions" and session.transcript.config is config
+    for lane, what, target in ((SYSTEM, "output device", "en"), (MIC, "microphone", "ja")):
+        capture, engine_factory = app._live_lane(lane, config)  # built, not started: no device is opened
+        engine = engine_factory(lambda event: None)
+        assert isinstance(capture, Capture) and capture.what == what and isinstance(engine, GeminiLiveTranslate)
+        assert (engine.key, engine.config.target, engine.lane) == ("AIza-test", target, lane)
+
+
+def test_the_source_and_screen_sharing_apply_while_it_runs(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    calls = []
+    monkeypatch.setattr(app.live, "set_source", lambda source: calls.append(("source", source)) or "")
+    monkeypatch.setattr(app.live, "set_hidden", lambda hidden: calls.append(("hidden", hidden)))
+    monkeypatch.setattr(type(app.live), "running", property(lambda self: True))
+    assert app.set_live_source("microphone") == "" and app.settings.live_source == "microphone"
+    app.set_live_hidden(False)
+    assert not app.settings.live_hide_from_share and calls == [("source", "microphone"), ("hidden", False)]
+
+
+def test_ctrl_alt_l_starts_and_stops_live_translation_from_any_app(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    listener = app.live_listener
+    assert listener is not None and listener.running and listener.hotkey.label == "Ctrl+Alt+L"
+    assert app.live_action.text() == "Live translation\tCtrl+Alt+L"
+    toggled = []
+    monkeypatch.setattr(app, "toggle_live", lambda: toggled.append(True))
+    listener.events.put(("press", 0.0))
+    listener.events.put(("release", 0.0))
+    app._live_key_pump()
+    assert toggled == [True]  # once per press
+    app.apply_settings(dataclasses.replace(app.settings, translate_shortcut="ctrl+alt+l"))  # Translate's keys now
+    assert app.live_listener is None and not listener.running and app.live_shortcut_clash() == "Translate"
+    assert app.live_action.text() == "Live translation"
+    app.apply_settings(dataclasses.replace(app.settings, translate_shortcut="ctrl+c+c", live_shortcut="win+alt+l"))
+    assert app.live_listener.hotkey.label == "Win+Alt+L" and app.live_action.text() == "Live translation\tWin+Alt+L"
+
+
+def test_where_the_bar_was_left_is_used_at_the_next_start(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    app._live_moved([40, 50, 600, 220])
+    assert app.settings.live_bar == [40, 50, 600, 220]
+    started = []
+    monkeypatch.setattr(app.live, "start", lambda config, geometry=None: started.append(geometry))
+    app.gateway = GatewayConfig(provider="gemini", api_key="AIza-test")
+    app.settings = dataclasses.replace(app.settings, live_told=True)
+    app.start_live()
+    assert started == [[40, 50, 600, 220]]
+
+
+def test_past_sessions_are_listed_newest_first(tray_app):
+    from datetime import datetime
+    app, _, _ = tray_app
+    folder = app.live_folder()
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "2026-10-05 14-03-12 live captions.txt").write_text(
+        "Rflow live translation\n\n[14:03:12] a\n           b\n\n[14:03:20] c\n\n", encoding="utf-8")
+    (folder / "2026-10-04 09-00-00 live captions.txt").write_text("Rflow live translation\n\n[09:00:00] x\n\n",
+                                                                  encoding="utf-8")
+    (folder / "notes.txt").write_text("not a session", encoding="utf-8")
+    assert [(began, lines) for began, lines, _ in app.live_sessions()] == [
+        (datetime(2026, 10, 5, 14, 3, 12), 2), (datetime(2026, 10, 4, 9, 0, 0), 1)]
