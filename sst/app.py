@@ -36,6 +36,12 @@ from sst.engines import DEFAULT_MODEL, SPEECH_MODELS, load_engine, usable
 from sst.engines.cloud import CLOUD, REMOTE, SERVER, CloudEngine
 from sst.gateway import SPEECH_SERVER, GatewayConfig, Polisher
 from sst.hotkey import HotkeyListener, parse_hotkey
+from sst.live.captions import LiveCaptions
+from sst.live.contracts import LiveConfig
+from sst.live.gemini import GeminiLiveTranslate
+from sst.live.session import LiveSession
+from sst.live.transcript import Transcript
+from sst.live.wasapi import LoopbackCapture
 from sst.pipeline.asr import ASRScheduler, EngineBackend
 from sst.pipeline.contracts import VoiceConfig
 from sst.pipeline.dictionary import DictionaryEngine, DictionaryStore, TermMode, speech_hints
@@ -336,6 +342,9 @@ class TrayApp:
         self.transforms.start(self.settings.transform_shortcut)
         self.translator = TranslateController(self, listener_factory=lambda key: HotkeyListener(key))
         self.translator.start(self.settings.translate_shortcut)
+        # Live captions: a pipeline of its own (sst.live), started and stopped by the user, never by dictation
+        self.live = LiveCaptions(lambda config, on_event: self._live_session(config, on_event))
+        self.live.changed.connect(self._live_changed)
         self.window = MainWindow(self)
 
         self.tray = QSystemTrayIcon(self.icon)
@@ -351,6 +360,9 @@ class TrayApp:
         menu.addAction(f"Open {APP_NAME}", lambda: self.window.open("home"))
         menu.addAction("Words", lambda: self.window.open("dictionary"))
         menu.addAction("Tools", lambda: self.window.open("tools"))
+        self.live_action = QAction("Live captions", menu, checkable=True)
+        self.live_action.triggered.connect(lambda: self.toggle_live())
+        menu.addAction(self.live_action)
         menu.addAction("AI && models", lambda: self.window.open("models"))
         menu.addAction("Reading test", lambda: self.window.open("reading"))
         menu.addAction("Settings", lambda: self.window.open("settings"))
@@ -758,6 +770,76 @@ class TrayApp:
 
     def translate_ready(self) -> bool:
         return self.transform_ready()  # the same model as the AI cleanup
+
+    # -- live captions (sst.live)
+
+    def live_problem(self) -> str:
+        """Why live captions can't start, or "" when they can."""
+        if not self.gateway.key_for("gemini"):
+            return "Live captions use Google Gemini 3.5 Live Translate: add a Gemini key in AI & models."
+        return ""
+
+    def live_running(self) -> bool:
+        return self.live.running
+
+    def live_folder(self) -> Path:
+        return self.profile.folder() / "live captions"
+
+    def _live_session(self, config: LiveConfig, on_event) -> LiveSession:
+        key = self.gateway.key_for("gemini")
+        return LiveSession(config, LoopbackCapture(), lambda emit: GeminiLiveTranslate(key, config, emit),
+                           Transcript(self.live_folder(), config.target), on_event)
+
+    def start_live(self) -> str:
+        """Start live captions of what the laptop plays; "" or why they didn't start."""
+        if self.live.running:
+            return ""
+        problem = self.live_problem()
+        if problem:
+            return problem
+        s = self.settings
+        if not s.live_told:
+            answer = QMessageBox.question(
+                None, f"{APP_NAME}: live captions",
+                "Live captions send what your laptop plays (a meeting, a video) to Google, which translates it with "
+                "Gemini 3.5 Live Translate, a preview model, and show the translation at the bottom of the screen.\n\n"
+                "With a paid Gemini key this costs about $2.20 an hour of captions; with a free key Google may use "
+                "the audio to improve its products. Each session's transcript is saved on this laptop.\n\nStart?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return "Not started."
+            self.apply_settings(dataclasses.replace(s, live_told=True))
+        config = LiveConfig(target=self.settings.live_target, hide_from_capture=self.settings.live_hide_from_share)
+        try:
+            self.live.start(config)
+        except Exception as e:  # e.g. no output device to listen to
+            log.warning("Live captions didn't start: %s", e)
+            return f"Live captions couldn't start: {e}"
+        return ""
+
+    def stop_live(self) -> None:
+        self.live.stop()
+
+    def toggle_live(self) -> None:
+        if self.live.running:
+            self.stop_live()
+            return
+        problem = self.start_live()
+        if problem and problem != "Not started.":
+            self._notify(APP_NAME, problem, QSystemTrayIcon.MessageIcon.Warning)
+        self._live_changed(self.live.running)
+
+    def _live_changed(self, running: bool) -> None:
+        self.live_action.setChecked(running)
+        if not running and self.live.last_problem:
+            self._notify(APP_NAME, f"Live captions stopped: {self.live.last_problem}", QSystemTrayIcon.MessageIcon.Warning)
+            self.live.last_problem = ""
+        if self.window.isVisible():
+            self.window.refresh()
+
+    def open_live_folder(self) -> None:
+        folder = self.live_folder()
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def run_translation(self, text: str, target: str, second: str = ""):
         """`text` translated (sst.translate.Translation); raises when the provider can't be asked."""
@@ -1214,6 +1296,7 @@ class TrayApp:
     def quit(self) -> None:
         self.transforms.stop()
         self.translator.stop()
+        self.live.stop()
         if self.listener:
             self.listener.stop()
         if self.dictation:

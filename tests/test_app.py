@@ -527,3 +527,41 @@ def test_text_transform_starts_with_its_shortcut_and_uses_the_cleanup_model(tray
     assert controller.last_typed[0] == "Hello there. "  # as typed: the shortcut takes it when nothing is selected
     app.remember("Short.", "A longer original.")
     assert history[0]["text"] == "Short."
+
+
+def test_live_captions_need_a_gemini_key_and_ask_once_before_the_first_start(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    assert "add a Gemini key" in app.start_live() and not app.live_running()
+    app.gateway = GatewayConfig(provider="gemini", api_key="AIza-test")
+    asked = []
+    monkeypatch.setattr(sst_app.QMessageBox, "question", lambda *args: asked.append(args) or
+                        sst_app.QMessageBox.StandardButton.No)
+    assert app.start_live() == "Not started." and len(asked) == 1 and not app.settings.live_told
+    started = []
+
+    class FakeSession:
+        def start(self):
+            started.append(True)
+
+        def stop(self):
+            started.append(False)
+    monkeypatch.setattr(app, "_live_session", lambda config, on_event: FakeSession())
+    monkeypatch.setattr(sst_app.QMessageBox, "question", lambda *args: asked.append(args) or
+                        sst_app.QMessageBox.StandardButton.Yes)
+    assert app.start_live() == "" and app.live_running() and app.settings.live_told and app.live_action.isChecked()
+    app.stop_live()
+    assert not app.live_running() and started == [True, False] and not app.live_action.isChecked()
+    assert app.start_live() == "" and len(asked) == 2  # told once: not asked again
+    app.stop_live()
+
+
+def test_a_live_session_hears_the_laptop_and_saves_its_transcript_in_the_profile(tray_app):
+    app, _, _ = tray_app
+    app.gateway = GatewayConfig(provider="gemini", api_key="AIza-test")
+    from sst.live.contracts import LiveConfig
+    from sst.live.gemini import GeminiLiveTranslate
+    from sst.live.wasapi import LoopbackCapture
+    session = app._live_session(LiveConfig(target="ja"), lambda event: None)
+    assert isinstance(session.capture, LoopbackCapture) and isinstance(session.engine, GeminiLiveTranslate)
+    assert session.engine.key == "AIza-test" and session.engine.config.target == "ja"
+    assert session.transcript.folder == app.profile.folder() / "live captions"

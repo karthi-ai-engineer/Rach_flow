@@ -1224,3 +1224,34 @@ def test_a_chosen_microphone_that_is_unplugged_stays_chosen_and_says_what_record
     windows["list"] = ([headset, laptop], headset)  # back
     box._follow()
     assert box.combo.currentText() == headset and box.note.isHidden()
+
+
+# ---- live captions (sst.live) on the Tools page
+
+def test_live_captions_start_and_stop_from_tools():
+    window, app = _window(gateway=GatewayConfig(provider="gemini", api_key="AIza-test"),
+                          settings=Settings(welcomed=True, live_target="ja"))
+    window.show_page("tools")
+    page = window.pages["tools"]
+    assert page.live_target.currentData() == "ja" and page.live_hide.isChecked() and page.live_button.text() == "Start"
+    page.live_button.click()
+    assert ("start_live", "ja") in app.calls and page.live_button.text() == "Stop"
+    assert page.live_note.text().startswith("On:")
+    page.live_button.click()
+    assert ("stop_live",) in app.calls and page.live_button.text() == "Start" and page.live_note.isHidden()
+
+
+def test_live_captions_language_and_screen_sharing_are_saved():
+    window, app = _window(gateway=GatewayConfig(provider="gemini", api_key="AIza-test"), settings=Settings(welcomed=True))
+    window.show_page("tools")
+    page = window.pages["tools"]
+    page.live_target.setCurrentIndex(page.live_target.findData("ta"))
+    page.live_hide.setChecked(False)
+    assert (app.settings.live_target, app.settings.live_hide_from_share) == ("ta", False)
+
+
+def test_live_captions_without_a_gemini_key_say_where_to_add_one():
+    window, app = _window(gateway=GatewayConfig(provider="openai", api_key="sk-test"), settings=Settings(welcomed=True))
+    window.show_page("tools")
+    page = window.pages["tools"]
+    assert not page.live_button.isEnabled() and "add a Gemini key in AI & models" in page.live_note.text()
