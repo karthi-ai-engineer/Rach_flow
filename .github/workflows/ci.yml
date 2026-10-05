@@ -36,9 +36,50 @@ jobs:
       - name: Pytest
         run: uv run pytest -v
 
+  # Rflow is one x64 program: ARM laptops (Snapdragon) run it through Windows 11's x64 emulation, and the owner develops
+  # on one. So the tests also run on Windows on ARM, with x64 Python (Whisper's CTranslate2 has no ARM64 build).
+  test-arm:
+    name: Tests (Windows on ARM)
+    runs-on: windows-11-arm
+    env:
+      UV_PYTHON: cpython-3.12-windows-x86_64-none
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      - name: Check that this is x64 on ARM64
+        run: uv run python -c "from sst.scan import machine; m = machine(); print(m); assert m == 'x64 on ARM64 (emulated)', m"
+      - name: Pytest
+        run: uv run pytest -v
+
   app:
     name: Build app (Windows)
     runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - name: Cache the Parakeet model
+        uses: actions/cache@v6
+        with:
+          path: models
+          key: model-${{ hashFiles('scripts/download_model.py') }}
+      - name: Download the model (skipped when cached)
+        run: uv run --locked python scripts/download_model.py parakeet
+      - name: Build the app and check that it transcribes
+        run: uv run --locked --group build python scripts/build_installer.py --no-installer
+
+  # The program people install, built and self-tested (every window, the fonts, the logo, Whisper's runtime, a
+  # transcription with Parakeet) on Windows on ARM, where it runs emulated.
+  app-arm:
+    name: Build app (Windows on ARM)
+    runs-on: windows-11-arm
+    env:
+      UV_PYTHON: cpython-3.12-windows-x86_64-none
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0
