@@ -1,8 +1,10 @@
 """Gemini 3.5 Live Translate as a live captions engine (Google's Live API, a WebSocket; the profile's Gemini key).
 
     setup        {"setup": {"model": ..., "generationConfig": {"responseModalities": ["AUDIO"],
-                  "inputAudioTranscription": {}, "outputAudioTranscription": {},
-                  "translationConfig": {"targetLanguageCode": "en", "echoTargetLanguage": false}}}}
+                  "translationConfig": {"targetLanguageCode": "en", "echoTargetLanguage": false}},
+                  "inputAudioTranscription": {}, "outputAudioTranscription": {}}}
+                 (the transcripts are the setup's own fields, as in the API reference; Google's Live Translate
+                 guide shows them in generationConfig, which the server closes with 1007 "Unknown name")
     audio        {"realtimeInput": {"audio": {"data": <base64 PCM16 16 kHz mono>, "mimeType": "audio/pcm;rate=16000"}}}
     answers      serverContent.inputTranscription.text   the words heard, piece by piece
                  serverContent.outputTranscription.text  their translation, piece by piece
@@ -88,12 +90,12 @@ class GeminiLiveTranslate:
     # -- the connection
 
     def _run(self) -> None:
-        backoff = 1.0
+        backoff, failures = 1.0, 0
         while not self._stop.is_set():
             try:
                 self._status("Connecting to Google…")
                 ws = self._open()
-                backoff = 1.0
+                backoff, failures = 1.0, 0
                 self._status("Listening")
                 receiver = threading.Thread(target=self._receive, args=(ws,), name="live-gemini-in", daemon=True)
                 receiver.start()
@@ -107,10 +109,13 @@ class GeminiLiveTranslate:
                 self._ws = None
                 if self._stop.is_set():
                     break
+                failures += 1
+                log.warning("Live captions: %s", self._scrub(_describe(e)))
+                if failures == 1 and isinstance(e, TimeoutError):
+                    continue  # a first connection that stalls (seen on the dev laptop): again at once, quietly
                 message = self._explain(e)
-                log.warning("Live captions: %s", self._scrub(f"{type(e).__name__}: {e}"))
                 self.on_event(LiveEvent(Kind.ERROR, message, lane=self.lane))
-                if message.startswith(("Google refused the key", "This key can't use")):
+                if message in GIVE_UP:
                     break  # trying again won't help
                 self._status("Reconnecting…")
                 self._stop.wait(backoff)
@@ -126,11 +131,11 @@ class GeminiLiveTranslate:
             "model": f"models/{self.config.model}",
             "generationConfig": {
                 "responseModalities": ["AUDIO"],  # the model only speaks; its transcript is what's shown
-                "inputAudioTranscription": {},
-                "outputAudioTranscription": {},
                 "translationConfig": {"targetLanguageCode": self.config.target,
                                       "echoTargetLanguage": self.config.echo_target},
             },
+            "inputAudioTranscription": {},  # the words heard
+            "outputAudioTranscription": {},  # the translation, as text
         }}))
         reply = json.loads(ws.recv(timeout=15))
         if "setupComplete" not in reply:
@@ -142,7 +147,7 @@ class GeminiLiveTranslate:
         """Stream the frames until it's time for a new connection, the server closes it, or stop()."""
         while not self._stop.is_set():
             if self._closed is not None:
-                raise ConnectionError(self._closed)
+                raise self._closed
             if self._goaway or self._clock() - self._opened > self.config.reconnect_s:
                 log.info("Live captions: a new connection (the old one ends soon)")
                 return
@@ -160,12 +165,11 @@ class GeminiLiveTranslate:
             for raw in ws:
                 self._handle(json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw))
         except Exception as e:  # closed by the server (a refused key arrives this way too), or by us
-            reason = getattr(getattr(e, "rcvd", None), "reason", "") or str(e)
             if not self._stop.is_set():
-                self._closed = reason or "the connection closed"
+                self._closed = e
             return
         if not self._stop.is_set() and not self._goaway:
-            self._closed = "the connection closed"
+            self._closed = ConnectionError("the connection closed")
 
     # -- the answers
 
@@ -228,16 +232,33 @@ class GeminiLiveTranslate:
 
     def _explain(self, error: Exception) -> str:
         """The error in plain words (the provider's own goes to the log)."""
-        raw = self._scrub(str(error)).lower()
-        if "api key" in raw or "api_key" in raw or "permission" in raw or "unauthenticated" in raw or "1008" in raw:
-            return "Google refused the key: check the Gemini key in AI & models."
-        if "not found" in raw or "is not supported" in raw or "404" in raw:
-            return "This key can't use Gemini Live Translate (a preview model) yet."
+        raw = self._scrub(_describe(error)).lower()
+        if "api key" in raw or "api_key" in raw or "unauthenticated" in raw:
+            return REFUSED_KEY
+        if "not found" in raw or "is not supported" in raw or "404" in raw or "permission" in raw:
+            return NO_MODEL  # e.g. 1008 "models/... is not found for API version v1beta"
         if "quota" in raw or "429" in raw or "resource_exhausted" in raw or "rate limit" in raw:
             return "Google's quota for this key is used up for now: captions try again shortly."
+        if "(1007)" in raw or "invalid json" in raw or "unknown name" in raw or "invalid argument" in raw:
+            return NOT_ACCEPTED  # the request itself: the same one would be refused again
         if isinstance(error, (OSError, TimeoutError)) or "timed out" in raw or "getaddrinfo" in raw:
             return "Can't reach Google: check the internet connection. Captions try again shortly."
         return "The connection to Google broke: captions try again shortly."
+
+
+REFUSED_KEY = "Google refused the key: check the Gemini key in AI & models."
+NO_MODEL = "This key can't use Gemini Live Translate (a preview model) yet."
+NOT_ACCEPTED = "Google didn't accept Rflow's request: live captions need an update to Rflow."
+GIVE_UP = (REFUSED_KEY, NO_MODEL, NOT_ACCEPTED)  # trying again won't help: the captions stop and say why
+
+
+def _describe(error: Exception) -> str:
+    """For the log and the wording: a connection Google closed as its code and reason (websockets' own text repeats
+    them, "received ...; then sent ..."), anything else as itself."""
+    close = getattr(error, "rcvd", None)
+    if close is not None:
+        return f"Google closed the connection ({close.code}): {close.reason}"
+    return f"{type(error).__name__}: {error}"
 
 
 def _join(text: str, piece: str) -> str:

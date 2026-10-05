@@ -6,6 +6,8 @@ import threading
 import time
 
 import pytest
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 
 from sst.live import gemini
 from sst.live.contracts import Kind, LiveConfig
@@ -17,21 +19,26 @@ KEY = "AIza-secret-key"
 class FakeServer:
     """One Live API connection: records what the client sends, answers what the test scripts."""
 
-    def __init__(self, setup_reply=None, close_reason=None):
+    def __init__(self, setup_reply=None, close_reason=None, refuse_setup=None):
         self.sent, self.closed = [], False
         self.incoming: queue.Queue = queue.Queue()
         self.setup_reply = setup_reply or {"setupComplete": {}}
         self.close_reason = close_reason
+        self.refuse_setup = refuse_setup  # an exception: Google closes the connection instead of answering the setup
 
     def send(self, text):
         self.sent.append(json.loads(text))
 
     def recv(self, timeout=None):
+        if self.refuse_setup:
+            raise self.refuse_setup
         return json.dumps(self.setup_reply)
 
     def __iter__(self):
         while True:
             item = self.incoming.get()
+            if isinstance(item, Exception):
+                raise item
             if item is None or self.closed:
                 if self.close_reason:
                     raise ConnectionError(self.close_reason)
@@ -48,6 +55,11 @@ class FakeServer:
     @property
     def frames(self):
         return [base64.b64decode(m["realtimeInput"]["audio"]["data"]) for m in self.sent if "realtimeInput" in m]
+
+
+def closed_by_google(code, reason):
+    """What websockets raises when Google closes the connection, as in the owner's first run."""
+    return ConnectionClosedError(Close(code, reason), Close(code, reason), rcvd_then_sent=True)
 
 
 class Clock:
@@ -103,8 +115,10 @@ def test_the_setup_asks_for_the_translation_and_both_transcripts(live):
     setup = server.sent[0]["setup"]
     assert setup["model"] == "models/gemini-3.5-live-translate-preview"
     config = setup["generationConfig"]
-    assert config["translationConfig"] == {"targetLanguageCode": "ja", "echoTargetLanguage": False}
-    assert config["inputAudioTranscription"] == {} and config["outputAudioTranscription"] == {}
+    assert config == {"responseModalities": ["AUDIO"],
+                      "translationConfig": {"targetLanguageCode": "ja", "echoTargetLanguage": False}}
+    # the setup's own fields: inside generationConfig Google closes the connection ("Unknown name")
+    assert setup["inputAudioTranscription"] == {} and setup["outputAudioTranscription"] == {}
     assert wait_until(lambda: any(e.text == "Listening" for e in kinds(events, Kind.STATUS)))
 
 
@@ -215,6 +229,43 @@ def test_a_refused_key_says_so_and_stops_trying(live):
     assert wait_until(lambda: kinds(events, Kind.ERROR))
     assert kinds(events, Kind.ERROR)[0].text == "Google refused the key: check the Gemini key in AI & models."
     assert wait_until(lambda: any(e.text == "Stopped" for e in kinds(events, Kind.STATUS)))
+
+
+def test_a_request_google_doesnt_accept_stops_at_once_and_is_logged_once(live, caplog):
+    reason = 'Invalid JSON payload received. Unknown name "inputAudioTranscription" at \'setup.generation_config\''
+    first = FakeServer(refuse_setup=closed_by_google(1007, reason))
+    engine, events, _ = live([first, FakeServer()])
+    engine.start()
+    assert wait_until(lambda: any(e.text == "Stopped" for e in kinds(events, Kind.STATUS)))
+    assert [e.text for e in kinds(events, Kind.ERROR)] == [gemini.NOT_ACCEPTED]  # one try, no reconnecting
+    assert caplog.text.count("Unknown name") == 1 and "Google closed the connection (1007)" in caplog.text
+
+
+def test_a_model_the_key_cant_use_isnt_called_a_refused_key(live):
+    reason = "models/gemini-3.5-live-translate-preview is not found for API version v1beta"
+    engine, events, _ = live([FakeServer(refuse_setup=closed_by_google(1008, reason))])
+    engine.start()
+    assert wait_until(lambda: kinds(events, Kind.ERROR))
+    assert kinds(events, Kind.ERROR)[0].text == gemini.NO_MODEL
+
+
+def test_a_first_connection_that_stalls_is_tried_again_quietly(live):
+    server = FakeServer()
+    engine, events, _ = live([TimeoutError("timed out"), server])
+    engine.start()
+    assert wait_until(lambda: server.sent) and not kinds(events, Kind.ERROR)
+
+
+def test_a_connection_google_closes_while_listening_reconnects(live, monkeypatch):
+    first, second = FakeServer(), FakeServer()
+    engine, events, _ = live([first, second])
+    monkeypatch.setattr(engine._stop, "wait", lambda seconds: False)
+    engine.start()
+    assert wait_until(lambda: first.sent)
+    first.close_with = closed_by_google(1011, "Internal error encountered.")
+    first.incoming.put(first.close_with)
+    assert wait_until(lambda: second.sent)
+    assert kinds(events, Kind.ERROR)[0].text == "The connection to Google broke: captions try again shortly."
 
 
 def test_no_internet_says_so_and_tries_again(live, monkeypatch):
