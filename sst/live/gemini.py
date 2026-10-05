@@ -1,0 +1,247 @@
+"""Gemini 3.5 Live Translate as a live captions engine (Google's Live API, a WebSocket; the profile's Gemini key).
+
+    setup        {"setup": {"model": ..., "generationConfig": {"responseModalities": ["AUDIO"],
+                  "inputAudioTranscription": {}, "outputAudioTranscription": {},
+                  "translationConfig": {"targetLanguageCode": "en", "echoTargetLanguage": false}}}}
+    audio        {"realtimeInput": {"audio": {"data": <base64 PCM16 16 kHz mono>, "mimeType": "audio/pcm;rate=16000"}}}
+    answers      serverContent.inputTranscription.text   the words heard, piece by piece
+                 serverContent.outputTranscription.text  their translation, piece by piece
+                 serverContent.modelTurn                 the translated voice (24 kHz), unused: captions only
+                 goAway                                  the connection ends soon: a new one is opened
+
+The model translates continuously, a few seconds behind the speaker. It only produces audio (and bills it), so the
+voice is thrown away and its transcript shown. A line ends when the model ends its turn, or after LiveConfig.line_pause_s
+without new words, or once a long translation reaches a full stop. A connection lives ~10 minutes: before that a new
+one is opened (frames wait in the queue meanwhile, so no audio is lost). The key is never logged.
+"""
+import base64
+import contextlib
+import json
+import logging
+import queue
+import re
+import threading
+import time
+from collections.abc import Callable
+
+from sst.live.contracts import Kind, LiveConfig, LiveEvent
+
+URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+QUEUE_FRAMES = 50  # 5 s of audio: when the network falls further behind, the oldest frames go (captions stay live)
+LONG_LINE = 120  # characters: a translation this long ends its line at the next full stop
+_SENTENCE_END = re.compile(r"[.!?。！？]\s*$")
+
+log = logging.getLogger(__name__)
+
+
+def _connect(url: str):
+    from websockets.sync.client import connect
+    return connect(url, open_timeout=10, close_timeout=2, max_size=None)
+
+
+class GeminiLiveTranslate:
+    """Feed it frames from any thread; it calls `on_event` (from its own threads) with LiveEvents."""
+
+    def __init__(self, key: str, config: LiveConfig, on_event: Callable[[LiveEvent], None], *,
+                 connect: Callable = _connect, clock: Callable[[], float] = time.monotonic, lane: str = "system"):
+        self.key, self.config, self.on_event, self.lane = key, config, on_event, lane
+        self._connect, self._clock = connect, clock
+        self._frames: queue.Queue[bytes] = queue.Queue(maxsize=QUEUE_FRAMES)
+        self._stop = threading.Event()
+        self._lock = threading.Lock()  # the line being built: touched by the receiving and the sending thread
+        self._source = self._translation = self._language = ""
+        self._first_source = self._first_translation = self._last_text = 0.0
+        self._ws = None
+        self._goaway = False
+        self._opened = 0.0
+        self._closed: str | None = None  # why the server closed the connection, once it did
+        self._thread: threading.Thread | None = None
+        self.dropped = 0  # frames dropped because the network fell behind
+
+    # -- the caller's side
+
+    def start(self) -> None:
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, name="live-gemini", daemon=True)
+        self._thread.start()
+
+    def feed(self, frame: bytes) -> None:
+        """A 100 ms frame of 16 kHz mono PCM16. Never blocks the capture: a full queue loses its oldest frame."""
+        try:
+            self._frames.put_nowait(frame)
+        except queue.Full:
+            with contextlib.suppress(queue.Empty):
+                self._frames.get_nowait()
+                self.dropped += 1
+            with contextlib.suppress(queue.Full):
+                self._frames.put_nowait(frame)
+
+    def stop(self, wait: float = 3.0) -> None:
+        self._stop.set()
+        ws = self._ws
+        if ws is not None:
+            with contextlib.suppress(Exception):
+                ws.close()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(wait)
+
+    # -- the connection
+
+    def _run(self) -> None:
+        backoff = 1.0
+        while not self._stop.is_set():
+            try:
+                self._status("Connecting to Google…")
+                ws = self._open()
+                backoff = 1.0
+                self._status("Listening")
+                receiver = threading.Thread(target=self._receive, args=(ws,), name="live-gemini-in", daemon=True)
+                receiver.start()
+                self._send(ws)
+                self._finish_line()  # a new connection starts with no memory of this line
+                with contextlib.suppress(Exception):
+                    ws.close()
+                receiver.join(2)
+                self._ws = None
+            except Exception as e:
+                self._ws = None
+                if self._stop.is_set():
+                    break
+                message = self._explain(e)
+                log.warning("Live captions: %s", self._scrub(f"{type(e).__name__}: {e}"))
+                self.on_event(LiveEvent(Kind.ERROR, message, lane=self.lane))
+                if message.startswith(("Google refused the key", "This key can't use")):
+                    break  # trying again won't help
+                self._status("Reconnecting…")
+                self._stop.wait(backoff)
+                backoff = min(backoff * 2, 30.0)
+        self._finish_line()
+        self._status("Stopped")
+
+    def _open(self):
+        self._goaway, self._closed = False, None
+        ws = self._connect(f"{URL}?key={self.key}")
+        self._ws = ws
+        ws.send(json.dumps({"setup": {
+            "model": f"models/{self.config.model}",
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],  # the model only speaks; its transcript is what's shown
+                "inputAudioTranscription": {},
+                "outputAudioTranscription": {},
+                "translationConfig": {"targetLanguageCode": self.config.target,
+                                      "echoTargetLanguage": self.config.echo_target},
+            },
+        }}))
+        reply = json.loads(ws.recv(timeout=15))
+        if "setupComplete" not in reply:
+            raise ConnectionError(f"setup not accepted: {str(reply)[:200]}")
+        self._opened = self._clock()
+        return ws
+
+    def _send(self, ws) -> None:
+        """Stream the frames until it's time for a new connection, the server closes it, or stop()."""
+        while not self._stop.is_set():
+            if self._closed is not None:
+                raise ConnectionError(self._closed)
+            if self._goaway or self._clock() - self._opened > self.config.reconnect_s:
+                log.info("Live captions: a new connection (the old one ends soon)")
+                return
+            try:
+                frame = self._frames.get(timeout=0.2)
+            except queue.Empty:
+                frame = b""
+            self._check_pause()
+            if frame:
+                ws.send(json.dumps({"realtimeInput": {"audio": {
+                    "data": base64.b64encode(frame).decode("ascii"), "mimeType": "audio/pcm;rate=16000"}}}))
+
+    def _receive(self, ws) -> None:
+        try:
+            for raw in ws:
+                self._handle(json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw))
+        except Exception as e:  # closed by the server (a refused key arrives this way too), or by us
+            reason = getattr(getattr(e, "rcvd", None), "reason", "") or str(e)
+            if not self._stop.is_set():
+                self._closed = reason or "the connection closed"
+            return
+        if not self._stop.is_set() and not self._goaway:
+            self._closed = "the connection closed"
+
+    # -- the answers
+
+    def _handle(self, message: dict) -> None:
+        if "goAway" in message:
+            self._goaway = True
+        content = message.get("serverContent") or {}
+        heard = content.get("inputTranscription") or {}
+        if heard.get("text"):
+            self._add(Kind.SOURCE, heard["text"], heard.get("languageCode", ""))
+        said = content.get("outputTranscription") or {}
+        if said.get("text"):
+            self._add(Kind.TRANSLATION, said["text"], said.get("languageCode", ""))
+        if content.get("turnComplete"):
+            self._finish_line()
+
+    def _add(self, kind: Kind, piece: str, language: str) -> None:
+        now = self._clock()
+        with self._lock:
+            if kind is Kind.SOURCE:
+                self._source = _join(self._source, piece)
+                self._first_source = self._first_source or now
+                self._language = language or self._language
+                text = self._source
+            else:
+                self._translation = _join(self._translation, piece)
+                self._first_translation = self._first_translation or now
+                text = self._translation
+            self._last_text = now
+            long_done = kind is Kind.TRANSLATION and len(text) >= LONG_LINE and _SENTENCE_END.search(text)
+        self.on_event(LiveEvent(kind, text, language=language, lane=self.lane))
+        if long_done:
+            self._finish_line()
+
+    def _check_pause(self) -> None:
+        with self._lock:
+            pending = bool(self._source or self._translation)
+            quiet = self._clock() - self._last_text
+        if pending and quiet >= self.config.line_pause_s:
+            self._finish_line()
+
+    def _finish_line(self) -> None:
+        with self._lock:
+            source, translation = self._source.strip(), self._translation.strip()
+            lag = self._first_translation - self._first_source if self._first_translation and self._first_source else 0.0
+            language = self._language
+            self._source = self._translation = ""
+            self._first_source = self._first_translation = 0.0
+        if source or translation:
+            self.on_event(LiveEvent(Kind.LINE, translation, source=source, language=language, lane=self.lane,
+                                    seconds=max(0.0, lag)))
+
+    # -- words for the user
+
+    def _status(self, message: str) -> None:
+        self.on_event(LiveEvent(Kind.STATUS, message, lane=self.lane))
+
+    def _scrub(self, text: str) -> str:
+        return text.replace(self.key, "***") if self.key else text
+
+    def _explain(self, error: Exception) -> str:
+        """The error in plain words (the provider's own goes to the log)."""
+        raw = self._scrub(str(error)).lower()
+        if "api key" in raw or "api_key" in raw or "permission" in raw or "unauthenticated" in raw or "1008" in raw:
+            return "Google refused the key: check the Gemini key in AI & models."
+        if "not found" in raw or "is not supported" in raw or "404" in raw:
+            return "This key can't use Gemini Live Translate (a preview model) yet."
+        if "quota" in raw or "429" in raw or "resource_exhausted" in raw or "rate limit" in raw:
+            return "Google's quota for this key is used up for now: captions try again shortly."
+        if isinstance(error, (OSError, TimeoutError)) or "timed out" in raw or "getaddrinfo" in raw:
+            return "Can't reach Google: check the internet connection. Captions try again shortly."
+        return "The connection to Google broke: captions try again shortly."
+
+
+def _join(text: str, piece: str) -> str:
+    """The pieces arrive as the model hears them; a piece that repeats the whole line so far replaces it."""
+    if text and piece.startswith(text):
+        return piece
+    return text + piece
