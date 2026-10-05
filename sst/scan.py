@@ -12,6 +12,7 @@ import logging
 import os
 import shutil
 import struct
+import sysconfig
 import time
 import winreg
 from ctypes import wintypes
@@ -39,6 +40,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class Computer:
+    machine: str = ""  # "x64", or "x64 on ARM64 (emulated)" on an ARM laptop (machine())
     processor: str = ""
     cores: int = 0
     threads: int = 0
@@ -54,7 +56,8 @@ class Computer:
         graphics = self.nvidia or (", ".join(self.graphics) if self.graphics else "no graphics card found")
         nvidia = " (Whisper can use it)" if self.cuda else " (no NVIDIA card)" if not self.nvidia else \
             " (NVIDIA's CUDA libraries are missing: Whisper runs on the processor)"
-        return (f"{self.processor or 'Unknown processor'} · {self.cores} cores · {self.memory_gb:.0f} GB memory "
+        machine = f" ({self.machine})" if self.machine else ""
+        return (f"{self.processor or 'Unknown processor'}{machine} · {self.cores} cores · {self.memory_gb:.0f} GB memory "
                 f"({self.free_memory_gb:.0f} GB free) · {self.free_disk_gb:.0f} GB free disk · {graphics}{nvidia}")
 
 
@@ -71,7 +74,7 @@ def computer(benchmark: bool = True) -> Computer:
     total, free = _memory()
     graphics = _graphics()
     nvidia = next((g for g in graphics if "nvidia" in g.lower()), "")
-    return Computer(processor=_processor(), cores=_cores(), threads=os.cpu_count() or 0, memory_gb=total,
+    return Computer(machine=machine(), processor=_processor(), cores=_cores(), threads=os.cpu_count() or 0, memory_gb=total,
                     free_memory_gb=free, free_disk_gb=_free_disk(DOWNLOADS_DIR), graphics=graphics, nvidia=nvidia,
                     cuda=bool(nvidia) and _cuda(), score=score() if benchmark else 0.0)
 
@@ -143,6 +146,35 @@ def load(path: Path | None = None) -> dict | None:
 
 
 # ---- reading the computer, through Windows itself
+
+# IMAGE_FILE_MACHINE_*: what IsWow64Process2 says the computer itself is
+_MACHINES = {0x8664: "x64", 0xAA64: "ARM64", 0x014C: "x86", 0x01C4: "ARM"}
+_PROGRAMS = {"win-amd64": "x64", "win-arm64": "ARM64", "win32": "x86"}  # sysconfig.get_platform()
+
+
+def machine() -> str:
+    """Which kind of Windows computer this is, and how Rflow runs on it: "x64" on Intel and AMD, "x64 on ARM64
+    (emulated)" on an ARM laptop (Snapdragon), where Windows 11 runs the x64 program through its emulation. Rflow is
+    built for x64 only: Whisper's runtime (CTranslate2) has no ARM64 build."""
+    # What this program (Python, or the frozen Rflow.exe) was built for. Not platform.machine(): since Python 3.12 it
+    # asks Windows for the processor, so an emulated x64 program on a Snapdragon gets "ARM64" too.
+    program = _PROGRAMS.get(sysconfig.get_platform(), sysconfig.get_platform())
+    native = _native_machine() or program
+    return program if native == program else f"{program} on {native} (emulated)"
+
+
+def _native_machine() -> str:
+    """The computer's own processor kind ("ARM64" on a Snapdragon, whatever kind of program asks)."""
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.IsWow64Process2.argtypes = [wintypes.HANDLE, ctypes.POINTER(ctypes.c_ushort), ctypes.POINTER(ctypes.c_ushort)]
+        process, native = ctypes.c_ushort(), ctypes.c_ushort()
+        if kernel32.IsWow64Process2(kernel32.GetCurrentProcess(), ctypes.byref(process), ctypes.byref(native)):
+            return _MACHINES.get(native.value, "")
+    except (OSError, AttributeError):  # IsWow64Process2 is Windows 10 1709 and later
+        pass
+    return ""
 
 class _MemoryStatus(ctypes.Structure):
     _fields_ = [("dwLength", wintypes.DWORD), ("dwMemoryLoad", wintypes.DWORD), ("ullTotalPhys", ctypes.c_ulonglong),

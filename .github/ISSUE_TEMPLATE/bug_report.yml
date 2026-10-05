@@ -26,6 +26,15 @@ body:
     attributes:
       label: Windows version
       placeholder: e.g. Windows 11 24H2
+  - type: dropdown
+    id: computer
+    attributes:
+      label: Computer
+      description: The first line of Rflow's log says it too ("starting (x64)" or "starting (x64 on ARM64 (emulated))").
+      options:
+        - Intel or AMD (x64)
+        - ARM, e.g. Snapdragon (x64 on ARM64, emulated)
+        - Don't know
   - type: textarea
     id: output
     attributes:
