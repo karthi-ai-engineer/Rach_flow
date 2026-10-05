@@ -1,9 +1,14 @@
 """Capture: the warm microphone's lead-in, the tail after the key release, closing when idle, Bluetooth never kept open,
-old microphone names, and the audio's preparation for the engine. No microphone: the audio callback is fed by hand."""
+old microphone names, following microphones plugged in and out, a microphone that goes quiet, and the audio's
+preparation for the engine. No microphone: the audio callback is fed by hand, Windows' and PortAudio's device lists
+are fakes."""
+import time
+import weakref
+
 import numpy as np
 import pytest
 
-from sst import audio
+from sst import audio, devices
 from sst.audio import PREROLL_SECONDS, Recorder, Take, condition
 
 RATE = 16_000
@@ -19,14 +24,16 @@ class FakeStream:
 
 
 def _recorder(monkeypatch, call_quality=False, **options) -> Recorder:
-    monkeypatch.setattr(audio, "_open_streams", 0)  # put back after the test: warm fakes stay "open"
+    monkeypatch.setattr(audio, "_live", weakref.WeakSet())  # put back after the test: warm fakes stay "open"
+    monkeypatch.setattr(audio, "refresh_devices", lambda force=False: False)  # Windows' microphones never change here
     r = Recorder(**options)
     opened = []
 
-    def fake_open():
+    def fake_open(force_refresh=False):
         r.rate, r.info = RATE, {"call_quality": call_quality, "mode": "raw" if r.raw else "windows"}
         r._stream, r._opened_for = FakeStream(), (r.device, r.raw)
-        audio._open_streams += 1
+        r._last_audio = time.monotonic()
+        audio._live.add(r)
         opened.append(r._stream)
     monkeypatch.setattr(r, "_open", fake_open)
     r.opened = opened
@@ -152,3 +159,110 @@ def test_audible_audio_that_decodes_to_nothing_is_tried_again_in_halves():
     assert engine._transcribe(speech, RATE) == "part 1 part 2" and calls == [4 * RATE, 2 * RATE, 2 * RATE]
     calls.clear()
     assert engine._transcribe(np.zeros(4 * RATE, dtype=np.float32), RATE) == "" and len(calls) == 1  # silence: no retry
+
+
+# ---- following microphones plugged in and out (refresh_devices), and a microphone that goes quiet
+
+REAL_REFRESH = audio.refresh_devices
+LAPTOP, HEADSET = devices.Device("1", "Microphone (Realtek(R) Audio)"), devices.Device("2", "Headset (Buds)")
+
+
+def _windows(monkeypatch, *present, default=None):
+    """Windows' microphones (sst.devices), and PortAudio's restarts counted instead of done."""
+    state = {"snapshot": devices.Snapshot(tuple(present), default or (present[0] if present else None)), "restarts": 0}
+    monkeypatch.setattr(audio.devices, "snapshot", lambda: state["snapshot"])
+    monkeypatch.setattr(audio.sd, "_terminate", lambda: None)
+    monkeypatch.setattr(audio.sd, "_initialize", lambda: state.__setitem__("restarts", state["restarts"] + 1))
+    monkeypatch.setattr(audio, "_seen", state["snapshot"])
+    monkeypatch.setattr(audio, "_seen_ready", True)
+    return state
+
+
+def test_nothing_is_restarted_while_windows_microphones_stay_the_same(monkeypatch):
+    windows = _windows(monkeypatch, LAPTOP)
+    r = _recorder(monkeypatch, warm_seconds=float("inf"))
+    r.keep_open()
+    assert not REAL_REFRESH() and windows["restarts"] == 0 and len(r.opened) == 1
+
+
+def test_a_headset_plugged_in_reopens_the_open_microphones_on_the_new_list(monkeypatch):
+    windows = _windows(monkeypatch, LAPTOP)
+    r = _recorder(monkeypatch, warm_seconds=float("inf"))  # the always-on microphone
+    r.keep_open()
+    windows["snapshot"] = devices.Snapshot((HEADSET, LAPTOP), HEADSET)  # plugged in: Windows makes it the default
+    assert REAL_REFRESH() and windows["restarts"] == 1
+    assert len(r.opened) == 2 and r.opened[0].closed and r.warm  # closed, PortAudio re-read, opened again
+    assert not REAL_REFRESH() and windows["restarts"] == 1  # only once per change
+
+
+def test_never_while_a_dictation_is_recorded(monkeypatch):
+    windows = _windows(monkeypatch, LAPTOP)
+    r = _recorder(monkeypatch, warm_seconds=float("inf"))
+    r.start()  # recording
+    _feed(r, 0.5)
+    windows["snapshot"] = devices.Snapshot((HEADSET, LAPTOP), HEADSET)
+    assert not REAL_REFRESH() and windows["restarts"] == 0 and len(r.opened) == 1  # the dictation goes on, untouched
+    assert len(r.stop()) == RATE // 2
+    assert REAL_REFRESH() and windows["restarts"] == 1  # then it happens
+
+
+def test_a_level_meter_never_holds_a_refresh_back(monkeypatch):
+    windows = _windows(monkeypatch, LAPTOP)
+    meter = audio.LevelMeter()
+    monkeypatch.setattr(audio, "_live", weakref.WeakSet())
+    opened = []
+
+    def fake_open(force_refresh=False):
+        meter._stream, meter._last_audio = FakeStream(), time.monotonic()
+        audio._live.add(meter)
+        opened.append(meter._stream)
+    monkeypatch.setattr(meter, "_open", fake_open)
+    meter.start()
+    windows["snapshot"] = devices.Snapshot((HEADSET, LAPTOP), HEADSET)
+    assert REAL_REFRESH() and len(opened) == 2 and opened[0].closed  # the meter follows to the new list
+
+
+def test_without_windows_list_portaudio_is_reread_only_when_nothing_is_open(monkeypatch):
+    windows = _windows(monkeypatch)
+    windows["snapshot"] = None
+    monkeypatch.setattr(audio.devices, "snapshot", lambda: None)
+    r = _recorder(monkeypatch, warm_seconds=float("inf"))
+    assert REAL_REFRESH() and windows["restarts"] == 1  # as before: nothing open
+    r.keep_open()
+    assert not REAL_REFRESH() and windows["restarts"] == 1
+
+
+def test_a_microphone_that_goes_quiet_is_opened_again(monkeypatch):
+    r = _recorder(monkeypatch, warm_seconds=float("inf"))
+    r.keep_open()
+    _feed(r, 0.5)
+    assert r.healthy
+    r._last_audio -= audio.STALL_SECONDS + 0.1  # unplugged, or switched off when a headset was plugged in: no blocks
+    assert not r.healthy
+    r.tick(time.monotonic())  # between dictations: noticed and opened again
+    assert len(r.opened) == 2 and r.opened[0].closed and r.healthy
+
+
+def test_a_quiet_microphone_is_opened_again_at_the_key_press(monkeypatch):
+    r = _recorder(monkeypatch, warm_seconds=float("inf"))
+    r.keep_open()
+    r._last_audio -= audio.STALL_SECONDS + 0.1
+    r.start()
+    assert len(r.opened) == 2 and r.opened[0].closed  # the dictation records on a freshly opened microphone
+
+
+def test_a_chosen_microphone_not_connected_is_said_and_the_default_records(monkeypatch):
+    r = Recorder("Headset (Buds)")
+    r.info = {"device": "Microphone (Realtek(R) Audio)", "mode": "windows", "rate": 48000}
+    r._note(None)  # the name isn't in the list: Windows' default was opened
+    assert r.notice == "Headset (Buds) isn't connected: Rflow uses Microphone (Realtek(R) Audio) until it is."
+    assert r.info["wanted"] == "Headset (Buds)"
+    r.info = {"device": "Headset (Buds)", "mode": "windows", "rate": 16000}
+    r._note(2)  # connected again
+    assert r.notice == ""
+
+
+def test_the_window_lists_windows_microphones_without_restarting_anything(monkeypatch):
+    windows = _windows(monkeypatch, LAPTOP, HEADSET, default=HEADSET)
+    assert audio.input_device_names() == [LAPTOP.name, HEADSET.name] and windows["restarts"] == 0
+    assert audio.default_microphone() == HEADSET.name
