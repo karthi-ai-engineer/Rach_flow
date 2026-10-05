@@ -76,7 +76,9 @@ reading tests belong to a profile (`Profiles` in `sst/settings.py`): read and wr
 (`TrayApp.profile.settings_file`...), never the module's default paths. The Windows-only parts are `sst/app.py`, `sst/dictate.py`, `sst/hotkey.py`,
 `sst/paste.py`, `sst/settings.py` and `sst/gateway.py` (DPAPI). UI tests run Qt off-screen (`tests/test_app.py`,
 `tests/test_window.py`). To see a UI change, render it with the Windows platform but without showing it, e.g. with
-`scripts/make_site_screenshots.py`, and look at the image in both themes.
+`scripts/make_site_screenshots.py`, and look at the image in both themes. Microphones: the list comes from Windows
+(`sst/devices.py`); PortAudio is restarted only through `audio.refresh_devices()`, which closes and reopens the open
+streams, never during a recording (HANDOFF: "Microphones that follow you").
 
 ## Conventions
 

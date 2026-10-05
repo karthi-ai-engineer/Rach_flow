@@ -1367,6 +1367,39 @@ These were scratch scripts, not in git. The findings:
   make the website's and any larger use sharper; ask the owner for one if it exists.
 - The words next to the mark stay live text in Geist (the app and the website), close to the artwork's wordmark.
 
+## Microphones that follow you (phase 26, the owner's report of 2026-10-05)
+
+- **What the owner hit:** connecting a headset (or another microphone) and choosing it gave no audio at all.
+- **Why** (`sst/audio.py` before): PortAudio knows only the devices it found when it started, and restarting it
+  (`sd._terminate`/`_initialize`) closes every open stream, so Rflow re-read the list only while no stream was open.
+  With "Microphone stays ready: while Rflow runs" the dictation stream is always open, and the page's level meter is a
+  second one, so the list was never re-read: a headset connected later wasn't in it, choosing it by name resolved to
+  nothing, and `_resolve` quietly opened the old default instead. Many laptops switch the built-in microphone off
+  when a headset is plugged in: that stream then delivered silence, with no error and no check.
+- **Now, in loosely coupled parts:**
+  - `sst/devices.py`: Windows' own list (Core Audio's MMDevice API through ctypes, read-only): `snapshot()` = the
+    microphones that can record and the default one, ~1 ms (the first call ~200 ms, COM starting); `all_capture()`
+    with unplugged and disabled ones. Its names are PortAudio's WASAPI names.
+  - `audio.refresh_devices()`: when Windows' list differs from the one PortAudio last read, the open recorders and
+    meters (`_live`) are paused, PortAudio restarted (~65 ms) and they are opened again, each on the device it should
+    have now. Never while one is recording (`busy`); a `LevelMeter` is never busy. Without Core Audio, the old rule.
+  - `Recorder`: `start()` re-reads first if the devices changed (so "Windows default" follows a headset plugged in);
+    `tick()` every `WATCH_SECONDS` (2 s) does the same while idle; `healthy` is False when no audio block came for
+    `STALL_SECONDS` (1.5 s): such a stream is opened again (at the key press, or by `tick()`). A microphone chosen by
+    name and not connected records on Windows' default, and `notice` says so (shown once per change, as a Windows
+    notification, through `Dictation.on_notice`); when it's back, it's used again.
+  - `Dictation._no_sound`: a recording whose loudest sample is under `SILENT` (-80 dBFS) isn't transcribed; the error
+    names the microphone and says where to choose another (both the pipeline and the classic way).
+  - `MicrophoneBox` (AI & models, and the first run): "Windows default (now: …)", the list asked again every 2 s while
+    shown (`source`), the choice kept, "Not connected now: Rflow uses … until it is." for an unplugged choice, and
+    "Hearing: …" for the microphone the meter opened.
+- **Checked on this laptop's real microphone** (Realtek, 48 kHz): the always-on recorder and a meter open, a forced
+  re-read closes and reopens both, audio flows after, and a recording right after works. Windows remembers eight
+  headsets here (AirPods Pro, Razer Barracuda X, OnePlus Nord Buds 3r, Beats Fit Pro, Airdopes 141, EarPods), most
+  of them Bluetooth "Headset" (hands-free) microphones: call quality, and the warning on the page says so.
+- **Owner to try:** with Rflow running, connect a headset → AI & models shows it within 2 s → dictate with "Windows
+  default" and with the headset chosen → unplug it and dictate (Rflow uses the laptop's microphone and says so).
+
 ## Known limitations
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.
 - Ctrl+Win isn't sent through the real hook in automated tests (Wispr Flow on the dev laptop would react). The hook
