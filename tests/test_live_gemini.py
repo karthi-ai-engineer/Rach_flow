@@ -165,6 +165,8 @@ def test_a_piece_that_repeats_the_line_replaces_it():
     assert gemini._join("Hello", "Hello world") == "Hello world"
     assert gemini._join("Hello", " world") == "Hello world"
     assert gemini._join("", "今日") == "今日"
+    assert gemini._join("at my parents'", "house") == "at my parents' house"  # the owner's run: "parents'house"
+    assert gemini._join("I don'", "t know") == "I don't know" and gemini._join("Chris'", " car") == "Chris' car"
 
 
 def test_a_pause_finishes_the_line_when_the_model_doesnt(live):

@@ -336,8 +336,13 @@ def _tidy(text: str) -> str:
     return _CJK_GAP.sub("", text)
 
 
+_POSSESSIVE_GAP = re.compile(r"s['’]$")
+
+
 def _join(text: str, piece: str) -> str:
     """The pieces arrive as the model hears them; a piece that repeats the whole line so far replaces it."""
     if text and piece.startswith(text):
         return piece
+    if _POSSESSIVE_GAP.search(text) and piece[:1].isalpha() and piece[:1].isascii():
+        return f"{text} {piece}"  # Google's pieces drop the space after a plural possessive: "parents'" + "house"
     return text + piece
