@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from sst.live import wasapi
-from sst.live.wasapi import FRAME, Framer, LoopbackCapture, Resampler, decode
+from sst.live.wasapi import FRAME, Capture, Framer, Resampler, decode
 
 
 def sine(freq, seconds, rate):
@@ -84,7 +84,7 @@ class Clock:
 
 def run_capture(streams, seconds, until=None):
     frames, opened = [], list(streams)
-    capture = LoopbackCapture(opener=lambda: opened.pop(0), clock=Clock())
+    capture = Capture(opener=lambda: opened.pop(0), clock=Clock())
     capture._stop.wait = lambda s: time.sleep(0.0005)  # the loop's 10 ms pauses, much faster
     capture.start(frames.append)
     end = time.monotonic() + (5.0 if until else seconds)
@@ -116,10 +116,19 @@ def test_a_new_default_output_is_followed():
 def test_an_output_that_cant_be_opened_is_reported_to_the_caller():
     def broken():
         raise OSError("no output device")
-    capture = LoopbackCapture(opener=broken)
+    capture = Capture(opener=broken)
     with pytest.raises(OSError):
         capture.start(lambda frame: None)
-    assert not any(t.name == "live-loopback" and t.is_alive() for t in threading.enumerate())
+    assert not any(t.name == "live-output" and t.is_alive() for t in threading.enumerate())
+
+
+def test_the_speakers_are_heard_in_loopback_and_the_microphone_for_calls(monkeypatch):
+    opened = []
+    monkeypatch.setattr(wasapi, "_Stream", lambda flow, role: opened.append((flow, role)))
+    Capture.speakers()._opener()
+    Capture.microphone()._opener()
+    assert opened == [(wasapi.E_RENDER, wasapi.E_CONSOLE), (wasapi.E_CAPTURE, wasapi.E_COMMUNICATIONS)]
+    assert (Capture.speakers().what, Capture.microphone().what) == ("output device", "microphone")
 
 
 def test_the_real_mix_format_parts_are_the_documented_sizes():

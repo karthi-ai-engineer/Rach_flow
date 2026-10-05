@@ -539,8 +539,10 @@ def test_live_captions_need_a_gemini_key_and_ask_once_before_the_first_start(tra
     assert app.start_live() == "Not started." and len(asked) == 1 and not app.settings.live_told
     started = []
 
-    class FakeSession:
-        def start(self):
+    class FakeSession:  # a LiveSession's ways, without devices or Google
+        transcript = None
+
+        def add(self, lane, capture, engine_factory):
             started.append(True)
 
         def stop(self):
@@ -555,13 +557,28 @@ def test_live_captions_need_a_gemini_key_and_ask_once_before_the_first_start(tra
     app.stop_live()
 
 
-def test_a_live_session_hears_the_laptop_and_saves_its_transcript_in_the_profile(tray_app):
+def test_live_captions_hear_the_laptop_and_the_microphone_and_save_in_the_profile(tray_app):
     app, _, _ = tray_app
     app.gateway = GatewayConfig(provider="gemini", api_key="AIza-test")
-    from sst.live.contracts import LiveConfig
+    from sst.live.contracts import MIC, SYSTEM, LiveConfig
     from sst.live.gemini import GeminiLiveTranslate
-    from sst.live.wasapi import LoopbackCapture
-    session = app._live_session(LiveConfig(target="ja"), lambda event: None)
-    assert isinstance(session.capture, LoopbackCapture) and isinstance(session.engine, GeminiLiveTranslate)
-    assert session.engine.key == "AIza-test" and session.engine.config.target == "ja"
-    assert session.transcript.folder == app.profile.folder() / "live captions"
+    from sst.live.wasapi import Capture
+    config = LiveConfig(target="en", mine=True, mine_target="ja")
+    session = app._live_session(config, lambda event: None)
+    assert session.transcript.folder == app.profile.folder() / "live captions" and session.transcript.mine_target == "ja"
+    for lane, what, target in ((SYSTEM, "output device", "en"), (MIC, "microphone", "ja")):
+        capture, engine_factory = app._live_lane(lane, config)  # built, not started: no device is opened
+        engine = engine_factory(lambda event: None)
+        assert isinstance(capture, Capture) and capture.what == what and isinstance(engine, GeminiLiveTranslate)
+        assert (engine.key, engine.config.target, engine.lane) == ("AIza-test", target, lane)
+
+
+def test_translating_my_speech_too_and_showing_the_bar_in_shares_apply_while_running(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    calls = []
+    monkeypatch.setattr(app.live, "set_mine", lambda on: calls.append(("mine", on)) or "")
+    monkeypatch.setattr(app.live, "set_hidden", lambda hidden: calls.append(("hidden", hidden)))
+    monkeypatch.setattr(type(app.live), "running", property(lambda self: True))
+    assert app.set_live_mine(True) == "" and app.settings.live_mine
+    app.set_live_hidden(False)
+    assert not app.settings.live_hide_from_share and calls == [("mine", True), ("hidden", False)]

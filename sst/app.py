@@ -37,11 +37,11 @@ from sst.engines.cloud import CLOUD, REMOTE, SERVER, CloudEngine
 from sst.gateway import SPEECH_SERVER, GatewayConfig, Polisher
 from sst.hotkey import HotkeyListener, parse_hotkey
 from sst.live.captions import LiveCaptions
-from sst.live.contracts import LiveConfig
+from sst.live.contracts import MIC, LiveConfig
 from sst.live.gemini import GeminiLiveTranslate
 from sst.live.session import LiveSession
 from sst.live.transcript import Transcript
-from sst.live.wasapi import LoopbackCapture
+from sst.live.wasapi import Capture
 from sst.pipeline.asr import ASRScheduler, EngineBackend
 from sst.pipeline.contracts import VoiceConfig
 from sst.pipeline.dictionary import DictionaryEngine, DictionaryStore, TermMode, speech_hints
@@ -343,7 +343,8 @@ class TrayApp:
         self.translator = TranslateController(self, listener_factory=lambda key: HotkeyListener(key))
         self.translator.start(self.settings.translate_shortcut)
         # Live captions: a pipeline of its own (sst.live), started and stopped by the user, never by dictation
-        self.live = LiveCaptions(lambda config, on_event: self._live_session(config, on_event))
+        self.live = LiveCaptions(lambda config, on_event: self._live_session(config, on_event),
+                                 lambda lane, config: self._live_lane(lane, config))
         self.live.changed.connect(self._live_changed)
         self.window = MainWindow(self)
 
@@ -786,9 +787,14 @@ class TrayApp:
         return self.profile.folder() / "live captions"
 
     def _live_session(self, config: LiveConfig, on_event) -> LiveSession:
-        key = self.gateway.key_for("gemini")
-        return LiveSession(config, LoopbackCapture(), lambda emit: GeminiLiveTranslate(key, config, emit),
-                           Transcript(self.live_folder(), config.target), on_event)
+        transcript = Transcript(self.live_folder(), config.target, mine_target=config.mine_target if config.mine else "")
+        return LiveSession(config, transcript, on_event)
+
+    def _live_lane(self, lane: str, config: LiveConfig) -> tuple:
+        """One way of live captions: what the laptop plays, or the user's microphone; each its own Gemini session."""
+        key, lane_config = self.gateway.key_for("gemini"), config.for_lane(lane)
+        capture = Capture.microphone() if lane == MIC else Capture.speakers()
+        return capture, lambda emit: GeminiLiveTranslate(key, lane_config, emit, lane=lane)
 
     def start_live(self) -> str:
         """Start live captions of what the laptop plays; "" or why they didn't start."""
@@ -802,13 +808,17 @@ class TrayApp:
             answer = QMessageBox.question(
                 None, f"{APP_NAME}: live captions",
                 "Live captions send what your laptop plays (a meeting, a video) to Google, which translates it with "
-                "Gemini 3.5 Live Translate, a preview model, and show the translation at the bottom of the screen.\n\n"
-                "With a paid Gemini key this costs about $2.20 an hour of captions; with a free key Google may use "
-                "the audio to improve its products. Each session's transcript is saved on this laptop.\n\nStart?")
+                "Gemini 3.5 Live Translate, a preview model, and show the translation at the bottom of the screen. "
+                "With \"Translate my speech too\", your microphone goes to Google as well.\n\n"
+                "With a paid Gemini key this costs about $2.20 an hour for each (what you hear, your own speech); "
+                "with a free key Google may use the audio to improve its products. Each session's transcript is "
+                "saved on this laptop.\n\nStart?")
             if answer != QMessageBox.StandardButton.Yes:
                 return "Not started."
             self.apply_settings(dataclasses.replace(s, live_told=True))
-        config = LiveConfig(target=self.settings.live_target, hide_from_capture=self.settings.live_hide_from_share)
+        s = self.settings
+        config = LiveConfig(target=s.live_target, hide_from_capture=s.live_hide_from_share, mine=s.live_mine,
+                            mine_target=s.live_mine_target)
         try:
             self.live.start(config)
         except Exception as e:  # e.g. no output device to listen to
@@ -818,6 +828,16 @@ class TrayApp:
 
     def stop_live(self) -> None:
         self.live.stop()
+
+    def set_live_mine(self, on: bool) -> str:
+        """Translate the user's own speech too, or not: saved, and at once while the captions run; "" or why not."""
+        self.apply_settings(dataclasses.replace(self.settings, live_mine=on))
+        return self.live.set_mine(on) if self.live.running else ""
+
+    def set_live_hidden(self, hidden: bool) -> None:
+        """The caption bar left out of screen shares, or shown in them: saved, and at once while the captions run."""
+        self.apply_settings(dataclasses.replace(self.settings, live_hide_from_share=hidden))
+        self.live.set_hidden(hidden)
 
     def toggle_live(self) -> None:
         if self.live.running:

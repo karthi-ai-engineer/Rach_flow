@@ -9,12 +9,14 @@ the same stream of events, so the caption bar, the transcript and the measuremen
     STATUS      connecting, listening, reconnecting, stopped
     ERROR       something went wrong; the text says what, in plain words
 """
+import dataclasses
 import enum
 import time
 from dataclasses import dataclass, field
 
 RATE = 16_000  # what the live translation models take: 16 kHz mono, 16-bit
 FRAME_MS = 100  # the frame Google recommends for latency: 3,200 bytes at 16 kHz
+SYSTEM, MIC = "system", "mic"  # the two ways (lanes): what the laptop plays, and the user's own speech
 
 
 class Kind(enum.Enum):
@@ -31,7 +33,7 @@ class LiveEvent:
     text: str = ""  # SOURCE/TRANSLATION: the whole line so far; LINE: the translation; STATUS/ERROR: the message
     source: str = ""  # LINE: the original words of the finished line
     language: str = ""  # the language the engine says the text is in (BCP-47), if it says
-    lane: str = "system"  # "system": what the laptop plays; "mic": the user's own speech (part 2)
+    lane: str = SYSTEM  # SYSTEM: what the laptop plays; MIC: the user's own speech
     seconds: float = 0.0  # LINE: how long after the voice paused its translation was complete (0 = it didn't pause)
     at: float = field(default_factory=time.monotonic)
 
@@ -45,6 +47,12 @@ class LiveConfig:
     reconnect_s: float = 540.0  # a Live API connection lasts ~10 min: a new one is opened before that
     caption_lines: int = 2  # finished translation lines kept on screen above the one being spoken
     hide_from_capture: bool = True  # the caption bar isn't in screen shares and recordings
+    mine: bool = False  # the user's own speech too (the microphone), translated into mine_target
+    mine_target: str = "ja"
+
+    def for_lane(self, lane: str) -> "LiveConfig":
+        """The settings one way's engine works with: the user's own speech goes into mine_target."""
+        return dataclasses.replace(self, target=self.mine_target) if lane == MIC else self
 
 
 # The languages captions can be translated into: the name shown, and the code the model takes. Gemini 3.5 Live
