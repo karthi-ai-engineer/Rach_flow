@@ -2966,6 +2966,19 @@ class ToolsPage(Page):
             self.live_target.addItem(name, code)
         self.live_target.currentIndexChanged.connect(self._apply_live)
         column.addLayout(row(caption("Translate into", "2", wrap=False), self.live_target, stretch_at=2, spacing=12))
+        # The user's own speech too (part 2): the microphone, into Japanese, marked "You" on the bar
+        self.live_mine = Toggle("Translate my speech too")
+        self.live_mine.toggled.connect(self._mine_toggled)
+        column.addLayout(row(caption("Translate my speech too: your microphone, shown as “You”", "2", wrap=False),
+                             self.live_mine, stretch_at=1))
+        self.live_mine_target = Choice(search=True)
+        for name, code in LIVE_LANGUAGES.items():
+            self.live_mine_target.addItem(name, code)
+        self.live_mine_target.currentIndexChanged.connect(self._apply_live)
+        column.addLayout(row(caption("My speech into", "2", wrap=False), self.live_mine_target, stretch_at=2, spacing=12))
+        self.live_mine_hint = caption("Your microphone goes to Google too (about $2 an hour more). Use headphones: "
+                                      "without them the microphone also hears the meeting.", "3")
+        column.addWidget(self.live_mine_hint)
         self.live_hide = Toggle("Hide the captions from screen sharing")
         self.live_hide.toggled.connect(self._apply_live)
         column.addLayout(row(caption("Hide the captions from screen sharing and recordings", "2", wrap=False),
@@ -3050,9 +3063,15 @@ class ToolsPage(Page):
         self.live_target.blockSignals(True)
         self.live_target.setCurrentIndex(max(0, self.live_target.findData(s.live_target)))
         self.live_target.blockSignals(False)
-        self.live_hide.blockSignals(True)
-        self.live_hide.setChecked(s.live_hide_from_share)
-        self.live_hide.blockSignals(False)
+        for box, on in ((self.live_hide, s.live_hide_from_share), (self.live_mine, s.live_mine)):
+            box.blockSignals(True)
+            box.setChecked(on)
+            box.blockSignals(False)
+        self.live_mine_target.blockSignals(True)
+        self.live_mine_target.setCurrentIndex(max(0, self.live_mine_target.findData(s.live_mine_target)))
+        self.live_mine_target.blockSignals(False)
+        self.live_mine_target.setEnabled(s.live_mine)
+        self.live_mine_hint.setVisible(s.live_mine)
         running, problem = self.app.live_running(), self.app.live_problem()
         self.live_button.setText("Stop" if running else "Start")
         self.live_button.setEnabled(running or not problem)
@@ -3097,11 +3116,20 @@ class ToolsPage(Page):
                 self._live_say(problem)
         self.refresh()
 
+    def _mine_toggled(self, on: bool) -> None:
+        problem = self.app.set_live_mine(on)
+        self.refresh()
+        if problem:
+            self._live_say(problem)
+
     def _apply_live(self, *_) -> None:
         s = self.app.settings
-        target, hide = self.live_target.currentData(), self.live_hide.isChecked()
-        if (target, hide) != (s.live_target, s.live_hide_from_share):
-            self.app.apply_settings(dataclasses.replace(s, live_target=target, live_hide_from_share=hide))
+        if self.live_hide.isChecked() != s.live_hide_from_share:
+            self.app.set_live_hidden(self.live_hide.isChecked())  # at once, also while the captions run
+        s = self.app.settings
+        target, mine_target = self.live_target.currentData(), self.live_mine_target.currentData()
+        if (target, mine_target) != (s.live_target, s.live_mine_target):
+            self.app.apply_settings(dataclasses.replace(s, live_target=target, live_mine_target=mine_target))
             if self.app.live_running():
                 self._live_say("Saved: the next start uses it.")
 
@@ -4705,6 +4733,15 @@ class PreviewApp:
     def stop_live(self) -> None:
         self.calls.append(("stop_live",))
         self._live = False
+
+    def set_live_mine(self, on: bool) -> str:
+        self.calls.append(("set_live_mine", on))
+        self.apply_settings(dataclasses.replace(self.settings, live_mine=on))
+        return ""
+
+    def set_live_hidden(self, hidden: bool) -> None:
+        self.calls.append(("set_live_hidden", hidden))
+        self.apply_settings(dataclasses.replace(self.settings, live_hide_from_share=hidden))
 
     def open_live_folder(self) -> None:
         self.calls.append(("open_live_folder",))

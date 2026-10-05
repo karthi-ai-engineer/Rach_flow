@@ -1255,3 +1255,16 @@ def test_live_captions_without_a_gemini_key_say_where_to_add_one():
     window.show_page("tools")
     page = window.pages["tools"]
     assert not page.live_button.isEnabled() and "add a Gemini key in AI & models" in page.live_note.text()
+
+
+def test_translating_my_own_speech_is_switched_on_from_tools():
+    window, app = _window(gateway=GatewayConfig(provider="gemini", api_key="AIza-test"), settings=Settings(welcomed=True))
+    window.show_page("tools")
+    page = window.pages["tools"]
+    assert not page.live_mine.isChecked() and not page.live_mine_target.isEnabled() and page.live_mine_hint.isHidden()
+    page.live_mine.setChecked(True)
+    assert ("set_live_mine", True) in app.calls and app.settings.live_mine
+    assert page.live_mine_target.isEnabled() and page.live_mine_target.currentData() == "ja"
+    assert not page.live_mine_hint.isHidden()  # the cost and the headphones are said where it's switched on
+    page.live_hide.setChecked(False)
+    assert ("set_live_hidden", False) in app.calls  # applied at once, also while the captions run
