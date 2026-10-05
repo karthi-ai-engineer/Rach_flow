@@ -37,6 +37,9 @@ class Settings:
     translate_shortcut: str = "ctrl+c+c"  # Translate's popup for the copied text (sst.translateui); "" = off
     translate_to: str = "English"  # the language Translate writes in
     translate_second: str = ""  # for text already in translate_to: this language instead ("" = none)
+    live_target: str = "en"  # live captions (sst.live): the language what the laptop plays is translated into
+    live_hide_from_share: bool = True  # the caption bar isn't in screen shares and recordings
+    live_told: bool = False  # the notice (audio goes to Google, the cost) was accepted once
     voice_commands: bool = True  # hold the dictation key and say "make it concise" (sst.commands)
     command_phrases: dict[str, str] = field(default_factory=dict)  # transform -> the user's own phrases ("a, b"); else defaults
     # Snippets (sst.snippets): {"cue": "my email", "text": "xyz@gmail.com", "anywhere": false}, typed when said

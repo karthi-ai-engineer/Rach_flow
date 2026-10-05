@@ -11,6 +11,12 @@ _Last updated: 2026-10-04_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-05):**
+- **Rflow 2.1.0** (2026-10-05, the owner's "merge + release 2.1.0"): live captions, part 1 (phase 27, PR #72): what the
+  laptop plays (a meeting, a video) translated while people speak, in a caption bar left out of screen shares, with a
+  transcript; Gemini 3.5 Live Translate with the profile's Gemini key; a pipeline of its own (`sst/live/`). Tried by
+  the owner against Google and in the app. **Next: part 2, the owner's choice "both ways in one bar"**: your own
+  speech (microphone) translated into Japanese in the same bar, with a switch to show the bar in a screen share so
+  colleagues can read it. See **Live captions**.
 - **Rflow 2.0.2** (2026-10-05, the owner's "release it"): microphones that follow you (phase 26, PR #70: a headset
   plugged in and chosen recorded silence; the list now comes from Windows, open microphones are reopened when the
   devices change, a quiet one is reopened, no-sound recordings aren't transcribed), and the checks on Windows on ARM
@@ -133,8 +139,10 @@ _Last updated: 2026-10-04_
 | 21 | **Snippets** (the owner's idea): say "my email" and your email is typed; your own phrases and text (several lines), alone or inside a sentence, never sent to the AI | done, on `main` (PR #52), released **v1.8.0** |
 | 20 | **Text Transform** (the owner's idea): say "make it concise" (or double-tap Ctrl for a menu) and the selected text or the last dictation becomes Concise, Professional, Bullet points or Action items, checked, with undo; the text is found again if focus moved | done, on `main` (PR #50, with #48), released **v1.7.0** |
 | 19 | **The voice pipeline** (the owner's plan): always-on mic, chunks while speaking, parallel ASR, merge, dictionary, formatting, guarded LLM | done, on `main` (PR #46), released **v1.6.0** |
+| 26 | **Microphones that follow you**: Windows' own device list, open microphones reopened when devices change, silent recordings caught | done, on `main` (PR #70), released **v2.0.2** |
+| 27 | **Live captions, part 1** (the owner's idea): what the laptop plays → WASAPI loopback → Gemini 3.5 Live Translate → a caption bar left out of screen shares, and a transcript; a separate pipeline (`sst/live/`) | done, on `main` (PR #72), released **v2.1.0** |
 
-Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0, v1.10.1, v2.0.0 and v2.0.1 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
+Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0, v1.10.1, v2.0.0, v2.0.1, v2.0.2 and v2.1.0 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
 added on 2026-10-01, and the old https://rachdarlingflow-site.vercel.app stays assigned: installed apps up to 1.6.0
 link there, so never remove it;
 `site/`). The in-app update path is verified end to end: the owner's installed 1.0.0 showed the banner and updated
@@ -1433,6 +1441,58 @@ no native ARM64 build for now, and the Mac later.
   of them Bluetooth "Headset" (hands-free) microphones: call quality, and the warning on the page says so.
 - **Owner to try:** with Rflow running, connect a headset → AI & models shows it within 2 s → dictate with "Windows
   default" and with the headset chosen → unplug it and dictate (Rflow uses the laptop's microphone and says so).
+
+## Live captions (phase 27, the owner's idea of 2026-10-05)
+
+- **The owner's rules:** "do not merge with the current pipeline": live translation flows separately. First (1) what
+  you *hear* (mostly Japanese → English in meetings), then (2) your own speech (English → Japanese). This is (1).
+- **Why not the dictation pipeline:** it cuts at pauses or at 20 s, then cleans up once at the end: fine for text you
+  type, far too slow for captions. Live translation needs 100 ms audio slices, partial results and a translation that
+  starts before the sentence ends. Japanese puts the verb last, so even human interpreters trail by ~2-5 s. The
+  research (not in git: `reports/Live speech translation.md`, `research_notes/Live speech translation/`) compared
+  cascades (streaming recognition + translation) with end-to-end models; Gemini 3.5 Live Translate (preview) does
+  both in one connection, with the Gemini key the AI connection already keeps: option A, built first.
+- **The flow** (`sst/live/`, never importing `sst.pipeline`, `sst.dictate` or `sst.audio`; a test checks):
+  - `wasapi.py`: the default output device through WASAPI loopback (ctypes COM, read-only), the mix format (48 kHz
+    stereo float here) → mono → 16 kHz (box filter + interpolation, seamless across packets) → 100 ms PCM16 frames.
+    Windows sends nothing while nothing plays, so silence is filled in by the clock; a new default output (headphones)
+    is noticed within 2 s and opened. Checked here: a 440 Hz tone played was captured as 440 Hz.
+  - `gemini.py`: `GeminiLiveTranslate`, one websocket (`websockets`, sync client) to
+    `BidiGenerateContent` with `translationConfig.targetLanguageCode`; sends the frames, receives the words heard
+    (`inputTranscription`) and the translation (`outputTranscription`), joins pieces into lines (a pause of 1.5 s or a
+    sentence end), reconnects before Google's ~10-minute limit and on `goAway`, gives up only on a refused key, and
+    says problems in plain words (the key never in a message). Its spoken translation (audio) is ignored.
+  - `session.py` (capture → engine → events; logs how far translations trailed the words: median and maximum),
+    `transcript.py` (each session a two-language text file in the profile's `live captions` folder, made with the
+    first line), `captions.py` (the caption bar: the words heard small, the translation large, finished lines dimmer;
+    never takes focus, clicks go through, `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` so Teams/Zoom shares and
+    recordings don't show it, checked here; `LiveCaptions` moves the engine's events to Qt's thread).
+  - The app: Tools has a **Live captions** card (Start/Stop, the language, hide from sharing, the transcripts), the tray
+    menu a **Live captions** check item. Settings: `live_target`, `live_hide_from_share`, `live_told`. The first start
+    asks once: the audio goes to Google, about $2.20 an hour with a paid key, a free key's audio may be used by Google.
+  - `sst live [--to ja] [--seconds 60]`: the same pipeline in a console, each line printed with its lag.
+- **The owner's runs against Google (2026-10-05, `sst live`, a Japanese conversation video → English):**
+  1. Refused: Google's Live Translate guide puts `inputAudioTranscription`/`outputAudioTranscription` inside
+     `generationConfig`; the server closes with 1007 "Unknown name". The API reference has them on the setup: fixed.
+     Errors that retrying can't fix (refused request, key, model) now stop the captions with the reason.
+  2. Working, good translations. Fixed after it: a long line cut at the translation's full stop split the Japanese
+     mid-word (the translation runs ahead of the transcript); the "s behind" number compared Google's two texts
+     (0.2 s, meaningless); Japanese pieces had spaces between them.
+  3. Lines whole, but matching sentence counts drifted once one Japanese sentence became two English ones. Now a long
+     line ends when both texts are at a sentence end; a slip stays in one line.
+  - The lag shown is "complete X s after the voice paused", from the loudness of the frames sent, and only when the
+    voice paused (a fast conversation rarely does: few numbers, none of them wrong). First measured: 1.0 s.
+  - **Every start waited 10 s and failed once:** the first of the eight addresses `generativelanguage.googleapis.com`
+    gives never answers from this laptop's network (5 s timeout there, 0.03 s for the other seven), and Python waits
+    out the whole timeout on it. `gemini._socket` gives each address 2 s: the first connection takes ~2.2 s. This is
+    likely also the "first connection stalls" in Known limitations (GitHub, the gateway): not checked yet.
+  4. Clean: started at once, lines whole; one more fix ("parents'house": Google drops the space after a plural
+     possessive). The English for the last sentence or two can still arrive after the Japanese and open the next
+     line: Google sends no timings to align them by; the slip doesn't build up.
+- **The owner tried the caption bar in the app** (Tools → Live captions → Start, over the video): "it worked well".
+- **Next:** part 2 (the microphone, English → Japanese, without captioning the meeting's own audio twice); option B
+  engines (local streaming recognition, e.g. Nemotron in sherpa-onnx or Soniox, plus clause-by-clause translation)
+  if Gemini's preview is too slow, too costly or goes away.
 
 ## Known limitations
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.

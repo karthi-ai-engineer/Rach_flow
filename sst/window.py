@@ -66,6 +66,7 @@ from sst.engines.cloud import CLOUD, SPEECH
 from sst.engines.whisper import LANGUAGES
 from sst.gateway import PROVIDERS, GatewayConfig, Polisher
 from sst.hotkey import parse_hotkey
+from sst.live.contracts import LANGUAGES as LIVE_LANGUAGES
 from sst.pipeline.dictionary import speech_hints
 from sst.scan import Computer
 from sst.settings import (
@@ -2948,6 +2949,34 @@ class ToolsPage(Page):
         pair.addWidget(self.translate_card, 1, Qt.AlignmentFlag.AlignTop)
         self.add(pair)
 
+        # Live captions (sst.live): what the laptop plays, translated while people speak; started and stopped here
+        self.live_card, column = card(12, (20, 20, 20, 20))
+        head = QVBoxLayout()
+        head.setSpacing(4)
+        head.addWidget(label("Live captions", "heading"))
+        head.addWidget(caption("A meeting or a video, translated while people speak: captions at the bottom of the "
+                               "screen, a transcript saved on this laptop.", "2"))
+        self.live_button = button("Start", self._live_clicked, primary=True, size="sm")
+        top = row(head, self.live_button, spacing=16)
+        top.setStretch(0, 1)  # the description takes the width, the button stays at the right
+        top.setAlignment(self.live_button, Qt.AlignmentFlag.AlignTop)
+        column.addLayout(top)
+        self.live_target = Choice(search=True)
+        for name, code in LIVE_LANGUAGES.items():
+            self.live_target.addItem(name, code)
+        self.live_target.currentIndexChanged.connect(self._apply_live)
+        column.addLayout(row(caption("Translate into", "2", wrap=False), self.live_target, stretch_at=2, spacing=12))
+        self.live_hide = Toggle("Hide the captions from screen sharing")
+        self.live_hide.toggled.connect(self._apply_live)
+        column.addLayout(row(caption("Hide the captions from screen sharing and recordings", "2", wrap=False),
+                             self.live_hide, stretch_at=1))
+        self.live_note = caption("", "3")
+        self.live_note.hide()
+        column.addWidget(self.live_note)
+        column.addWidget(button("Open the transcripts", lambda: self.app.open_live_folder(), link=True, size="sm",
+                                icon="chevron-right", icon_after=True), 0, Qt.AlignmentFlag.AlignLeft)
+        self.add(self.live_card)
+
         self.trial_card, column = card(14, (20, 18, 20, 20))
         self.trial_tabs = Segmented([("concise", "Concise"), ("professional", "Professional"), ("translate", "Translate")])
         self.trial_tabs.set_current("concise")
@@ -3018,6 +3047,21 @@ class ToolsPage(Page):
                 box.setCurrentIndex(max(0, box.findData(value)))
             box.blockSignals(False)
         self.second_caption.setText(f"When it's already in {s.translate_to}, into")
+        self.live_target.blockSignals(True)
+        self.live_target.setCurrentIndex(max(0, self.live_target.findData(s.live_target)))
+        self.live_target.blockSignals(False)
+        self.live_hide.blockSignals(True)
+        self.live_hide.setChecked(s.live_hide_from_share)
+        self.live_hide.blockSignals(False)
+        running, problem = self.app.live_running(), self.app.live_problem()
+        self.live_button.setText("Stop" if running else "Start")
+        self.live_button.setEnabled(running or not problem)
+        if problem and not running:
+            self._live_say(problem)
+        elif running:
+            self._live_say("On: the captions follow what your laptop plays. Stop here, or from the tray menu.")
+        elif self.live_note.text().startswith(("On:", "Live captions use")):
+            self._live_say("")
         for key in ("concise", "professional"):
             self.trial_tabs.buttons[key].setText(TRANSFORMS[key].name)
         for b in self.trial_tabs.buttons.values():
@@ -3039,6 +3083,27 @@ class ToolsPage(Page):
         self.app.apply_settings(dataclasses.replace(self.app.settings, translate_to=self.target.currentText(),
                                                     translate_second=self.second.currentData()))
         self.refresh()
+
+    def _live_say(self, message: str) -> None:
+        self.live_note.setText(message)
+        self.live_note.setVisible(bool(message))
+
+    def _live_clicked(self) -> None:
+        if self.app.live_running():
+            self.app.stop_live()
+        else:
+            problem = self.app.start_live()
+            if problem and problem != "Not started.":
+                self._live_say(problem)
+        self.refresh()
+
+    def _apply_live(self, *_) -> None:
+        s = self.app.settings
+        target, hide = self.live_target.currentData(), self.live_hide.isChecked()
+        if (target, hide) != (s.live_target, s.live_hide_from_share):
+            self.app.apply_settings(dataclasses.replace(s, live_target=target, live_hide_from_share=hide))
+            if self.app.live_running():
+                self._live_say("Saved: the next start uses it.")
 
     def _say(self, message: str) -> None:
         self.note.setText(message)
@@ -4622,6 +4687,27 @@ class PreviewApp:
 
     def translate_ready(self) -> bool:
         return bool(self.transform_model())
+
+    _live = False  # live captions never really start in the preview
+
+    def live_problem(self) -> str:
+        return "" if self.gateway.key_for("gemini") else \
+            "Live captions use Google Gemini 3.5 Live Translate: add a Gemini key in AI & models."
+
+    def live_running(self) -> bool:
+        return self._live
+
+    def start_live(self) -> str:
+        self.calls.append(("start_live", self.settings.live_target))
+        self._live = not self.live_problem()
+        return self.live_problem()
+
+    def stop_live(self) -> None:
+        self.calls.append(("stop_live",))
+        self._live = False
+
+    def open_live_folder(self) -> None:
+        self.calls.append(("open_live_folder",))
 
     def run_translation(self, text: str, target: str, second: str = ""):
         from sst.translate import Translation

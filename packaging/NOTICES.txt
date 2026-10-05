@@ -36,6 +36,8 @@ sherpa-onnx           Apache License 2.0          https://github.com/k2-fsa/sher
 ONNX Runtime          MIT License                 https://github.com/microsoft/onnxruntime
 PortAudio             MIT-style license           https://www.portaudio.com/license.html
 python-sounddevice    MIT License                 https://github.com/spatialaudio/python-sounddevice
+websockets            BSD 3-Clause License        https://github.com/python-websockets/websockets
+                      (live captions' connection to Gemini Live Translate)
 Qt 6 / PySide6        GNU LGPL v3                 https://www.qt.io/licensing  https://doc.qt.io/qtforpython-6/licenses.html
                       (the tray app, pill and windows; used as separate, replaceable DLLs in the _internal folder)
 NumPy                 BSD 3-Clause License        https://numpy.org/license.html
