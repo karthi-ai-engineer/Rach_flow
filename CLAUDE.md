@@ -73,9 +73,11 @@ Snippets ("my email" types the user's email) are `sst/snippets.py`: found in the
 AI, the user's text put in last and never sent to the AI. Translate (select text, Ctrl+C+C, a popup) is
 `sst/translateui.py` (the shortcut, the copied text, the popup) and `sst/translate.py` (languages, prompt, check). Live captions (what the laptop plays,
 translated while people speak) are `sst/live/`, a pipeline of its own, on the owner's rule that it never merges with
-dictation's: `wasapi.py` (loopback capture, 16 kHz 100 ms frames), `gemini.py` (Gemini Live Translate over a
-websocket), `session.py`, `transcript.py`, `captions.py` (the caption bar, `LiveCaptions`); `tests/test_live_session.py`
-fails if anything there imports `sst.pipeline`, `sst.dictate` or `sst.audio`. Settings, keys, history, stats and
+dictation's: `wasapi.py` (`Capture.speakers()` in loopback and `Capture.microphone()`, 16 kHz 100 ms frames),
+`gemini.py` (Gemini Live Translate over a websocket), `session.py` (one or two ways: `SYSTEM`, what the laptop plays,
+and `MIC`, the user's own speech, each its own engine; untranslated `MIC` lines are echo and dropped), `transcript.py`,
+`captions.py` (the caption bar, `LiveCaptions`); `tests/test_live_session.py` fails if anything there imports
+`sst.pipeline`, `sst.dictate` or `sst.audio`. Settings, keys, history, stats and
 reading tests belong to a profile (`Profiles` in `sst/settings.py`): read and write them through the profile's paths
 (`TrayApp.profile.settings_file`...), never the module's default paths. The Windows-only parts are `sst/app.py`, `sst/dictate.py`, `sst/hotkey.py`,
 `sst/paste.py`, `sst/settings.py` and `sst/gateway.py` (DPAPI). UI tests run Qt off-screen (`tests/test_app.py`,

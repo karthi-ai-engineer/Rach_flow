@@ -11,6 +11,9 @@ _Last updated: 2026-10-04_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-05):**
+- **Live captions both ways** (phase 28, issue #73, branch `phase-28/live-both-ways`, not released): the owner's own
+  speech (the microphone) translated into Japanese in the same caption bar, marked "You"; the bar can be shown in a
+  screen share. See **Live captions both ways**.
 - **Rflow 2.1.0** (2026-10-05, the owner's "merge + release 2.1.0"): live captions, part 1 (phase 27, PR #72): what the
   laptop plays (a meeting, a video) translated while people speak, in a caption bar left out of screen shares, with a
   transcript; Gemini 3.5 Live Translate with the profile's Gemini key; a pipeline of its own (`sst/live/`). Tried by
@@ -140,6 +143,7 @@ _Last updated: 2026-10-04_
 | 20 | **Text Transform** (the owner's idea): say "make it concise" (or double-tap Ctrl for a menu) and the selected text or the last dictation becomes Concise, Professional, Bullet points or Action items, checked, with undo; the text is found again if focus moved | done, on `main` (PR #50, with #48), released **v1.7.0** |
 | 19 | **The voice pipeline** (the owner's plan): always-on mic, chunks while speaking, parallel ASR, merge, dictionary, formatting, guarded LLM | done, on `main` (PR #46), released **v1.6.0** |
 | 26 | **Microphones that follow you**: Windows' own device list, open microphones reopened when devices change, silent recordings caught | done, on `main` (PR #70), released **v2.0.2** |
+| 28 | **Live captions both ways** (the owner's choice): the microphone too, into Japanese, marked "You" on the same bar; echo dropped; the bar shown in screen shares on a switch | in review (issue #73) |
 | 27 | **Live captions, part 1** (the owner's idea): what the laptop plays → WASAPI loopback → Gemini 3.5 Live Translate → a caption bar left out of screen shares, and a transcript; a separate pipeline (`sst/live/`) | done, on `main` (PR #72), released **v2.1.0** |
 
 Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0, v1.10.1, v2.0.0, v2.0.1, v2.0.2 and v2.1.0 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
@@ -1493,6 +1497,35 @@ no native ARM64 build for now, and the Mac later.
 - **Next:** part 2 (the microphone, English → Japanese, without captioning the meeting's own audio twice); option B
   engines (local streaming recognition, e.g. Nemotron in sherpa-onnx or Soniox, plus clause-by-clause translation)
   if Gemini's preview is too slow, too costly or goes away.
+
+## Live captions both ways (phase 28, the owner's choice of 2026-10-05)
+
+- **The owner's choice** (of: both ways in one bar / spoken Japanese into the call through a virtual microphone / typed
+  Japanese): "Both ways in one bar". The others stay possible later: Gemini already returns the translated voice.
+- **What changed in `sst/live/`:**
+  - `wasapi.py`: `Capture.speakers()` (loopback, as before) and `Capture.microphone()`: Windows' default
+    *communications* microphone (the one Teams and Zoom use unless told otherwise), same COM code without the loopback
+    flag. Shared mode: dictation's always-on microphone and this one can be open together. Checked here: it opens at
+    48 kHz and hears the room (-46 dBFS).
+  - `contracts.py`: `SYSTEM`/`MIC` (the two ways), `LiveConfig.mine`/`mine_target`, `for_lane()`.
+  - `session.py`: one session, one or two ways; `add(lane, capture, engine_factory)` / `remove(lane)`, so "Translate my
+    speech too" starts and stops while the captions run. Lags and line counts per way. **Echo:** without headphones the
+    microphone hears the meeting; its lines that come back untranslated (Japanese from the speakers, or the owner
+    speaking Japanese) are dropped, never shown or saved. English from the speakers would still be translated as if
+    the owner said it: the card says to use headphones.
+  - `captions.py`: the owner's lines marked "You ·" in the accent colour (finished ones dimmer); the small "heard" line
+    shows only the others' words; a problem on the owner's way says "Your speech: …" and the captions go on;
+    `set_hidden_from_capture()` applies the share switch at once (`WDA_NONE`/`WDA_EXCLUDEFROMCAPTURE`).
+  - `transcript.py`: the owner's lines start "You:"; the header names both languages.
+- **The app:** Tools card: "Translate my speech too" (a switch, applied at once), "My speech into" (Japanese by
+  default), a note on the cost and headphones; the screen-share switch applies at once. Settings: `live_mine`,
+  `live_mine_target`. The first-start notice says the microphone goes to Google too with the switch on.
+- **`sst live --mine [--mine-to ja]`**: both ways in the console, the owner's lines printed with "You:".
+- **Cost:** two Gemini sessions while both ways run (about $2.20 an hour each); the microphone's is billed even while
+  the owner is silent. A gate that sends the microphone only while it hears a voice is a possible saving later.
+- **Owner to try:** with headphones, `UV_PROJECT_ENVIRONMENT=build/venv uv run sst live --mine --seconds 120` (or
+  `build/venv/Scripts/python.exe -m sst.cli live --mine --seconds 120`), speak English over a Japanese video; then the
+  Tools card with the switch on, and a Teams share with "Hide the captions…" off.
 
 ## Known limitations
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.
