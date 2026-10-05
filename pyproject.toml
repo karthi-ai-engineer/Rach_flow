@@ -17,7 +17,7 @@ dependencies = [
     # more accurate than sherpa-onnx's Whisper. Its onnxruntime dependency (only for its optional VAD) is never imported
     # and is left out of the installer, so sherpa-onnx keeps the one onnxruntime.dll it needs.
     "faster-whisper>=1.2,<2",
-    "websockets>=13",
+    "websockets>=17",
 ]
 
 [project.scripts]

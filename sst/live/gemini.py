@@ -13,8 +13,8 @@
 
 The model translates continuously, a few seconds behind the speaker. It only produces audio (and bills it), so the
 voice is thrown away and its transcript shown. A line ends when the model ends its turn, or after LiveConfig.line_pause_s
-without new words, or once a long translation reaches a sentence end that the words heard have reached too (the
-translation runs ahead of the transcript). How far a line trailed the speaker is measured from when the audio last had
+without new words, or once a long translation and the words heard are both at a sentence end (one runs ahead of the
+other, either way). How far a line trailed the speaker is measured from when the audio last had
 a voice in it to when the line's translation was complete, and only when the voice had paused. A connection lives ~10
 minutes: before that a new one is opened (frames wait in the queue meanwhile, so no audio is lost). The key is never
 logged.
@@ -25,9 +25,12 @@ import json
 import logging
 import queue
 import re
+import socket
 import threading
 import time
+import urllib.request
 from collections.abc import Callable
+from urllib.parse import urlsplit
 
 import numpy as np
 
@@ -35,7 +38,7 @@ from sst.live.contracts import Kind, LiveConfig, LiveEvent
 
 URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 QUEUE_FRAMES = 50  # 5 s of audio: when the network falls further behind, the oldest frames go (captions stay live)
-LONG_LINE = 120  # characters: a translation this long ends its line at a sentence end (the words heard's too)
+LONG_LINE = 120  # characters: a translation this long ends its line where both texts are at a sentence end
 VOICE_LEVEL = 10 ** (-45 / 20)  # a frame louder than -45 dBFS has a voice in it (for measuring the lag only)
 VOICE_PAUSE = 0.3  # seconds: the voice has paused, so a translation arriving now is measured from that pause
 _SENTENCE_END = re.compile(r"[.!?。！？]\s*$")
@@ -47,9 +50,33 @@ _CJK_GAP = re.compile(rf"(?<=[{_CJK}])\s+(?=[{_CJK}?!])")  # Japanese and Chines
 log = logging.getLogger(__name__)
 
 
+ADDRESS_WAIT = 2.0  # seconds for each of Google's addresses to answer before the next one is tried
+
+
 def _connect(url: str):
     from websockets.sync.client import connect
-    return connect(url, open_timeout=10, close_timeout=2, max_size=None)
+    sock = None if urllib.request.getproxies() else _socket(urlsplit(url).hostname)  # behind a proxy: websockets' way
+    # legacy=True: the connection itself, as before websockets 17 (without it, 17 warns that this use will change)
+    return connect(url, sock=sock, open_timeout=10, close_timeout=2, max_size=None, legacy=True)
+
+
+def _socket(host: str, port: int = 443, each: float = ADDRESS_WAIT) -> socket.socket:
+    """A connection to the first of the host's addresses that answers. Python tries them in turn and waits out the whole
+    timeout on each: from the dev laptop's network the first of Google's eight addresses never answers (measured: 5 s
+    timeout there, 0.03 s for the other seven), which made every start wait 10 s and fail once."""
+    error: OSError | None = None
+    for family, kind, proto, _, address in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+        sock = socket.socket(family, kind, proto)
+        sock.settimeout(each)
+        try:
+            sock.connect(address)
+        except OSError as e:
+            sock.close()
+            error = e
+            continue
+        sock.settimeout(None)
+        return sock
+    raise error or OSError(f"no address for {host}")
 
 
 class GeminiLiveTranslate:
@@ -65,7 +92,6 @@ class GeminiLiveTranslate:
         self._source = self._translation = self._language = ""
         self._last_text = 0.0
         self._lag = 0.0  # the line's: how long after the voice paused its latest translated words came (0 = unknown)
-        self._cut, self._cut_sentences, self._cut_lag = 0, 0, 0.0  # where a long line may end, waiting for the source
         self._voice_at = 0.0  # when the last frame with a voice in it was captured
         self._ws = None
         self._goaway = False
@@ -222,19 +248,18 @@ class GeminiLiveTranslate:
             self._finish_line(*cut)
 
     def _find_cut(self) -> tuple[int, int, float] | None:
-        """Where a long line ends: at a sentence end of its translation, once the words heard have as many sentences.
-        Google's translation runs ahead of its transcript, so a cut at the translation's full stop alone split the words
-        heard mid-word ("…びっくり" | "しました。"). What follows either cut begins the next line. Under the lock."""
+        """Where a long line ends: when its translation and the words heard are both at a sentence end. Google's
+        translation runs ahead of its transcript at times and behind it at others, so a cut at the translation's full
+        stop split the words heard mid-word ("…びっくり" | "しました。"), and matching sentence counts drifted for good
+        once one sentence became two. Under the lock."""
         t, s = self._translation, self._source
-        if not self._cut and len(t) >= LONG_LINE and _SENTENCE_END.search(t):
-            self._cut, self._cut_sentences, self._cut_lag = len(t), len(_SENTENCES.findall(t)), self._lag
-        if not self._cut:
+        if len(t) < LONG_LINE or not _SENTENCE_END.search(t):
             return None
-        ends = [m.end() for m in _SENTENCES.finditer(s)]
-        if len(ends) >= self._cut_sentences:
-            return self._cut, ends[self._cut_sentences - 1], self._cut_lag
-        if len(t) >= self._cut + LONG_LINE:  # the words heard never got there: the line ends anyway
-            return self._cut, len(s), self._cut_lag
+        if _SENTENCE_END.search(s):
+            return len(t), len(s), self._lag
+        if len(t) >= 2 * LONG_LINE:  # the two never pause together: end at the words heard's last sentence end
+            ends = [m.end() for m in _SENTENCES.finditer(s)]
+            return len(t), ends[-1] if ends else len(s), self._lag
         return None
 
     def _check_pause(self) -> None:
@@ -253,7 +278,7 @@ class GeminiLiveTranslate:
             self._source, self._translation = self._source[s_cut:].lstrip(), self._translation[t_cut:].lstrip()
             lag = self._lag if lag is None else lag
             language, rest = self._language, (self._source, self._translation)
-            self._cut, self._lag = 0, 0.0
+            self._lag = 0.0
         if source or translation:
             self.on_event(LiveEvent(Kind.LINE, _tidy(translation), source=_tidy(source), language=language,
                                     lane=self.lane, seconds=lag))
@@ -272,7 +297,7 @@ class GeminiLiveTranslate:
     def _explain(self, error: Exception) -> str:
         """The error in plain words (the provider's own goes to the log)."""
         raw = self._scrub(_describe(error)).lower()
-        if "api key" in raw or "api_key" in raw or "unauthenticated" in raw:
+        if "api key" in raw or "api_key" in raw or "unauthenticated" in raw or "unregistered caller" in raw:
             return REFUSED_KEY
         if "not found" in raw or "is not supported" in raw or "404" in raw or "permission" in raw:
             return NO_MODEL  # e.g. 1008 "models/... is not found for API version v1beta"

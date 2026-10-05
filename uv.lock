@@ -954,7 +954,7 @@ requires-dist = [
     { name = "sherpa-onnx", specifier = "==1.13.8" },
     { name = "sherpa-onnx-core", specifier = "==1.13.8" },
     { name = "sounddevice", specifier = ">=0.5" },
-    { name = "websockets", specifier = ">=13" },
+    { name = "websockets", specifier = ">=17" },
 ]
 
 [package.metadata.requires-dev]

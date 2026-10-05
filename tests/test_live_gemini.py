@@ -2,6 +2,7 @@
 import base64
 import json
 import queue
+import socket
 import threading
 import time
 
@@ -195,7 +196,8 @@ def test_a_long_translation_ends_its_line_at_a_full_stop(live):
 
 
 def test_a_long_line_waits_for_the_words_heard_to_finish_its_sentence(live):
-    """The owner's first run: the translation reached its full stop while the words heard were mid-word."""
+    """The owner's first run: the translation reached its full stop while the words heard were mid-word. The line ends
+    when both are at a sentence end, so each sentence stays with its translation."""
     server = FakeServer()
     engine, events, _ = live([server])
     engine.start()
@@ -211,11 +213,30 @@ def test_a_long_line_waits_for_the_words_heard_to_finish_its_sentence(live):
     assert wait_until(lambda: kinds(events, Kind.LINE))
     line = kinds(events, Kind.LINE)[0]
     assert line.source == ("なんと。そうなんです。で、なんかコメントで僕もなんと"
-                           "住んでますみたいなコメントとかが来てびっくりしました。")
-    assert line.text.endswith("I was really surprised.")
-    # what came after the cuts begins the next line
-    assert wait_until(lambda: kinds(events, Kind.SOURCE)[-1].text == "うん、はい。")
-    assert kinds(events, Kind.TRANSLATION)[-1].text == "Yeah, yeah."
+                           "住んでますみたいなコメントとかが来てびっくりしました。うん、はい。")
+    assert line.text.endswith("I was really surprised. Yeah, yeah.")
+
+
+def test_a_translation_behind_the_words_heard_ends_the_line_when_it_catches_up(live):
+    """The owner's second run: one Japanese sentence became two English ones, which arrived after it."""
+    server = FakeServer()
+    engine, events, _ = live([server])
+    engine.start()
+    assert wait_until(lambda: server.sent)
+    server.say(outputTranscription={"text": "I'm really begging you. Yes. Uh, my hometown is Tokyo, and I moved to Saitama "
+                                            "Prefecture. Yeah. I moved there. Well, it's close, but"})
+    server.say(inputTranscription={"text": "本当にお願いします。はい。あの、東京、実家東京から埼玉県に。うん。お引越ししました。"
+                                           "ま、近いんですけどそれで言うと大体1時間半ぐらいはかかるかなという場所にいます。"})
+    server.say(outputTranscription={"text": " so I guess it's about an hour and a half or so."})
+    assert wait_until(lambda: len(kinds(events, Kind.TRANSLATION)) == 2)
+    assert kinds(events, Kind.LINE)  # both at a sentence end now
+    server.say(outputTranscription={"text": " I'm in a place that's about that far."})
+    server.say(inputTranscription={"text": "へえ、あ、そっか。"})
+    server.say(outputTranscription={"text": " Oh, I see."})
+    server.say(turnComplete=True)
+    assert wait_until(lambda: len(kinds(events, Kind.LINE)) == 2)
+    # a sentence can still land a line late, but the next line doesn't inherit the slip
+    assert kinds(events, Kind.LINE)[1].text == "I'm in a place that's about that far. Oh, I see."
 
 
 def test_a_long_line_ends_anyway_when_the_words_heard_never_catch_up(live):
@@ -223,12 +244,36 @@ def test_a_long_line_ends_anyway_when_the_words_heard_never_catch_up(live):
     engine, events, _ = live([server])
     engine.start()
     assert wait_until(lambda: server.sent)
-    server.say(inputTranscription={"text": "えーと"})
+    server.say(inputTranscription={"text": "はい。えーと"})
     server.say(outputTranscription={"text": "A" * 130 + "."})
-    server.say(outputTranscription={"text": " " + "B" * 125})
+    server.say(outputTranscription={"text": " " + "B" * 125 + "."})
     assert wait_until(lambda: kinds(events, Kind.LINE))
     line = kinds(events, Kind.LINE)[0]
-    assert line.text == "A" * 130 + "." and line.source == "えーと"
+    assert line.text == "A" * 130 + ". " + "B" * 125 + "." and line.source == "はい。"
+    assert wait_until(lambda: kinds(events, Kind.SOURCE)[-1].text == "えーと")  # the rest of the words heard carry on
+
+
+def test_a_connection_skips_an_address_that_doesnt_answer(monkeypatch):
+    """The dev laptop's network: the first of Google's addresses never answers. Here: a closed port, then a real one."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    closed = socket.socket()
+    closed.bind(("127.0.0.1", 0))
+    dead_port = closed.getsockname()[1]
+    closed.close()
+    addresses = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))
+                 for port in (dead_port, listener.getsockname()[1])]
+    monkeypatch.setattr(gemini.socket, "getaddrinfo", lambda *args, **named: addresses)
+    sock = gemini._socket("generativelanguage.googleapis.com", each=1.0)
+    try:
+        assert sock.getpeername()[1] == listener.getsockname()[1] and sock.gettimeout() is None
+    finally:
+        sock.close()
+        listener.close()
+    monkeypatch.setattr(gemini.socket, "getaddrinfo", lambda *args, **named: addresses[:1])
+    with pytest.raises(OSError):
+        gemini._socket("generativelanguage.googleapis.com", each=1.0)
 
 
 def test_japanese_pieces_lose_the_spaces_between_them():
@@ -305,6 +350,14 @@ def test_a_request_google_doesnt_accept_stops_at_once_and_is_logged_once(live, c
     assert wait_until(lambda: any(e.text == "Stopped" for e in kinds(events, Kind.STATUS)))
     assert [e.text for e in kinds(events, Kind.ERROR)] == [gemini.NOT_ACCEPTED]  # one try, no reconnecting
     assert caplog.text.count("Unknown name") == 1 and "Google closed the connection (1007)" in caplog.text
+
+
+def test_no_key_at_all_is_a_refused_key(live):
+    reason = "Method doesn't allow unregistered callers (callers without established identity)."  # Google, measured
+    engine, events, _ = live([FakeServer(refuse_setup=closed_by_google(1008, reason))])
+    engine.start()
+    assert wait_until(lambda: kinds(events, Kind.ERROR))
+    assert kinds(events, Kind.ERROR)[0].text == gemini.REFUSED_KEY
 
 
 def test_a_model_the_key_cant_use_isnt_called_a_refused_key(live):
