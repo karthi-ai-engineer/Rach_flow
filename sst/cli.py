@@ -7,6 +7,7 @@
   uv run sst devices               list microphones (* = default)
   uv run sst eval [<folder>...]    score reading tests (all of them by default); --degrade, --model, --no-cleanup
   uv run sst web                   open a Record / Stop page in the browser
+  uv run sst live [--to ja]        live captions of what the laptop plays, translated (Gemini), until Ctrl+C
 
 Options: --engine parakeet (or whisper-turbo; openai, groq, gemini, server as set up in Rflow)
          --device <number from `sst devices`>
@@ -98,6 +99,53 @@ def cmd_dictate(args) -> None:
     run(lambda: _load(args.engine), hotkey=args.hotkey, device=args.device, save=not args.no_save)
 
 
+def cmd_live(args) -> None:
+    """Live captions in this console: what the laptop plays, translated line by line, with how far each line trailed
+    the words. The same pipeline as the app's caption bar (sst.live), with the Gemini key of the profile in use."""
+    import threading
+
+    from sst.gateway import GatewayConfig
+    from sst.live.contracts import LANGUAGES, Kind, LiveConfig, language_name
+    from sst.live.gemini import GeminiLiveTranslate
+    from sst.live.session import LiveSession
+    from sst.live.transcript import Transcript
+    from sst.live.wasapi import LoopbackCapture
+    from sst.settings import Profiles, Settings
+
+    profile = Profiles.load().current
+    settings, gateway = Settings.load(profile.settings_file), GatewayConfig.load(profile.gateway_file)
+    target = args.to or settings.live_target
+    if target not in LANGUAGES.values():
+        raise ValueError(f"--to takes a language code: {', '.join(sorted(LANGUAGES.values()))}")
+    key = gateway.key_for("gemini")
+    if not key:
+        raise ValueError("Live captions need a Gemini key: add one in Rflow, AI & models.")
+    config = LiveConfig(target=target)
+    stopped = threading.Event()
+
+    def show(event) -> None:
+        if event.kind is Kind.LINE:
+            print(f"\n  {event.source}\n  -> {event.text or '(already ' + language_name(target) + ')'}"
+                  + (f"   [{event.seconds:.1f} s behind]" if event.seconds else ""), flush=True)
+        elif event.kind is Kind.ERROR:
+            print(f"\n  ! {event.text}", flush=True)
+        elif event.kind is Kind.STATUS:
+            print(f"  ({event.text})", flush=True)
+            if event.text == "Stopped":
+                stopped.set()
+
+    session = LiveSession(config, LoopbackCapture(), lambda emit: GeminiLiveTranslate(key, config, emit),
+                          Transcript(profile.folder() / "live captions", target), show)
+    print(f"Live captions into {language_name(target)}: play a meeting or a video. Ctrl+C stops.")
+    session.start()
+    try:
+        stopped.wait(args.seconds or None)
+    finally:
+        session.stop()
+        if session.transcript.path:
+            print(f"Transcript: {session.transcript.path}")
+
+
 def cmd_app(args) -> None:
     from sst.app import main as app_main
 
@@ -171,6 +219,9 @@ def main() -> None:
                         help="also score the audio made worse on purpose: narrowband (phone / Bluetooth call quality) "
                              "or gain:<dB>, e.g. gain:-20 (repeatable)")
     p_eval.add_argument("--out", help="where report.md and results.json go (default: the test's folder, or 'summary')")
+    p_live = sub.add_parser("live", help="live captions of what the laptop plays, translated (Gemini Live Translate)")
+    p_live.add_argument("--to", help="language code to translate into, e.g. en, ja (default: the one set in Rflow)")
+    p_live.add_argument("--seconds", type=float, help="stop after this long (default: until Ctrl+C)")
     p_web = sub.add_parser("web", help="open the record/stop page in your browser")
     p_web.add_argument("--port", type=int, default=8765)
     p_web.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
@@ -181,7 +232,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="  %(message)s")  # e.g. the per-dictation timing line
     try:
         commands = {"app": cmd_app, "dictate": cmd_dictate, "start": cmd_start, "file": cmd_file,
-                    "devices": cmd_devices, "eval": cmd_eval, "bench": cmd_eval, "web": cmd_web}
+                    "devices": cmd_devices, "eval": cmd_eval, "bench": cmd_eval, "web": cmd_web, "live": cmd_live}
         commands[args.command](args)
     except KeyboardInterrupt:
         print("\nStopped.")
