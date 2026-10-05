@@ -1,23 +1,32 @@
-"""What the laptop plays (WASAPI loopback) or what its microphone hears, through Core Audio (ctypes), as the live
-models want it: 16 kHz mono 16-bit frames of 100 ms.
+"""Sound in and out for live translation, through Core Audio (WASAPI, ctypes).
 
-    Capture.speakers()    the default output device (speakers or headphones), in shared loopback mode
+In: what the laptop plays, or what its microphone hears, as the live models want it: 16 kHz mono 16-bit frames of
+100 ms.
+
+    Capture.speakers()    everything the laptop plays except Rflow's own sound: Windows' process loopback, leaving out
+                          this process, so the spoken translation isn't heard and translated again. Windows without it
+                          (before Windows 11 / build 20348) get the default output's whole mix, and `hears_self` says
+                          Rflow's voice is in it
     Capture.microphone()  the default communications microphone (the one Teams and Zoom use unless told otherwise)
-    -> IAudioClient -> its mix format (usually 48 kHz float) -> mono -> 16 kHz (a box filter, then interpolation; state
-    kept across packets) -> 100 ms frames
+    -> IAudioClient -> its format (usually 48 kHz float; process loopback is asked for 16 kHz mono and converts) ->
+    mono -> 16 kHz (a box filter, then interpolation; state kept across packets) -> 100 ms frames
+
+Out: Player, the spoken translation through Windows' default output (16-bit mono at the voice's rate: Windows converts
+it). It also says whether that output is private (headphones, a headset), which a microphone can't hear.
 
 Windows sends no loopback packets at all while nothing plays, so silence is filled in to keep the stream's clock going
-(the model hears a pause, not a jump). When the default device changes (headphones plugged in) or goes away, the
-capture opens the new one. Read-only: nothing here plays or changes a sound. Its own small COM helpers, on purpose:
-live captions share no code with dictation's microphone (sst.audio, sst.devices); shared mode lets both have it open.
+(the model hears a pause, not a jump). When the default device changes (headphones plugged in) or goes away, capture and
+player open the new one. Its own small COM helpers, on purpose: live translation shares no code with dictation's
+microphone (sst.audio, sst.devices); shared mode lets both have it open.
 """
 import ctypes
 import logging
+import os
 import threading
 import time
 import uuid
 from collections.abc import Callable
-from ctypes import wintypes
+from ctypes import POINTER, Structure, byref, c_int, c_long, c_ulong, c_ushort, c_void_p, wintypes
 
 import numpy as np
 
@@ -25,7 +34,7 @@ from sst.live.contracts import FRAME_MS, RATE
 
 FRAME = RATE * FRAME_MS // 1000  # 1,600 samples
 SILENCE_AFTER = 0.15  # seconds without a packet: nothing is playing, so silence is added
-CHECK_DEVICE_EVERY = 2.0  # seconds between looks at which output is the default
+CHECK_DEVICE_EVERY = 2.0  # seconds between looks at which device is the default
 _BUFFER = 2_000_000  # 200 ms, in 100 ns units: WASAPI's buffer, read every 10 ms
 
 log = logging.getLogger(__name__)
@@ -99,9 +108,14 @@ class Framer:
         return frames
 
 
+def pcm16(samples: np.ndarray) -> bytes:
+    """Float samples in [-1, 1] as 16-bit little-endian PCM."""
+    return (np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0) * 32767).astype("<i2").tobytes()
+
+
 # ---- Core Audio through ctypes
 
-class _GUID(ctypes.Structure):
+class _GUID(Structure):
     _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
 
     @classmethod
@@ -109,108 +123,232 @@ class _GUID(ctypes.Structure):
         return cls.from_buffer_copy(uuid.UUID(text).bytes_le)
 
 
-class _WAVEFORMATEX(ctypes.Structure):
+class _WAVEFORMATEX(Structure):
     _pack_ = 1
     _fields_ = [("wFormatTag", wintypes.WORD), ("nChannels", wintypes.WORD), ("nSamplesPerSec", wintypes.DWORD),
                 ("nAvgBytesPerSec", wintypes.DWORD), ("nBlockAlign", wintypes.WORD), ("wBitsPerSample", wintypes.WORD),
                 ("cbSize", wintypes.WORD)]
 
+    @classmethod
+    def pcm16(cls, rate: int) -> "_WAVEFORMATEX":
+        """16-bit mono at `rate`."""
+        return cls(1, 1, rate, rate * 2, 2, 16, 0)
 
-class _WAVEFORMATEXTENSIBLE(ctypes.Structure):
+
+class _WAVEFORMATEXTENSIBLE(Structure):
     _pack_ = 1
     _fields_ = [("Format", _WAVEFORMATEX), ("wValidBitsPerSample", wintypes.WORD), ("dwChannelMask", wintypes.DWORD),
                 ("SubFormat", _GUID)]
+
+
+class _PropVariant(Structure):
+    """A PROPVARIANT (24 bytes): here a VT_BLOB (cbSize in `value`, pBlobData in `pointer`) or a VT_UI4 (`value`)."""
+    _fields_ = [("vt", c_ushort), ("r1", c_ushort), ("r2", c_ushort), ("r3", c_ushort), ("value", c_ulong),
+                ("pointer", c_void_p)]
+
+
+class _PropertyKey(Structure):
+    _fields_ = [("fmtid", _GUID), ("pid", wintypes.DWORD)]
+
+
+class _LoopbackParams(Structure):
+    """AUDIOCLIENT_ACTIVATION_PARAMS with its AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS."""
+    _fields_ = [("ActivationType", c_int), ("TargetProcessId", wintypes.DWORD), ("ProcessLoopbackMode", c_int)]
 
 
 _CLSID_ENUMERATOR = _GUID.of("BCDE0395-E52F-467C-8E3D-C4579291692E")
 _IID_ENUMERATOR = _GUID.of("A95664D2-9614-4F35-A746-DE8DB63617E6")
 _IID_AUDIO_CLIENT = _GUID.of("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2")
 _IID_CAPTURE_CLIENT = _GUID.of("C8ADBD64-E71E-48A0-A4DE-185C395CD317")
+_IID_RENDER_CLIENT = _GUID.of("F294ACFC-3146-4483-A7BF-ADDCA7C260E2")
+_IID_UNKNOWN = bytes(_GUID.of("00000000-0000-0000-C000-000000000046"))
+_IID_COMPLETION = bytes(_GUID.of("41D949AB-9862-444A-80F6-C261334DA5EB"))  # IActivateAudioInterfaceCompletionHandler
+_IID_AGILE = bytes(_GUID.of("94EA2B94-E9CC-49E0-C0FF-EE64CA8F5B90"))  # IAgileObject: Windows calls it from any thread
 _FLOAT = uuid.UUID("00000003-0000-0010-8000-00AA00389B71").bytes_le
+_FORM_FACTOR = (_GUID.of("1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E"), 0)  # PKEY_AudioEndpoint_FormFactor
+_PRIVATE = {3, 5, 6}  # Headphones, Headset, Handset: what they play, no microphone hears
 E_RENDER, E_CAPTURE = 0, 1  # EDataFlow: what's played, what's heard
 E_CONSOLE, E_COMMUNICATIONS = 0, 2  # ERole: the default device, the default for calls
 _CLSCTX_ALL, _SHARED, _LOOPBACK, _SILENT = 0x17, 0, 0x00020000, 0x2
+_EVENT_CALLBACK = 0x00040000
+_AUTOCONVERT = 0x80000000 | 0x08000000  # AUTOCONVERTPCM | SRC_DEFAULT_QUALITY: Windows takes the voice's own format
+_PROCESS_LOOPBACK = "VAD\\Process_Loopback"
 
 
 def _method(obj, index: int, *argtypes):
-    vtable = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
-    return lambda *args: ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, *argtypes)(vtable[index])(obj, *args)
+    vtable = ctypes.cast(obj, POINTER(POINTER(c_void_p)))[0]
+    return lambda *args: ctypes.WINFUNCTYPE(ctypes.HRESULT, c_void_p, *argtypes)(vtable[index])(obj, *args)
 
 
 def _release(obj) -> None:
     if obj:
-        vtable = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
-        ctypes.WINFUNCTYPE(wintypes.ULONG, ctypes.c_void_p)(vtable[2])(obj)
+        vtable = ctypes.cast(obj, POINTER(POINTER(c_void_p)))[0]
+        ctypes.WINFUNCTYPE(wintypes.ULONG, c_void_p)(vtable[2])(obj)
 
 
-class _Stream:
-    """One opened stream on a default device: the output device in loopback, or a microphone (call from one thread,
-    with COM set up there)."""
+def _com() -> None:
+    """COM on this thread (multithreaded; a second call only counts up)."""
+    ctypes.WinDLL("ole32").CoInitializeEx(None, 0x0)
 
-    def __init__(self, flow: int = E_RENDER, role: int = E_CONSOLE):
-        self.flow, self.role = flow, role
-        self.enumerator, self.device, self.client, self.capture = (ctypes.c_void_p() for _ in range(4))
-        ctypes.WinDLL("ole32").CoCreateInstance.restype = ctypes.HRESULT
-        ctypes.WinDLL("ole32").CoCreateInstance(ctypes.byref(_CLSID_ENUMERATOR), None, _CLSCTX_ALL,
-                                                ctypes.byref(_IID_ENUMERATOR), ctypes.byref(self.enumerator))
-        try:
-            self.device_id = self._default_id()
-            _method(self.enumerator, 4, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(
-                self.flow, self.role, ctypes.byref(self.device))  # GetDefaultAudioEndpoint
-            _method(self.device, 3, ctypes.POINTER(_GUID), wintypes.DWORD, ctypes.c_void_p,
-                    ctypes.POINTER(ctypes.c_void_p))(ctypes.byref(_IID_AUDIO_CLIENT), _CLSCTX_ALL, None,
-                                                     ctypes.byref(self.client))  # IMMDevice::Activate
-            mix = ctypes.POINTER(_WAVEFORMATEX)()
-            _method(self.client, 8, ctypes.POINTER(ctypes.POINTER(_WAVEFORMATEX)))(ctypes.byref(mix))  # GetMixFormat
-            try:
-                f = mix.contents
-                self.rate, self.channels, self.bits, self.block = f.nSamplesPerSec, f.nChannels, f.wBitsPerSample, f.nBlockAlign
-                if f.wFormatTag == 0xFFFE:  # WAVEFORMATEXTENSIBLE: the real format is its SubFormat
-                    ext = ctypes.cast(mix, ctypes.POINTER(_WAVEFORMATEXTENSIBLE)).contents
-                    self.is_float = bytes(ext.SubFormat) == _FLOAT
-                else:
-                    self.is_float = f.wFormatTag == 3
-                _method(self.client, 3, ctypes.c_int, wintypes.DWORD, ctypes.c_longlong, ctypes.c_longlong,
-                        ctypes.POINTER(_WAVEFORMATEX), ctypes.c_void_p)(
-                    _SHARED, _LOOPBACK if self.flow == E_RENDER else 0, _BUFFER, 0, mix, None)
-            finally:
-                ctypes.WinDLL("ole32").CoTaskMemFree(mix)
-            _method(self.client, 14, ctypes.POINTER(_GUID), ctypes.POINTER(ctypes.c_void_p))(
-                ctypes.byref(_IID_CAPTURE_CLIENT), ctypes.byref(self.capture))  # GetService
-            _method(self.client, 10)()  # Start
-        except Exception:
-            self.close()
-            raise
 
-    def _default_id(self) -> str:
-        device, raw = ctypes.c_void_p(), ctypes.c_wchar_p()
-        _method(self.enumerator, 4, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(
-            self.flow, self.role, ctypes.byref(device))
-        try:
-            _method(device, 5, ctypes.POINTER(ctypes.c_wchar_p))(ctypes.byref(raw))  # GetId
-            value = raw.value or ""
-            ctypes.WinDLL("ole32").CoTaskMemFree(raw)
-            return value
-        finally:
-            _release(device)
+def _enumerator() -> c_void_p:
+    enumerator = c_void_p()
+    ole32 = ctypes.WinDLL("ole32")
+    ole32.CoCreateInstance.restype = ctypes.HRESULT
+    ole32.CoCreateInstance(byref(_CLSID_ENUMERATOR), None, _CLSCTX_ALL, byref(_IID_ENUMERATOR), byref(enumerator))
+    return enumerator
+
+
+def _default_device(enumerator, flow: int, role: int) -> c_void_p:
+    device = c_void_p()
+    _method(enumerator, 4, c_int, c_int, POINTER(c_void_p))(flow, role, byref(device))  # GetDefaultAudioEndpoint
+    return device
+
+
+def _device_id(device) -> str:
+    raw = ctypes.c_wchar_p()
+    _method(device, 5, POINTER(ctypes.c_wchar_p))(byref(raw))  # GetId
+    value = raw.value or ""
+    ctypes.WinDLL("ole32").CoTaskMemFree(raw)
+    return value
+
+
+def _default_id(enumerator, flow: int, role: int) -> str:
+    device = _default_device(enumerator, flow, role)
+    try:
+        return _device_id(device)
+    finally:
+        _release(device)
+
+
+def _activate(device) -> c_void_p:
+    client = c_void_p()
+    _method(device, 3, POINTER(_GUID), wintypes.DWORD, c_void_p, POINTER(c_void_p))(
+        byref(_IID_AUDIO_CLIENT), _CLSCTX_ALL, None, byref(client))  # IMMDevice::Activate
+    return client
+
+
+def _initialize(client, flags: int, fmt) -> None:
+    _method(client, 3, c_int, wintypes.DWORD, ctypes.c_longlong, ctypes.c_longlong, POINTER(_WAVEFORMATEX), c_void_p)(
+        _SHARED, flags, _BUFFER, 0, fmt, None)
+
+
+def _private(device) -> bool:
+    """The device is headphones or a headset (its form factor): a microphone can't hear what it plays."""
+    store = c_void_p()
+    try:
+        _method(device, 4, wintypes.DWORD, POINTER(c_void_p))(0, byref(store))  # OpenPropertyStore(STGM_READ)
+        key, value = _PropertyKey(*_FORM_FACTOR), _PropVariant()
+        _method(store, 5, POINTER(_PropertyKey), POINTER(_PropVariant))(byref(key), byref(value))  # GetValue
+        form = value.value if value.vt == 19 else None  # VT_UI4
+        ctypes.WinDLL("ole32").PropVariantClear(byref(value))
+        return form in _PRIVATE
+    except OSError:
+        return False
+    finally:
+        _release(store)
+
+
+_QI = ctypes.WINFUNCTYPE(c_long, c_void_p, POINTER(_GUID), POINTER(c_void_p))
+_REF = ctypes.WINFUNCTYPE(c_ulong, c_void_p)
+_DONE = ctypes.WINFUNCTYPE(c_long, c_void_p, c_void_p)
+
+
+class _CompletionTable(Structure):
+    _fields_ = [("QueryInterface", _QI), ("AddRef", _REF), ("Release", _REF), ("ActivateCompleted", _DONE)]
+
+
+class _CompletionObject(Structure):
+    _fields_ = [("table", POINTER(_CompletionTable))]
+
+
+class _Completion:
+    """A COM object made in Python: the IActivateAudioInterfaceCompletionHandler that Windows calls when the process
+    loopback is open. Agile, so Windows may call it from its own thread; kept alive by the stream that asked."""
+
+    def __init__(self):
+        self.done, self._refs = threading.Event(), 1
+        self._table = _CompletionTable(_QI(self._query), _REF(self._add), _REF(self._drop), _DONE(self._completed))
+        self.object = _CompletionObject(ctypes.pointer(self._table))
+
+    def _query(self, this, iid, out):
+        if bytes(iid.contents) in (_IID_UNKNOWN, _IID_COMPLETION, _IID_AGILE):
+            out[0] = this
+            self._refs += 1
+            return 0
+        out[0] = None
+        return -2147467262  # E_NOINTERFACE
+
+    def _add(self, this):
+        self._refs += 1
+        return self._refs
+
+    def _drop(self, this):
+        self._refs -= 1
+        return self._refs
+
+    def _completed(self, this, operation):
+        self.done.set()
+        return 0
+
+
+def _process_loopback(pid: int) -> tuple[c_void_p, _Completion]:
+    """An IAudioClient for everything the laptop plays except process `pid` and its children."""
+    params = _LoopbackParams(1, pid, 1)  # AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, EXCLUDE_TARGET_PROCESS_TREE
+    blob = _PropVariant(vt=65, value=ctypes.sizeof(params), pointer=ctypes.addressof(params))  # VT_BLOB
+    handler, operation = _Completion(), c_void_p()
+    activate = ctypes.WinDLL("Mmdevapi").ActivateAudioInterfaceAsync  # Windows 8+; process loopback: Windows 11
+    activate.restype = ctypes.HRESULT
+    activate.argtypes = [ctypes.c_wchar_p, POINTER(_GUID), c_void_p, c_void_p, POINTER(c_void_p)]
+    activate(_PROCESS_LOOPBACK, byref(_IID_AUDIO_CLIENT), byref(blob), ctypes.addressof(handler.object),
+             byref(operation))
+    try:
+        if not handler.done.wait(5):
+            raise OSError("Windows didn't open the process loopback")
+        result, client = c_long(), c_void_p()
+        _method(operation, 3, POINTER(c_long), POINTER(c_void_p))(byref(result), byref(client))  # GetActivateResult
+        if result.value:
+            _release(client)
+            raise OSError(f"process loopback refused ({result.value & 0xFFFFFFFF:#x})")
+        return client, handler
+    finally:
+        _release(operation)
+
+
+class _Capturing:
+    """What both kinds of capture stream share: reading packets, following the default device, closing (call from one
+    thread, with COM set up there)."""
+    hears_self = False  # Rflow's own voice can be in what it captures
+    flow, role = E_RENDER, E_CONSOLE  # the default device it follows
+    rate = channels = bits = block = 0
+    is_float = False
+
+    def _prepare(self) -> None:
+        self.enumerator, self.device, self.client, self.capture = (c_void_p() for _ in range(4))
+        self.event, self._handler = None, None
+
+    def _start(self) -> None:
+        _method(self.client, 14, POINTER(_GUID), POINTER(c_void_p))(
+            byref(_IID_CAPTURE_CLIENT), byref(self.capture))  # GetService
+        _method(self.client, 10)()  # Start
 
     def default_changed(self) -> bool:
         try:
-            return self._default_id() != self.device_id
+            return _default_id(self.enumerator, self.flow, self.role) != self.device_id
         except OSError:  # no such device at all for a moment
             return True
 
     def read(self) -> list[np.ndarray]:
         """The packets waiting now, as mono float at the device's rate (silent packets as zeros)."""
         out, size = [], wintypes.UINT()
-        next_size = _method(self.capture, 5, ctypes.POINTER(wintypes.UINT))
-        get = _method(self.capture, 3, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.UINT),
-                      ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p, ctypes.c_void_p)
+        next_size = _method(self.capture, 5, POINTER(wintypes.UINT))
+        get = _method(self.capture, 3, POINTER(c_void_p), POINTER(wintypes.UINT), POINTER(wintypes.DWORD), c_void_p,
+                      c_void_p)
         release = _method(self.capture, 4, wintypes.UINT)
-        next_size(ctypes.byref(size))
+        next_size(byref(size))
         while size.value:
-            data, frames, flags = ctypes.c_void_p(), wintypes.UINT(), wintypes.DWORD()
-            get(ctypes.byref(data), ctypes.byref(frames), ctypes.byref(flags), None, None)
+            data, frames, flags = c_void_p(), wintypes.UINT(), wintypes.DWORD()
+            get(byref(data), byref(frames), byref(flags), None, None)
             try:
                 if flags.value & _SILENT or not data.value:
                     out.append(np.zeros(frames.value, dtype=np.float32))
@@ -219,7 +357,7 @@ class _Stream:
                     out.append(decode(raw, self.channels, self.bits, self.is_float))
             finally:
                 release(frames.value)
-            next_size(ctypes.byref(size))
+            next_size(byref(size))
         return out
 
     def close(self) -> None:
@@ -230,12 +368,76 @@ class _Stream:
                 pass
         for obj in (self.capture, self.client, self.device, self.enumerator):
             _release(obj)
-        self.capture = self.client = self.device = self.enumerator = ctypes.c_void_p()
+        self.capture = self.client = self.device = self.enumerator = c_void_p()
+        if self.event:
+            ctypes.windll.kernel32.CloseHandle(c_void_p(self.event))
+            self.event = None
+
+
+class _Stream(_Capturing):
+    """One opened stream on a default device: the output device in loopback (its whole mix, Rflow's voice too), or a
+    microphone."""
+
+    def __init__(self, flow: int = E_RENDER, role: int = E_CONSOLE):
+        self.flow, self.role, self.hears_self = flow, role, flow == E_RENDER
+        self._prepare()
+        try:
+            self.enumerator = _enumerator()
+            self.device = _default_device(self.enumerator, flow, role)
+            self.device_id = _device_id(self.device)
+            self.client = _activate(self.device)
+            mix = POINTER(_WAVEFORMATEX)()
+            _method(self.client, 8, POINTER(POINTER(_WAVEFORMATEX)))(byref(mix))  # GetMixFormat
+            try:
+                f = mix.contents
+                self.rate, self.channels, self.bits, self.block = f.nSamplesPerSec, f.nChannels, f.wBitsPerSample, f.nBlockAlign
+                if f.wFormatTag == 0xFFFE:  # WAVEFORMATEXTENSIBLE: the real format is its SubFormat
+                    self.is_float = bytes(ctypes.cast(mix, POINTER(_WAVEFORMATEXTENSIBLE)).contents.SubFormat) == _FLOAT
+                else:
+                    self.is_float = f.wFormatTag == 3
+                _initialize(self.client, _LOOPBACK if flow == E_RENDER else 0, mix)
+            finally:
+                ctypes.WinDLL("ole32").CoTaskMemFree(mix)
+            self._start()
+        except Exception:
+            self.close()
+            raise
+
+
+class _ProcessLoopback(_Capturing):
+    """Everything the laptop plays except this process's own sound (the spoken translation), already as 16 kHz mono
+    16-bit: Windows converts. Measured on the owner's laptop: another program's tone came through, Rflow's didn't."""
+
+    def __init__(self, rate: int = RATE):
+        self.rate, self.channels, self.bits, self.block = rate, 1, 16, 2
+        self._prepare()
+        try:
+            self.enumerator = _enumerator()
+            self.device_id = _default_id(self.enumerator, E_RENDER, E_CONSOLE)  # followed like the other streams
+            self.client, self._handler = _process_loopback(os.getpid())
+            kernel32 = ctypes.windll.kernel32
+            kernel32.CreateEventW.restype = c_void_p
+            self.event = kernel32.CreateEventW(None, False, False, None)
+            _initialize(self.client, _LOOPBACK | _EVENT_CALLBACK, byref(_WAVEFORMATEX.pcm16(rate)))
+            _method(self.client, 13, c_void_p)(c_void_p(self.event))  # SetEventHandle: it runs event-driven; we poll
+            self._start()
+        except Exception:
+            self.close()
+            raise
+
+
+def _speakers():
+    """What the laptop plays without Rflow's own sound where Windows can leave it out, else the whole mix."""
+    try:
+        return _ProcessLoopback()
+    except Exception as e:  # an older Windows: no process loopback
+        log.info("Live translation: process loopback isn't available (%s); capturing the whole output", e)
+        return _Stream(E_RENDER, E_CONSOLE)
 
 
 class Capture:
     """start(on_frame) calls on_frame(bytes) with each 100 ms frame, from its own thread: of what the laptop plays
-    (speakers()) or of what its microphone hears (microphone())."""
+    (speakers()) or of what its microphone hears (microphone()). `hears_self`: Rflow's own voice can be in it."""
 
     def __init__(self, opener: Callable = _Stream, clock: Callable[[], float] = time.monotonic,
                  what: str = "output device"):
@@ -243,10 +445,11 @@ class Capture:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.device_rate = 0  # the device's own rate, once opened (for the log)
+        self.hears_self = False
 
     @classmethod
     def speakers(cls) -> "Capture":
-        return cls(lambda: _Stream(E_RENDER, E_CONSOLE), what="output device")
+        return cls(lambda: _speakers(), what="output device")
 
     @classmethod
     def microphone(cls) -> "Capture":
@@ -270,8 +473,7 @@ class Capture:
             self._thread.join(3)
 
     def _run(self, on_frame, opened: threading.Event, problem: list) -> None:
-        ole32 = ctypes.WinDLL("ole32")
-        ole32.CoInitializeEx(None, 0x0)  # COINIT_MULTITHREADED: this thread only
+        _com()
         first = True
         try:
             while not self._stop.is_set():
@@ -282,22 +484,23 @@ class Capture:
                         problem.append(e)
                         opened.set()
                         return
-                    log.warning("Live captions: couldn't open the %s: %s", self.what, e)
+                    log.warning("Live translation: couldn't open the %s: %s", self.what, e)
                     self._stop.wait(1.0)
                     continue
+                self.device_rate, self.hears_self = stream.rate, getattr(stream, "hears_self", False)
                 if first:
                     first = False
                     opened.set()
-                self.device_rate = stream.rate
-                log.info("Live captions hear the %s (%d Hz, %d channels)", self.what, stream.rate, stream.channels)
+                log.info("Live translation hears the %s (%d Hz, %d channels%s)", self.what, stream.rate, stream.channels,
+                         "" if self.hears_self or self.what != "output device" else ", without Rflow's own sound")
                 try:
                     self._pump(stream, on_frame)
                 except OSError as e:  # unplugged, or the format changed: open whatever is the default now
-                    log.info("Live captions: the %s changed (%s)", self.what, e)
+                    log.info("Live translation: the %s changed (%s)", self.what, e)
                 finally:
                     stream.close()
         finally:
-            ole32.CoUninitialize()
+            ctypes.WinDLL("ole32").CoUninitialize()
 
     def _pump(self, stream, on_frame) -> None:
         resample, frame = Resampler(stream.rate), Framer()
@@ -315,6 +518,135 @@ class Capture:
             if now - last_check >= CHECK_DEVICE_EVERY:
                 last_check = now
                 if stream.default_changed():
-                    log.info("Live captions: a new default %s", self.what)
+                    log.info("Live translation: a new default %s", self.what)
                     return
             self._stop.wait(0.01)
+
+
+# ---- the spoken translation out
+
+class _Render:
+    """One opened output stream on the default output device: 16-bit mono at `rate` (Windows converts it). Its own
+    thread's COM; `private`: the device is headphones or a headset."""
+
+    def __init__(self, rate: int):
+        _com()
+        self.enumerator, self.device, self.client, self.render = (c_void_p() for _ in range(4))
+        try:
+            self.enumerator = _enumerator()
+            self.device = _default_device(self.enumerator, E_RENDER, E_CONSOLE)
+            self.device_id = _device_id(self.device)
+            self.private = _private(self.device)
+            self.client = _activate(self.device)
+            _initialize(self.client, _AUTOCONVERT, byref(_WAVEFORMATEX.pcm16(rate)))
+            size = wintypes.UINT()
+            _method(self.client, 4, POINTER(wintypes.UINT))(byref(size))  # GetBufferSize
+            self.size = size.value
+            _method(self.client, 14, POINTER(_GUID), POINTER(c_void_p))(byref(_IID_RENDER_CLIENT), byref(self.render))
+            _method(self.client, 10)()  # Start: silence until samples come
+        except Exception:
+            self.close()
+            raise
+
+    def queued(self) -> int:
+        """Frames written and not yet played."""
+        padding = wintypes.UINT()
+        _method(self.client, 6, POINTER(wintypes.UINT))(byref(padding))  # GetCurrentPadding
+        return padding.value
+
+    def write(self, pcm: bytes) -> int:
+        """As many of the 16-bit samples as fit in the buffer now; how many went in."""
+        n = min(self.size - self.queued(), len(pcm) // 2)
+        if n <= 0:
+            return 0
+        data = c_void_p()
+        _method(self.render, 3, wintypes.UINT, POINTER(c_void_p))(n, byref(data))  # GetBuffer
+        ctypes.memmove(data.value, pcm, n * 2)
+        _method(self.render, 4, wintypes.UINT, wintypes.DWORD)(n, 0)  # ReleaseBuffer
+        return n
+
+    def flush(self) -> None:
+        """Silence at once: what was queued isn't played."""
+        for index in (11, 12, 10):  # Stop, Reset, Start
+            _method(self.client, index)()
+
+    def default_changed(self) -> bool:
+        try:
+            return _default_id(self.enumerator, E_RENDER, E_CONSOLE) != self.device_id
+        except OSError:
+            return True
+
+    def close(self) -> None:
+        if self.client:
+            try:
+                _method(self.client, 11)()  # Stop
+            except OSError:
+                pass
+        for obj in (self.render, self.client, self.device, self.enumerator):
+            _release(obj)
+        self.render = self.client = self.device = self.enumerator = c_void_p()
+
+
+class Player:
+    """The spoken translation through Windows' default output, following it when it changes. play() is called from one
+    thread (the voice's: COM lives there); interrupt() from any. `private`: the output is headphones or a headset."""
+
+    def __init__(self, opener: Callable = _Render, clock: Callable[[], float] = time.monotonic):
+        self._opener, self._clock = opener, clock
+        self._stream = None
+        self._rate, self._checked = 0, 0.0
+        self._interrupt = threading.Event()
+        self.private = False
+
+    def play(self, samples: np.ndarray, rate: int) -> float:
+        """Queue `samples` (float, -1..1) for playing. Returns once they're all in Windows' buffer, with the seconds
+        still to be heard then (up to its 0.2 s), or 0 when interrupted (the rest isn't played)."""
+        self._interrupt.clear()
+        pcm, failures = pcm16(samples), 0
+        while pcm and not self._interrupt.is_set():
+            try:
+                stream = self._open(rate)
+                n = stream.write(pcm)
+                failures = 0
+            except Exception as e:  # unplugged, or the device changed under it: the default again
+                failures += 1
+                log.info("The voice's output went away (%s): opening the default again", e)
+                self._close()
+                if failures >= 3:
+                    raise
+                time.sleep(0.1)
+                continue
+            pcm = pcm[n * 2:]
+            if not n:
+                time.sleep(0.01)
+        if self._stream is None:
+            return 0.0
+        if self._interrupt.is_set():
+            self._stream.flush()
+            return 0.0
+        return self._stream.queued() / rate
+
+    def interrupt(self) -> None:
+        self._interrupt.set()
+
+    def close(self) -> None:
+        self._close()
+
+    def _open(self, rate: int):
+        now = self._clock()
+        if self._stream is not None and (rate != self._rate or (
+                now - self._checked >= CHECK_DEVICE_EVERY and self._stream.default_changed())):
+            log.info("The voice follows the new default output")
+            self._close()
+        if now - self._checked >= CHECK_DEVICE_EVERY:
+            self._checked = now
+        if self._stream is None:
+            self._stream, self._rate = self._opener(rate), rate
+            self.private = self._stream.private
+            log.info("The voice plays through the default output (%s)", "headphones" if self.private else "speakers")
+        return self._stream
+
+    def _close(self) -> None:
+        if self._stream is not None:
+            self._stream.close()
+            self._stream = None
