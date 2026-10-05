@@ -11,6 +11,9 @@ _Last updated: 2026-10-04_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-05):**
+- **Live translation spoken aloud** (phase 29, issue #75, branch `phase-29/live-voice`, not released): the owner's
+  chosen voice, Piper's Danny (English), reads each sentence of the translation out on the laptop, never heard and
+  translated again. See **Live translation spoken aloud**.
 - **Rflow 2.2.0** (2026-10-05, the owner's "release it"): live translation, a section of its own (phase 28, PR #74):
   its own sidebar section, Ctrl+Alt+L, a bar to move, resize and scroll back through with a ✕, and the source:
   Computer, Microphone or Both (the owner's own lines marked "You"). Released before the owner tried the section, the
@@ -144,6 +147,7 @@ _Last updated: 2026-10-04_
 | 20 | **Text Transform** (the owner's idea): say "make it concise" (or double-tap Ctrl for a menu) and the selected text or the last dictation becomes Concise, Professional, Bullet points or Action items, checked, with undo; the text is found again if focus moved | done, on `main` (PR #50, with #48), released **v1.7.0** |
 | 19 | **The voice pipeline** (the owner's plan): always-on mic, chunks while speaking, parallel ASR, merge, dictionary, formatting, guarded LLM | done, on `main` (PR #46), released **v1.6.0** |
 | 26 | **Microphones that follow you**: Windows' own device list, open microphones reopened when devices change, silent recordings caught | done, on `main` (PR #70), released **v2.0.2** |
+| 29 | **Live translation spoken aloud** (the owner's request): Piper's Danny on the laptop (sherpa-onnx, no new dependency), each sentence spoken as soon as it's whole, faster when behind; process loopback leaves Rflow's own voice out of what's captured; the microphone pauses while it plays through speakers | in review (issue #75) |
 | 28 | **Live translation, a section of its own** (the owner's redesign): a sidebar section, Ctrl+Alt+L, a movable, resizable, scrollable bar with ✕, and the source: Computer, Microphone or Both (your words marked "You") | done, on `main` (PR #74), released **v2.2.0** |
 | 27 | **Live captions, part 1** (the owner's idea): what the laptop plays → WASAPI loopback → Gemini 3.5 Live Translate → a caption bar left out of screen shares, and a transcript; a separate pipeline (`sst/live/`) | done, on `main` (PR #72), released **v2.1.0** |
 
@@ -1533,6 +1537,49 @@ no native ARM64 build for now, and the Mac later.
 - **Owner to try:** the section (Start, the shortcut from another app, moving, resizing and scrolling the bar, ✕);
   Microphone with someone speaking Japanese or English near the laptop; Both with headphones in a meeting; a Teams
   share with "Hide the bar…" off.
+
+## Live translation spoken aloud (phase 29, the owner's request of 2026-10-05)
+
+- **The owner's request:** "the transcript and then lively talk also, by enabling the option", with Piper's
+  `en_US-danny-low` (they pasted the rhasspy/piper-voices links). The Piper program itself moved to
+  `OHF-Voice/piper1-gpl` (GPL); Rflow doesn't need it: sherpa-onnx, already in Rflow for Parakeet, runs Piper voices.
+- **Measured first** (scratch scripts, not in git):
+  - sherpa-onnx reads a Piper voice's settings from the model's metadata; rhasspy's keep them in the .onnx.json. An
+    ONNX model is a protobuf ModelProto, and protobuf merges repeated fields that come later in the bytes, so the
+    metadata entries (field 14) are appended to a copy: no ONNX library. Loaded in 1.1 s; speaks ~20x faster than
+    real time (2.8 s of speech in 0.13 s).
+  - espeak-ng-data is 355 files (17 MB) for every language; English needs 6 (795 KB) for byte-identical speech
+    (phontab, phonindex, phondata, intonations, en_dict, lang/gmw/en-US).
+  - Windows' process loopback (`ActivateAudioInterfaceAsync` on `VAD\Process_Loopback`, excluding Rflow's process
+    tree, a COM completion handler made in ctypes) records what the laptop plays without Rflow's own sound, already as
+    16 kHz mono: another program's 440 Hz tone 93.4, Rflow's player's 1000 Hz tone 0.2.
+- **The pieces** (`sst/live/`):
+  - `voice.py`: `DANNY` (rhasspy/piper-voices at `c10ece1a`, 63 MB, MIT; espeak-ng-data from the sherpa-onnx author's
+    copy at `9b9d4d57`), downloaded through `sst.downloads` (pinned, checked; it now makes subfolders), then
+    `prepare()`: model.onnx with metadata, tokens.txt, the original removed. `PiperVoice.synthesize(text, speed)`.
+    Lives in `DOWNLOADS_DIR/piper-en_US-danny-low` and `espeak-ng-data-en`.
+  - `speaker.py`: `Speaker.hear(event)` takes TRANSLATION/LINE events of the ways it speaks; a sentence is said once
+    the text goes on past it, when its line ends, or 0.6 s after a full stop with nothing new ("3." waits for "3.5";
+    "e.g.", "Mr." don't end one). Behind: faster by 0.15 per sentence waiting (up to 1.6x); a sentence waiting over
+    10 s while newer ones queue is skipped (on screen and in the transcript). `speaking` lasts 0.4 s after the audio.
+    Measured: a sentence was heard 0.12 s after the translation went on past it.
+  - `wasapi.py`: `Player` (WASAPI render, 16-bit mono with AUTOCONVERTPCM; follows the default output; `private` from
+    the endpoint's form factor: headphones/headset/handset), `_ProcessLoopback` (tried first by `Capture.speakers()`;
+    older Windows fall back to the whole mix and `hears_self` is True).
+  - `session.py`: `set_speaker()`; each way's frames become silence while the voice speaks where that way hears it:
+    the microphone unless the output is private, the computer only when `hears_self`. Echo lines never reach the
+    speaker (dropped first).
+  - What's spoken (`LiveConfig.spoken_lanes`): what's translated into the voice's language; with Both only the
+    others' words. Danny speaks English: translating into Japanese shows only text (the section and the button say so).
+- **The app:** "Speak the translation" and Speed (Normal, a little faster, faster) on the Live translation section;
+  the bar's speaker button does the same; the first time it's switched on the voice downloads in the background, the
+  bar's title shows the percent, and it starts speaking when done. Settings: `live_speak`, `live_speak_speed`,
+  `live_voice`. `sst live --speak`.
+- **Owner to try:** a Japanese video, Computer into English, speaking on: the voice should follow the captions, and
+  the captions must not pick up the voice. Microphone into English through the laptop's speakers: the mic pauses
+  while it speaks.
+- **Later, if wanted:** Gemini Live Translate already returns the translation as speech in any language (Rflow
+  ignores it): that would speak Japanese too, with no download.
 
 ## Known limitations
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.
