@@ -11,7 +11,8 @@ choose cleans up the text (punctuation, fillers, your own words).
 
 Download **`Rflow-Setup.exe`** (the latest version:
 [releases/latest](https://github.com/karthi-ai-engineer/Rach_flow/releases/latest), about 90 MB) and run it. It
-needs no administrator rights and no Python. Windows 10/11, 64-bit. The first time, Rflow asks how to recognise your
+needs no administrator rights and no Python. Windows 10/11, 64-bit: Intel and AMD laptops, and ARM laptops (such
+as Snapdragon) through Windows 11's x64 emulation. The first time, Rflow asks how to recognise your
 speech: download NVIDIA Parakeet once (about 660 MB; offline from then on), or use a cloud model or your own server.
 
 - Windows may say *"Windows protected your PC"*, because the installer isn't code-signed yet. Click **More info → Run anyway**.

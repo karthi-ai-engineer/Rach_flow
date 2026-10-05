@@ -1367,6 +1367,35 @@ These were scratch scripts, not in git. The findings:
   make the website's and any larger use sharper; ask the owner for one if it exists.
 - The words next to the mark stay live text in Geist (the app and the website), close to the artwork's wordmark.
 
+## Different computers: x64 and ARM64 (the owner's choice of 2026-10-05)
+
+The owner develops on a Surface Laptop 7 (Snapdragon X Plus, **ARM64**) and also uses an Intel laptop (i5-1334U,
+**x64**), and mostly uses cloud speech models. Decision: **one x64 program for every Windows laptop** (option A);
+no native ARM64 build for now, and the Mac later.
+
+- **How it works:** Intel and AMD laptops run Rflow natively; ARM laptops run the same x64 program through Windows
+  11's x64 emulation. The installer allows both (`ArchitecturesAllowed=x64compatible` in `packaging/installer.iss`).
+  The dev `.venv` on the ARM laptop is x64 Python too (`uv venv --python cpython-3.12-windows-x86_64-none .venv`), so
+  what is developed there is what ships.
+- **Checked on both:** CI runs every test on `windows-latest` (x64) and on `windows-11-arm` with x64 Python
+  (`UV_PYTHON`), and checks the latter really is "x64 on ARM64 (emulated)"; it also builds the app on both and runs
+  `Rflow.exe --self-test` (every window, the fonts, the logo, Whisper's runtime, a Parakeet transcription).
+- **Which computer a log came from:** the first line says it, "Rflow <version> starting (x64)" or "(x64 on ARM64
+  (emulated))" (`scan.machine()`: the program's kind from how Python was built, `sysconfig.get_platform()`, and the computer's
+  from `IsWow64Process2`. Not `platform.machine()`: since Python 3.12 it reports the processor, "ARM64" even inside
+  the emulation; CI's ARM job caught that).
+  Scan my computer shows it after the processor, and the bug report form asks.
+- **Cost of emulation:** only heavy local work (Parakeet, Whisper on the processor) is slower; cloud speech and the
+  AI cleanup are network-bound. Scan my computer measures the real speed, so its verdicts already include it.
+- **A native ARM64 build later** (faster local speech on Snapdragon): every native library has a `win_arm64` wheel
+  (numpy, sherpa-onnx and sherpa-onnx-core, PySide6, sounddevice; checked on PyPI 2026-10-05) except **CTranslate2**,
+  Whisper's runtime, so Whisper would be missing there. It would need a second installer (`Rflow-Setup-arm64.exe`)
+  and the updater picking it by `scan.machine()`; `Rflow-Setup.exe` must stay the x64 file, since installed copies
+  download it by that name.
+- **What differs between computers more than the processor** (each caused a real bug): NumLock (arrows must be sent
+  as extended keys), clipboard and translator tools, click-through popup windows, screen scaling, Japanese fonts,
+  Bluetooth microphones, admin windows. Test on real Windows what the off-screen tests can't see
+  (`scripts/check_popup_clicks.py`).
 ## Microphones that follow you (phase 26, the owner's report of 2026-10-05)
 
 - **What the owner hit:** connecting a headset (or another microphone) and choosing it gave no audio at all.

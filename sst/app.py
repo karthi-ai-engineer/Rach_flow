@@ -1305,7 +1305,7 @@ def main(argv: list[str] | None = None) -> int:
     if "--self-test" in argv:
         return self_test()
     log_dir = setup_logging()
-    log.info("%s %s starting", APP_NAME, __version__)
+    log.info("%s %s starting (%s)", APP_NAME, __version__, scan.machine())  # which kind of computer the log is from
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)  # closing the window keeps Rflow in the tray
