@@ -1,6 +1,8 @@
 """Scan my computer: the verdicts' rules, the reading of the hardware, and the saved result."""
 import dataclasses
 
+import pytest
+
 from sst import engines, scan
 from sst.scan import Computer
 
@@ -79,3 +81,20 @@ def test_the_last_scan_is_kept_and_a_damaged_one_is_ignored(tmp_path):
     assert scan.load(path) == data and data["verdicts"][0]["key"] == "parakeet"
     path.write_text('{"computer": {"bogus": 1}}', encoding="utf-8")
     assert scan.load(path) is None and scan.load(tmp_path / "missing.json") is None
+
+
+@pytest.mark.parametrize("program, native, said", [
+    ("AMD64", "x64", "x64"),  # Intel or AMD
+    ("AMD64", "ARM64", "x64 on ARM64 (emulated)"),  # a Snapdragon laptop: Rflow (x64) through Windows' emulation
+    ("ARM64", "ARM64", "ARM64"),  # a native ARM64 Python (a developer's own)
+    ("AMD64", "", "x64"),  # an older Windows without IsWow64Process2: the program's own kind
+])
+def test_the_machine_says_how_rflow_runs_on_it(monkeypatch, program, native, said):
+    monkeypatch.setattr(scan.platform, "machine", lambda: program)
+    monkeypatch.setattr(scan, "_native_machine", lambda: native)
+    assert scan.machine() == said
+
+
+def test_this_computers_machine_is_read_and_shown():
+    assert scan.machine() in ("x64", "x64 on ARM64 (emulated)", "ARM64")
+    assert "(x64 on ARM64 (emulated))" in _pc(machine="x64 on ARM64 (emulated)").summary()
