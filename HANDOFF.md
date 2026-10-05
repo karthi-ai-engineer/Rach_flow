@@ -1483,7 +1483,10 @@ no native ARM64 build for now, and the Mac later.
     gives never answers from this laptop's network (5 s timeout there, 0.03 s for the other seven), and Python waits
     out the whole timeout on it. `gemini._socket` gives each address 2 s: the first connection takes ~2.2 s. This is
     likely also the "first connection stalls" in Known limitations (GitHub, the gateway): not checked yet.
-- **Owner to try next:** the Tools card (Start, the caption bar over a video, a Teams screen share to see it left out).
+  4. Clean: started at once, lines whole; one more fix ("parents'house": Google drops the space after a plural
+     possessive). The English for the last sentence or two can still arrive after the Japanese and open the next
+     line: Google sends no timings to align them by; the slip doesn't build up.
+- **The owner tried the caption bar in the app** (Tools → Live captions → Start, over the video): "it worked well".
 - **Next:** part 2 (the microphone, English → Japanese, without captioning the meeting's own audio twice); option B
   engines (local streaming recognition, e.g. Nemotron in sherpa-onnx or Soniox, plus clause-by-clause translation)
   if Gemini's preview is too slow, too costly or goes away.
