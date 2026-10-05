@@ -11,6 +11,11 @@ _Last updated: 2026-10-04_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-05):**
+- **Rflow 2.0.2** (2026-10-05, the owner's "release it"): microphones that follow you (phase 26, PR #70: a headset
+  plugged in and chosen recorded silence; the list now comes from Windows, open microphones are reopened when the
+  devices change, a quiet one is reopened, no-sound recordings aren't transcribed), and the checks on Windows on ARM
+  (PR #68: CI tests and self-tests the x64 app there too; the log's first line names the machine). See
+  **Microphones that follow you** and **Different computers**.
 - **Rflow 2.0.1** (2026-10-05, the owner's "let this be the logo"): the owner's new logo, a blue-to-violet ribbon "R",
   everywhere: the app icon (window, taskbar, tray, Rflow.exe, installer), the sidebar and the first run, the installer's
   pictures, the website (header, footer, favicon, touch icon, social card). See **The logo**.
