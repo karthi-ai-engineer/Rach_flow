@@ -89,6 +89,8 @@ def test_a_setup_downloads_parakeet_first_when_it_isnt_here(no_parakeet):
     calls = len(app.calls)
     setups.apply(app, "recommended")
     assert ("download_speech_model", "parakeet") not in app.calls[calls:]  # one download, not two
+    setups.apply(app, "local", local="whisper-turbo")
+    assert ("cancel_download",) in app.calls  # Parakeet would have been used once it was here: not any more
 
 
 def test_a_missing_key_is_named():

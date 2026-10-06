@@ -58,7 +58,7 @@ def test_a_new_user_sees_the_welcome_and_then_home():
     window, app = _window(settings=Settings())
     assert window.current_page() == "welcome" and window.sidebar.isHidden()  # the welcome has the whole window
     welcome = window.pages["welcome"]
-    welcome.show_step(1)
+    welcome.go_to_step("try")
     window.set_status("Loading the speech model...", False)
     assert "Loading the speech model" in welcome.status.text()
     window.set_status("Ready: hold Ctrl+Win", True)
@@ -540,7 +540,8 @@ def test_a_new_profile_is_made_from_its_name():
 def test_the_welcome_connects_an_ai_and_picks_its_fast_model():
     window, app = _window(settings=Settings())
     welcome = window.pages["welcome"]
-    welcome.show_step(2)
+    welcome.choose_setup("custom")  # each part by hand: the AI last
+    welcome.go_to_step("ai")
     assert welcome.tiles["gemini"].chosen and not welcome.primary.isEnabled()  # a key first
     welcome.ai_key.setText("AIza-test-key")
     assert welcome.primary.text() == "Connect and finish" and welcome.primary.isEnabled()
@@ -825,21 +826,25 @@ def test_a_new_install_chooses_its_speech_model_in_the_welcome(no_parakeet):
     window, app = _window(settings=Settings())
     welcome = window.pages["welcome"]
     window.set_status("Choose a speech model to start dictating", False)
-    assert welcome.step == 0 and welcome.local_option.chosen  # on this PC is the recommended choice
+    welcome.choose_setup("custom")  # each part by hand: how Rflow hears you first
+    welcome.go_to_step("hear")
+    assert welcome.current() == "hear" and welcome.local_option.chosen  # on this PC is the recommended choice
     assert welcome.get_parakeet.text() == "Download Parakeet and continue" and welcome.get_parakeet.isEnabled()
     welcome.get_parakeet.click()
-    assert ("download_speech_model", "parakeet") in app.calls and welcome.step == 1  # trying it while it downloads
+    assert ("download_speech_model", "parakeet") in app.calls and welcome.current() == "try"  # tried while it downloads
     app.downloading = ("parakeet", 331_000_000, 663_043_117)
     welcome.refresh(False)
     assert welcome.orb.state == "loading" and "Downloading Parakeet, 49%" in welcome.orb_text.text()
     assert "Waiting for Parakeet" in welcome.status.text()
-    welcome.show_step(0)
+    welcome.go_to_step("hear")
     assert "Downloading Parakeet: 49%" in welcome.speech_status.text() and welcome.get_parakeet.text() == "Continue"
 
 
 def test_the_welcome_can_lead_to_a_cloud_model_instead(no_parakeet):
     window, app = _window(settings=Settings())
     welcome = window.pages["welcome"]
+    welcome.choose_setup("custom")
+    welcome.go_to_step("hear")
     welcome.cloud_option.clicked.emit()
     assert welcome.cloud_option.chosen and welcome.primary.text() == "Set up a cloud model"
     welcome.primary.click()
@@ -857,7 +862,7 @@ def test_the_welcome_shows_the_speech_model_already_there():
 def test_a_first_dictation_lights_the_orb():
     window, _ = _window(settings=Settings())
     welcome = window.pages["welcome"]
-    welcome.show_step(1)
+    welcome.go_to_step("try")
     welcome.refresh(True)
     welcome.try_box.setPlainText("Hello Rflow, this is my first dictation.")
     assert welcome.orb.state == "done" and welcome.status.text() == "It works. Now try it in any app."

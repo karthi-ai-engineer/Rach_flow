@@ -3479,7 +3479,7 @@ class _SetupsCard:
         keys = QVBoxLayout(self.key_area)
         keys.setContentsMargins(0, 4, 0, 0)
         keys.setSpacing(8)
-        self.key_title = caption("", "2", wrap=False)
+        self.key_title = caption("", "2")
         keys.addWidget(self.key_title)
         self.key = KeyField("", "Paste your key")
         self.get_key = button("Get a free key", self._open_key_page, link=True, size="sm", icon="external",
@@ -3736,7 +3736,10 @@ class _SetupsCard:
         downloading = setups.apply(app, setup.key, self.local_choice)
         self.key.show_saved("")
         self.page.refresh()
-        if downloading:
+        if downloading and app.downloading and app.downloading[0] != downloading:  # one download at a time
+            self._say(f"{SPEECH_MODELS[downloading].name} can download once the other download has stopped: press Use "
+                      "again in a moment.", "warn")
+        elif downloading:
             fetched = SPEECH_MODELS[downloading]
             self._say(f"{setup.name} is set. {fetched.name} is downloading ({_size(fetched.download.size)}); it takes "
                       "over when it's here.", "ok")
@@ -5405,27 +5408,34 @@ class OptionCard(Card):
 
 
 class Stepper(QWidget):
-    """The three steps of the welcome: done ones with a check, the current one lit."""
+    """The steps of the welcome: done ones with a check, the current one lit. Their names follow the setup chosen."""
 
     def __init__(self, steps: list[str]):
         super().__init__()
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        self.row = QHBoxLayout(self)
+        self.row.setContentsMargins(0, 0, 0, 0)
+        self.row.setSpacing(12)
         self.dots: list[QLabel] = []
         self.names: list[QLabel] = []
+        self.set_names(steps)
+
+    def set_names(self, steps: list[str]) -> None:
+        if [words.text() for words in self.names] == list(steps):
+            return
+        clear(self.row)
+        self.dots, self.names = [], []
         for i, name in enumerate(steps):
             if i:
                 line = divider()
                 line.setFixedWidth(32)
-                layout.addWidget(line, 0, Qt.AlignmentFlag.AlignVCenter)
+                self.row.addWidget(line, 0, Qt.AlignmentFlag.AlignVCenter)
             dot = QLabel(str(i + 1))
             dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
             dot.setFixedSize(24, 24)
             dot.setFont(font(12, 600, mono=True))
             words = caption(name, "3", wrap=False)
-            layout.addWidget(dot)
-            layout.addWidget(words)
+            self.row.addWidget(dot)
+            self.row.addWidget(words)
             self.dots.append(dot)
             self.names.append(words)
 
@@ -5436,6 +5446,7 @@ class Stepper(QWidget):
                 dot.setStyleSheet(f"background: {theme.css(tok('well'))}; color: {theme.css(tok('ok'))}; "
                                   "border-radius: 12px;")
                 set_tone(words, "2")
+                words.setFont(font(12, 500))
             elif i == step:
                 dot.setText(str(i + 1))
                 dot.setStyleSheet(f"background: {theme.css(tok('primary'))}; color: {theme.css(tok('on_primary'))}; "
@@ -5447,16 +5458,33 @@ class Stepper(QWidget):
                 dot.setStyleSheet(f"background: {theme.css(tok('well'))}; color: {theme.css(tok('text3'))}; "
                                   "border-radius: 12px;")
                 set_tone(words, "3")
+                words.setFont(font(12, 500))
+
+
+# The welcome's steps for each setup, and their names on the stepper
+WELCOME_FLOWS = {"recommended": ["setup", "key", "try"], "fastest": ["setup", "key", "try"],
+                 "multilingual": ["setup", "key", "try"], "local": ["setup", "check", "try"],
+                 "custom": ["setup", "hear", "try", "ai"]}
+WELCOME_STEPS = {"setup": "Setup", "key": "Key", "check": "This PC", "hear": "Hear you", "try": "Try it", "ai": "AI"}
+# A setup on the welcome's first step, in a line
+WELCOME_USES = {"recommended": "Parakeet on this PC + Gemini 3.5 Flash-Lite",
+                "fastest": "Whisper turbo + GPT-OSS 20B, both on Groq",
+                "multilingual": "Gemini 3.5 Transcribe + Gemini 3.5 Flash-Lite",
+                "local": "Parakeet or Whisper on this PC · AI cleanup coming soon",
+                "custom": "Choose the speech model and the AI yourself"}
 
 
 class WelcomePage(QWidget):
-    """The first run, in three steps: how Rflow hears you (Parakeet on this PC, or a cloud model), a first dictation, and
-    an optional AI connection (the model is chosen for the user)."""
+    """The first run. First a setup (sst.setups: Recommended first, Fastest, Multilingual, Local or Custom), then what it
+    needs: its key (checked with the provider, then saved), or for Local a check that this PC can run the model; then a
+    first dictation. Custom keeps the steps of before: how Rflow hears you (Parakeet on this PC, or a cloud model), a
+    first dictation, and an optional AI connection (the model is chosen for the user)."""
 
     def __init__(self, app, go_to):
         super().__init__()
         self.app, self.go_to = app, go_to
-        self.step, self.choice, self.provider = 0, "local", "gemini"
+        self.step, self.setup, self.choice, self.provider = 0, "recommended", "local", "gemini"
+        self.local_choice = "parakeet"
         root = Host("base")
         root.setObjectName("page")
         outer = QVBoxLayout(self)
@@ -5475,7 +5503,7 @@ class WelcomePage(QWidget):
         brand.addWidget(label(APP_NAME, "wordmark", wrap=False))
         brand.addStretch()
         head.addLayout(brand, 0, 0)
-        self.stepper = Stepper(["Hear you", "Try it", "AI"])
+        self.stepper = Stepper([WELCOME_STEPS[name] for name in self.flow])
         head.addWidget(self.stepper, 0, 1, Qt.AlignmentFlag.AlignCenter)
         self.skip = button("Skip setup", self.finish, kind="quiet", size="sm")
         head.addWidget(self.skip, 0, 2, Qt.AlignmentFlag.AlignRight)
@@ -5484,9 +5512,11 @@ class WelcomePage(QWidget):
         layout.addLayout(head)
 
         self.steps = QStackedWidget()
-        self.steps.addWidget(self._hear())
-        self.steps.addWidget(self._try())
-        self.steps.addWidget(self._connect())
+        self.step_pages: dict[str, QWidget] = {}
+        for name, build in (("setup", self._setups), ("key", self._key), ("check", self._check), ("hear", self._hear),
+                            ("try", self._try), ("ai", self._connect)):
+            self.step_pages[name] = build()
+            self.steps.addWidget(self.step_pages[name])
         layout.addWidget(self.steps, 1)
 
         layout.addWidget(divider())
@@ -5510,7 +5540,243 @@ class WelcomePage(QWidget):
         self.ready = False
         self.show_step(0)
 
-    # -- step 1: how Rflow hears you
+    @property
+    def flow(self) -> list[str]:
+        return WELCOME_FLOWS[self.setup]
+
+    def current(self) -> str:
+        """The step shown: setup, key, check, hear, try or ai."""
+        return self.flow[self.step]
+
+    # -- step 1: a setup
+
+    def _setups(self) -> QWidget:
+        scroll = QScrollArea()  # a small window scrolls the setups rather than squeezing them
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        page = Host()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 0, 40, 16)
+        layout.setSpacing(8)
+        layout.addStretch()
+        title = label("How should Rflow work?", "display")
+        title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(title)
+        sub = label("Pick a setup: each is the cheapest that does the job well. You can change any part later on AI & "
+                    "models.", tone="2")
+        sub.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(sub)
+        layout.addSpacing(14)
+        self.options: dict[str, OptionCard] = {}
+        self.option_costs: dict[str, QLabel] = {}
+        self.option_keys: dict[str, QLabel] = {}
+        for key in setups.ORDER:
+            setup = setups.SETUPS[key]
+            option = OptionCard()
+            option.setFixedWidth(640)
+            option.setAccessibleName(setup.name)
+            line = QHBoxLayout(option)
+            line.setContentsMargins(20, 10, 20, 10)
+            line.setSpacing(14)
+            line.addWidget(_icon(SETUP_ICONS[key], "text2", 20), 0, Qt.AlignmentFlag.AlignVCenter)
+            words = QVBoxLayout()
+            words.setSpacing(2)
+            words.addWidget(label(setup.name, "heading", wrap=False))
+            words.addWidget(caption(WELCOME_USES[key], "2", wrap=False))
+            line.addLayout(words, 1)
+            right = QVBoxLayout()
+            right.setSpacing(2)
+            self.option_costs[key] = caption("", "2", wrap=False)
+            self.option_keys[key] = caption("", "3", wrap=False)
+            for widget in (self.option_costs[key], self.option_keys[key]):
+                widget.setAlignment(Qt.AlignmentFlag.AlignRight)
+                right.addWidget(widget)
+            line.addLayout(right)
+            option.clicked.connect(lambda k=key: self.choose_setup(k))
+            self.options[key] = option
+            layout.addWidget(option, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addStretch()
+        scroll.setWidget(page)
+        return scroll
+
+    def choose_setup(self, key: str) -> None:
+        self.setup = key
+        for name, option in self.options.items():
+            option.set_chosen(name == key)
+        self.stepper.set_names([WELCOME_STEPS[name] for name in self.flow])
+        self.stepper.set_step(self.step)
+        self._show_footer()
+
+    def _show_setups(self) -> None:
+        app = self.app
+        for key, setup in setups.SETUPS.items():
+            if key == "custom":
+                cost, needs = "Its cost shows as you choose", "The keys you choose"
+                tone = None
+            else:
+                estimate = setups.cost(setup, app.settings.speech_language)
+                cost, tone = estimate.words, COST_TONES.get(estimate.tier)
+                needs = f"{_key_name(setup.needs)} key, free to start" if setup.needs else "No key, nothing leaves this PC"
+            self.option_costs[key].setText(cost)
+            set_tone(self.option_costs[key], tone or "2")
+            self.option_keys[key].setText(needs)
+
+    # -- step 2: the setup's key
+
+    def _key(self) -> QWidget:
+        page = Host()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 0, 40, 0)
+        layout.setSpacing(8)
+        layout.addStretch()
+        self.key_heading = label("", "display")
+        self.key_about = label("", tone="2")
+        for widget in (self.key_heading, self.key_about):
+            widget.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            layout.addWidget(widget)
+        layout.addSpacing(24)
+        self.setup_card, column = card(12, (24, 20, 24, 20))
+        self.setup_card.setFixedWidth(620)
+        self.key_title = caption("", "2", wrap=False)
+        self.setup_key_link = button("Get a free key", self._open_setup_key_page, link=True, size="sm", icon="external",
+                                     icon_after=True)
+        column.addLayout(row(self.key_title, self.setup_key_link, stretch_at=1))
+        self.setup_key = QLineEdit()
+        self.setup_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.setup_key.setPlaceholderText("Paste your key")
+        field(self.setup_key)
+        self.setup_key.textChanged.connect(lambda _="": self._show_footer())
+        paste = button("Paste", lambda: self.setup_key.setText(_clipboard_text().strip()))
+        column.addLayout(row(self.setup_key, paste, spacing=12))
+        self.key_voice = caption("", "2")
+        column.addWidget(self.key_voice)
+        self.key_note = caption("", "3")
+        column.addWidget(self.key_note)
+        self.key_status = caption("", "2")
+        self.key_status.hide()
+        column.addWidget(self.key_status)
+        layout.addWidget(self.setup_card, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addStretch()
+        return page
+
+    def _show_key(self) -> None:
+        setup = setups.SETUPS[self.setup]
+        if not setup.needs:
+            return
+        name = provider_name(setup.needs)
+        self.key_heading.setText(f"Add your {_key_name(setup.needs)} key")
+        speech_model = SPEECH_MODELS[setup.speech]
+        if speech_model.where == "local":
+            hears = f"{speech_model.name.removeprefix('NVIDIA ')} on this PC"
+            polish = f"{setups.model_name(setup.model)} at {name}"
+        else:
+            hears = setups.model_name(setups.speech_model_for(setup, self.app.settings.speech_language))
+            polish = f"{setups.model_name(setup.model)}, both at {name}"
+        self.key_about.setText(f"{setup.name} hears you with {hears} and polishes the text with {polish}.")
+        self.key_title.setText(f"{name} API key")
+        if not self.setup_key.text():
+            self.setup_key.setText(self.app.gateway.key_for(setup.needs))
+        self.key_voice.setText(f"Your voice is sent to {CLOUD[setup.speech].name} each time you dictate, and the text "
+                               "to polish it." if speech_model.where == "cloud" else
+                               f"Your voice stays on this PC; only the text goes to {name}, to polish it.")
+        set_tone(self.key_voice, "warn" if speech_model.where == "cloud" else "2")
+        estimate = setups.cost(setup, self.app.settings.speech_language)
+        self.key_note.setText(f"With a paid key it's {estimate.words.lower()} for 20 minutes of dictation a day. "
+                              f"{setup.free_key}")
+
+    def _open_setup_key_page(self) -> None:
+        needs = setups.SETUPS[self.setup].needs
+        if needs:
+            QDesktopServices.openUrl(QUrl(PROVIDERS[needs].key_page))
+
+    def _say_key(self, message: str, tone: str | None = "2") -> None:
+        self.key_status.setText(message)
+        set_tone(self.key_status, tone)
+        self.key_status.setVisible(bool(message))
+
+    def _connect_setup(self) -> None:
+        """Check the key with the setup's AI model, then save the key (alone) and use the setup."""
+        app, setup = self.app, setups.SETUPS[self.setup]
+        p, api_key = PROVIDERS[setup.provider], self.setup_key.text().strip()
+        gateway = GatewayConfig("", api_key, p.key, {k: v for k, v in app.gateway.entries().items() if k != p.key})
+        self.primary.setEnabled(False)
+        self._say_key(f"Connecting to {provider_name(p.key)}…")
+
+        def done(_, error) -> None:
+            self.primary.setEnabled(True)
+            if error:
+                self._say_key(f"Couldn't connect: {error}", "err")
+                return
+            if api_key != app.gateway.key_for(setup.needs):
+                app.save_key(setup.needs, api_key)  # Your API keys: changes nothing else
+            setups.apply(app, setup.key)
+            self._say_key("")
+            self.show_step(self.step + 1)
+        run_in_background(self, lambda: app.check_ai(gateway, setup.model), done)
+
+    # -- step 2 for Local: can this PC do it?
+
+    def _check(self) -> QWidget:
+        page = Host()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(40, 0, 40, 0)
+        layout.setSpacing(8)
+        layout.addStretch()
+        for widget in (label("Can this PC do it?", "display"),
+                       label("Local keeps everything on this PC. Choose how it hears you: Rflow checks this PC can run "
+                             "it.", tone="2")):
+            widget.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            layout.addWidget(widget)
+        layout.addSpacing(24)
+        check_card, column = card(14, (24, 20, 24, 20))
+        check_card.setFixedWidth(620)
+        self.local = Segmented(LOCAL_CHOICES)
+        self.local.changed.connect(self._local_chosen)
+        column.addWidget(self.local, 0, Qt.AlignmentFlag.AlignLeft)
+        check = QHBoxLayout()
+        check.setSpacing(10)
+        self.check_lamp = Lamp("off")
+        self.check_words = label("", tone="2")
+        lamp = QVBoxLayout()
+        lamp.setContentsMargins(0, 4, 0, 0)
+        lamp.addWidget(self.check_lamp)
+        lamp.addStretch()
+        check.addLayout(lamp)
+        check.addWidget(self.check_words, 1)
+        column.addLayout(check)
+        column.addWidget(divider())
+        soon = QHBoxLayout()
+        soon.setSpacing(10)
+        soon.addWidget(_icon("tools", "text3", 16), 0, Qt.AlignmentFlag.AlignTop)
+        soon.addWidget(caption("AI cleanup on this PC is coming soon; until then Rflow types what it hears.", "3"), 1)
+        column.addLayout(soon)
+        layout.addWidget(check_card, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addStretch()
+        return page
+
+    def _local_chosen(self, key: str) -> None:
+        self.local_choice = key
+        self.refresh(self.ready)
+
+    def _local_level(self) -> str:
+        return setups.pc_check(self.app.last_scan, self.local_choice)[0]
+
+    def _show_check(self) -> None:
+        app, key = self.app, self.local_choice
+        self.local.set_current(key)
+        level, words = setups.pc_check(app.last_scan, key)
+        if app.scanning:
+            state, words = "warn", f"Checking this PC: {app.scanning}"
+        elif not level:
+            state, words = "off", ("Rflow checks the memory, disk space and processor of this PC (Check this PC): "
+                                   f"{SPEECH_MODELS[key].name} needs about {scan_memory(key)} of memory.")
+        else:
+            state = {"recommended": "ok", "fast": "ok", "usable": "off", "slow": "warn", "no": "err"}[level]
+        self.check_lamp.set_state(state)
+        self.check_words.setText(words)
+
+    # -- for Custom: how Rflow hears you
 
     def _hear(self) -> QWidget:
         page = Host()
@@ -5540,7 +5806,7 @@ class WelcomePage(QWidget):
             ("key", "Needs an API key from the provider"))
         for option, key in ((self.local_option, "local"), (self.cloud_option, "cloud")):
             option.clicked.connect(lambda k=key: self._choose(k))
-            option.setFixedWidth(368)
+            option.setFixedWidth(340)
             options.addWidget(option)
         options.addStretch()
         layout.addLayout(options)
@@ -5587,7 +5853,7 @@ class WelcomePage(QWidget):
         self.cloud_option.set_chosen(key == "cloud")
         self._show_footer()
 
-    # -- step 2: try it
+    # -- try it
 
     def _try(self) -> QWidget:
         page = Host()
@@ -5640,10 +5906,10 @@ class WelcomePage(QWidget):
         self.app.apply_settings(dataclasses.replace(self.app.settings, microphone=device))
 
     def _typed(self) -> None:
-        if self.step == 1:
+        if self.current() == "try":
             self.refresh(self.ready)
 
-    # -- step 3: connect an AI
+    # -- for Custom: connect an AI
 
     def _connect(self) -> QWidget:
         page = Host()
@@ -5658,14 +5924,14 @@ class WelcomePage(QWidget):
             layout.addWidget(widget)
         layout.addSpacing(24)
         tiles = QHBoxLayout()
-        tiles.setSpacing(16)
+        tiles.setSpacing(10)
         tiles.addStretch()
         self.tiles: dict[str, OptionCard] = {}
         for key, name, note in PROVIDER_TILES:
             tile = OptionCard("tile")
-            tile.setFixedSize(152, 64)
+            tile.setFixedSize(128, 64)  # five side by side in the smallest window
             box = QVBoxLayout(tile)
-            box.setContentsMargins(16, 10, 16, 10)
+            box.setContentsMargins(12, 10, 12, 10)
             box.setSpacing(2)
             box.addWidget(label(name, "heading", wrap=False))
             box.addWidget(caption(note, "3", wrap=False))
@@ -5677,10 +5943,10 @@ class WelcomePage(QWidget):
         layout.addSpacing(16)
         self.key_card, column = card(14, (24, 20, 24, 20))
         self.key_card.setFixedWidth(620)
-        self.key_title = caption("", "2", wrap=False)
+        self.ai_key_title = caption("", "2", wrap=False)
         self.key_link = button("Get a free key", self._open_key_page, link=True, size="sm", icon="external",
                                icon_after=True)
-        column.addLayout(row(self.key_title, self.key_link, stretch_at=1))
+        column.addLayout(row(self.ai_key_title, self.key_link, stretch_at=1))
         self.ai_key = QLineEdit()
         self.ai_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.ai_key.setPlaceholderText("Paste your key")
@@ -5699,9 +5965,9 @@ class WelcomePage(QWidget):
         for name, tile in self.tiles.items():
             tile.set_chosen(name == key)
         p = PROVIDERS[key]
-        self.key_title.setText(f"{provider_name(key)} API key" if p.needs_key else "Ollama runs on this PC: no key "
-                                                                                   "needed")
-        self.key_link.setText("Get a free key" if key == "gemini" else "Get a key")
+        self.ai_key_title.setText(f"{provider_name(key)} API key" if p.needs_key else "Ollama runs on this PC: no key "
+                                                                                      "needed")
+        self.key_link.setText("Get a free key" if key in ("gemini", "groq") else "Get a key")
         self.key_link.setVisible(bool(p.key_page))
         self.ai_key.setVisible(p.needs_key)
         self.paste_key.setVisible(p.needs_key)
@@ -5715,83 +5981,125 @@ class WelcomePage(QWidget):
     # -- the steps and the footer
 
     def show_step(self, step: int) -> None:
-        self.step = max(0, min(2, step))
-        self.steps.setCurrentIndex(self.step)
+        self.step = max(0, min(len(self.flow) - 1, step))
+        name = self.current()
+        self.steps.setCurrentWidget(self.step_pages[name])
+        self.stepper.set_names([WELCOME_STEPS[key] for key in self.flow])
         self.stepper.set_step(self.step)
-        if self.step == 0:
+        if name == "setup":
+            self.choose_setup(self.setup)
+        elif name == "key":
+            self._say_key("")
+            self._show_key()
+        elif name == "check" and not self.app.last_scan and not self.app.scanning:
+            self.app.scan_computer()  # Local: whether this PC can run the model, before it's used
+        elif name == "hear":
             self._choose(self.choice)
-        if self.step == 2 and not any(tile.chosen for tile in self.tiles.values()):
+        elif name == "ai" and not any(tile.chosen for tile in self.tiles.values()):
             self._pick_provider(self.provider)
         self.refresh(self.ready)
-        if self.step == 1:
+        if name == "try":
             self.try_box.setFocus()
 
+    def go_to_step(self, name: str) -> None:
+        """A step of the setup's flow by its name ("try")."""
+        if name in self.flow:
+            self.show_step(self.flow.index(name))
+
     def _show_footer(self) -> None:
-        step, app = self.step, self.app
+        name, app = self.current(), self.app
         installed = SPEECH_MODELS[DEFAULT_MODEL].installed()
         fetching = bool(app.downloading) and app.downloading[0] == DEFAULT_MODEL
-        self.back.setVisible(step > 0)
-        self.skip.setVisible(step < 2)
-        self.foot_note.setVisible(step == 0)
-        self.secondary.setVisible(step > 0)
-        if step == 0:
+        last = self.step == len(self.flow) - 1
+        self.back.setVisible(self.step > 0)
+        self.skip.setVisible(name != "ai")
+        self.foot_note.setVisible(name in ("setup", "hear", "check"))
+        self.secondary.setVisible(name in ("try", "ai", "check"))
+        self.primary.setEnabled(True)
+        self.primary.icon_name, self.primary.icon_after = "arrow-right", True
+        self.primary.setText("Continue")
+        if name == "setup":
+            parakeet = self.setup == "recommended" and not installed and not fetching and not app.speech_in_use()
+            self.foot_note.setText({"recommended": f"Parakeet ({_size(SPEECH_MODELS[DEFAULT_MODEL].download.size)}) "
+                                                   "downloads once you've added the key." if parakeet else
+                                                   "Next: your Gemini key.",
+                                    "fastest": "Next: your Groq key.", "multilingual": "Next: your Gemini key.",
+                                    "local": "Next: a check of this PC.", "custom": "Next: each part, one by one."}
+                                   [self.setup])
+        elif name == "key":
+            self.primary.setText("Connect and continue")
+            self.primary.setEnabled(bool(self.setup_key.text().strip()))
+        elif name == "check":
+            level, model = self._local_level(), SPEECH_MODELS[self.local_choice]
+            if not model.installed() and not (app.downloading and app.downloading[0] == model.key):
+                self.primary.setText(f"Download {'Parakeet' if model.key == DEFAULT_MODEL else 'Whisper'} and continue")
+                self.primary.icon_name, self.primary.icon_after = "download", False
+            self.primary.setEnabled(level not in ("", "no") and not app.scanning)
+            self.secondary.setText("Check again" if app.last_scan else "Check this PC")
+            self.secondary.setEnabled(not app.scanning)
+            self.foot_note.setText("Nothing leaves this PC.")
+        elif name == "hear":
             chosen = app.speech_in_use() or app.loading_speech
             if self.choice == "cloud":
                 self.primary.setText("Set up a cloud model")
-                self.primary.icon_name = "arrow-right"
                 self.foot_note.setText("Choose a provider and paste its key on the next page.")
             elif installed or chosen or fetching:
-                self.primary.setText("Continue")
-                self.primary.icon_name = None
                 self.foot_note.setText("Parakeet is here." if installed else "The download keeps going while you try the "
                                                                              "next step.")
             else:
                 self.primary.setText("Download Parakeet and continue")
-                self.primary.icon_name = "download"
+                self.primary.icon_name, self.primary.icon_after = "download", False
                 self.foot_note.setText("The download keeps going while you try the next step.")
-        elif step == 1:
+        elif name == "try":
             self.secondary.setText("Try again")
-            self.primary.setText("Continue")
-            self.primary.icon_name = "arrow-right"
-            self.primary.icon_after = True
+            if last:
+                self.primary.setText("Finish")
+                self.primary.icon_name = None
         else:
             self.secondary.setText("Skip for now")
             self.primary.setText("Connect and finish")
             self.primary.icon_name = None
             p = PROVIDERS[self.provider]
             self.primary.setEnabled(bool(self.ai_key.text().strip()) or not p.needs_key)
-        if step != 2:
-            self.primary.setEnabled(True)
-        if step != 1:
-            self.primary.icon_after = False
         self.primary.updateGeometry()
         self.primary.update()
 
     @property
     def get_parakeet(self) -> QPushButton:
-        """The footer's main button on the first step (it downloads Parakeet when Parakeet isn't here)."""
+        """The footer's main button (on the first steps it downloads Parakeet when Parakeet isn't here)."""
         return self.primary
 
     def _primary(self) -> None:
-        if self.step == 0:
+        name, app = self.current(), self.app
+        if name == "key":
+            self._connect_setup()
+        elif name == "check":
+            setups.apply(app, "local", self.local_choice)  # downloads the model first when it isn't here
+            self.show_step(self.step + 1)
+        elif name == "hear":
             if self.choice == "cloud":
                 self._to_speech()
                 return
-            app = self.app
             fetching = bool(app.downloading) and app.downloading[0] == DEFAULT_MODEL
             if not SPEECH_MODELS[DEFAULT_MODEL].installed() and not fetching and not app.speech_in_use():
                 app.download_speech_model(DEFAULT_MODEL)
-            self.show_step(1)
-        elif self.step == 1:
-            self.show_step(2)
-        else:
+            self.show_step(self.step + 1)
+        elif name == "ai":
             self._connect_ai()
+        elif self.step == len(self.flow) - 1:
+            self.finish()
+        else:
+            self.show_step(self.step + 1)
 
     def _secondary(self) -> None:
-        if self.step == 1:
+        name = self.current()
+        if name == "try":
             self.try_box.clear()
             self.try_box.setFocus()
-        elif self.step == 2:
+        elif name == "check":
+            self.app.scan_computer()
+            self.refresh(self.ready)
+        elif name == "ai":
             self.finish()
 
     def _connect_ai(self) -> None:
@@ -5830,10 +6138,13 @@ class WelcomePage(QWidget):
         app = self.app
         label_text = app.hotkey_label()
         in_use, loading, downloading = app.speech_in_use(), app.loading_speech, app.downloading
-        fetching = bool(downloading) and downloading[0] == DEFAULT_MODEL
+        fetching = bool(downloading) and downloading[0] in SPEECH_MODELS
         chosen = in_use or loading
         self.mark.set_state("ok" if ready else "warn")
-        if fetching:
+        self._show_setups()
+        if self.current() == "check":
+            self._show_check()
+        if fetching and downloading[0] == DEFAULT_MODEL:
             done, total = downloading[1], downloading[2] or 1
             self.speech_status.setText(f"Downloading Parakeet: {done * 100 // total}%  ({_size(done)} of {_size(total)}).")
         else:
@@ -5857,11 +6168,12 @@ class WelcomePage(QWidget):
             self.orb_text.setText("Ready: go ahead")
             self.status.setText("Ready: go ahead.")
         elif fetching:
+            name = SPEECH_MODELS[downloading[0]].name.removeprefix("NVIDIA ").removeprefix("OpenAI ")
             done, total = downloading[1], downloading[2] or 1
             self.orb.set_state("loading", done / total)
             self.orb_lamp.set_state("warn")
-            self.orb_text.setText(f"Downloading Parakeet, {done * 100 // total}%")
-            self.status.setText("Waiting for Parakeet's download... Meanwhile, choose your microphone.")
+            self.orb_text.setText(f"Downloading {name}, {done * 100 // total}%")
+            self.status.setText(f"Waiting for {name}'s download... Meanwhile, choose your microphone.")
         elif chosen:
             self.orb.set_state("off")
             self.orb_lamp.set_state("warn")

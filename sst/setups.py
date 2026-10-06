@@ -125,6 +125,8 @@ def apply(app, setup_key: str, local: str = "parakeet") -> str:
     speech = local if setup.key == "local" else setup.speech
     model = SPEECH_MODELS[speech]
     downloading = ""
+    if app.downloading and app.downloading[0] != speech:
+        app.cancel_download()  # it would be used once it's here (what is downloaded so far stays for another time)
     if model.where == "cloud":
         app.use_cloud_speech(speech, app.gateway.key_for(speech), speech_model_for(setup, s.speech_language))
     elif model.installed():

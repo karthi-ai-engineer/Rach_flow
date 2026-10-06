@@ -71,8 +71,11 @@ def test_the_setups_go_two_by_two_on_a_narrow_window():
     window.grab()
     assert page.setup_card.columns == 3
     window.resize(780, 540)
+    page.setup_card.select("fastest")  # its details open, with the key to paste: never wider than the window
     window.grab()
+    page.widget().layout().activate()
     assert page.setup_card.columns == 2 and page.widget().width() <= page.viewport().width()
+    assert page.widget().minimumSizeHint().width() <= page.viewport().width()
 
 
 def test_choosing_fastest_asks_for_the_groq_key_then_the_voice_then_uses_both_parts():
@@ -204,3 +207,93 @@ def test_a_cloud_speech_model_shows_its_cost_and_an_expensive_one_asks_with_the_
     gemini.model_box.setCurrentText("gemini-3.5-transcribe")
     gemini.choose.click()
     assert len(questions) == 1  # a model that isn't red asks nothing more
+
+
+# ---- the first run
+
+def test_the_first_run_starts_by_choosing_a_setup_recommended_first(no_parakeet):
+    window, app = _window(settings=Settings())
+    welcome = window.pages["welcome"]
+    assert welcome.step == 0 and welcome.setup == "recommended" and welcome.options["recommended"].chosen
+    assert list(welcome.options) == ["recommended", "fastest", "multilingual", "local", "custom"]
+    assert [n.text() for n in welcome.stepper.names] == ["Setup", "Key", "Try it"]
+    assert welcome.option_costs["recommended"].text() == "About $1.05 a month"
+    assert welcome.option_costs["multilingual"].property("tone") == "warn"
+    assert welcome.primary.text() == "Continue" and "Parakeet (663 MB) downloads" in welcome.foot_note.text()
+    welcome.primary.click()
+    assert welcome.current() == "key" and not app.calls  # nothing changes before the key
+    assert "Gemini" in welcome.key_title.text() and not welcome.primary.isEnabled()  # a key first
+    assert "Parakeet on this PC" in welcome.key_about.text() and "Google may use the text" in welcome.key_note.text()
+    welcome.setup_key.setText("AIza-test-key")
+    assert welcome.primary.isEnabled() and welcome.primary.text() == "Connect and continue"
+    welcome.primary.click()
+    assert _wait_until(lambda: welcome.current() == "try")
+    assert ("check_ai", "gemini", "gemini-3.5-flash-lite") in app.calls and ("save_key", "gemini") in app.calls
+    assert ("download_speech_model", "parakeet") in app.calls  # Parakeet comes with the setup
+    assert app.settings.cleanup and app.settings.cleanup_model == "gemini-3.5-flash-lite"
+    assert welcome.primary.text() == "Finish"
+    welcome.primary.click()
+    assert app.settings.welcomed and window.current_page() == "home"
+
+
+def test_the_first_run_with_fastest_uses_groq_for_both_parts():
+    window, app = _window(settings=Settings())
+    welcome = window.pages["welcome"]
+    welcome.options["fastest"].clicked.emit()
+    assert welcome.setup == "fastest" and welcome.primary.text() == "Continue"
+    welcome.primary.click()
+    assert welcome.current() == "key" and "Your voice is sent to Groq" in welcome.key_voice.text()
+    assert "both at Groq" in welcome.key_about.text()
+    welcome.setup_key.setText("gsk-test")
+    welcome.primary.click()
+    assert _wait_until(lambda: welcome.current() == "try")
+    assert ("check_ai", "groq", "openai/gpt-oss-20b") in app.calls
+    assert app.settings.speech_model == "groq" and app.gateway.key_for("groq") == "gsk-test"
+
+
+def test_a_key_the_provider_refuses_is_said_and_nothing_is_saved():
+    window, app = _window(settings=Settings())
+    welcome = window.pages["welcome"]
+
+    def refuse(gateway, model):
+        raise RuntimeError("HTTP 400 API key not valid")
+    app.check_ai = refuse
+    welcome.primary.click()
+    welcome.setup_key.setText("AIza-wrong")
+    welcome.primary.click()
+    assert _wait_until(lambda: "Couldn't connect" in welcome.key_status.text())
+    assert "not valid" in welcome.key_status.text() and welcome.current() == "key"
+    assert not any(call[0] in ("save_key", "save_cleanup") for call in app.calls)
+
+
+def test_the_first_run_with_local_checks_this_pc(no_parakeet):
+    window, app = _window(settings=Settings())
+    welcome = window.pages["welcome"]
+    welcome.choose_setup("local")
+    assert [n.text() for n in welcome.stepper.names] == ["Setup", "This PC", "Try it"]
+    welcome.primary.click()
+    assert welcome.current() == "check" and ("scan_computer",) in app.calls
+    assert not welcome.primary.isEnabled()  # the check first
+    app.last_scan = SCAN
+    welcome.refresh(False)
+    assert "This PC runs NVIDIA Parakeet well" in welcome.check_words.text()
+    welcome.local.buttons["whisper-turbo"].click()
+    assert "can't run" in welcome.check_words.text() and not welcome.primary.isEnabled()
+    welcome.local.buttons["parakeet"].click()
+    assert welcome.primary.text() == "Download Parakeet and continue" and welcome.primary.isEnabled()
+    welcome.primary.click()
+    assert ("download_speech_model", "parakeet") in app.calls and welcome.current() == "try"
+    assert not app.settings.cleanup
+
+
+def test_the_first_run_with_custom_keeps_the_old_steps():
+    window, app = _window(settings=Settings())
+    welcome = window.pages["welcome"]
+    welcome.choose_setup("custom")
+    assert [n.text() for n in welcome.stepper.names] == ["Setup", "Hear you", "Try it", "AI"]
+    welcome.primary.click()
+    assert welcome.current() == "hear" and welcome.local_option.chosen
+    welcome.primary.click()
+    assert welcome.current() == "try" and welcome.primary.text() == "Continue"
+    welcome.primary.click()
+    assert welcome.current() == "ai" and welcome.tiles["gemini"].chosen and welcome.primary.text() == "Connect and finish"
