@@ -57,16 +57,20 @@ is recorded or sent until you press the key. It records a moment after you let g
 in Settings ("Microphone stays ready"); a Bluetooth headset's microphone is never kept open.
 
 **The window** (Rflow 2.0's "Obsidian Signal" design: soft depth on graphite, light and dark, one job per colour) has
-six sections:
+ten sections, each one explaining itself:
 
 | Section | What it's for |
 |---|---|
 | **Home** | the voice orb and how to dictate (drawn as keys), a stats strip (this week, words per minute, days in a row, all time), and your dictations by day, searchable with **Ctrl+K**, with Correct and Copy under the pointer. While Parakeet downloads, it shows the progress and says the key isn't ready yet |
-| **Words** | *Your words*: names, products and terms that speech recognition listens for and the AI cleanup spells your way (type to find one, Enter to add, a chip's ✕ to remove with Undo); sound-alikes ("post grass" -> PostgreSQL) and corrections you made twice, to learn. **Snippets**, its second tab: say a short phrase, get your own text (**"my email"** types your email address), alone or inside a sentence, typed exactly as written and never sent to the AI |
-| **Tools** | **Text Transform** and **Translate**, each with its switch, and a box to try them. Text Transform: hold Ctrl+Win and say **"make it concise"**, "make it professional", "bullet points" or "action items" (your own phrases too), or **double-tap Ctrl** for a menu (1-4, U to undo). It works on the selected text in any app, or else your last dictation, checked so no number, name, date, "not" or "maybe" is lost or invented. Translate: select text and press **Ctrl+C twice**: a window at the pointer shows it translated, with the language at the top; **C** copies it, **Enter** replaces the text. Both use the AI connection. |
-| **Live translation** | speech translated while people speak, in a bar you can **move, resize and scroll back through** (it never takes the keyboard from your app; **✕** stops it). Listen to the **Computer** (a meeting, a video), the **Microphone** (people in the room) or **Both** (an online meeting: your own words marked "You"). Start and stop it with **Ctrl+Alt+L** in any app; the bar stays out of screen shares unless you let colleagues read it; each session's transcript is listed to open. **Speak the translation**: an English voice on the laptop (Piper's Danny, downloaded once, 64 MB) reads each sentence out as it's translated, never heard and translated again; the bar's speaker button turns it off and on. Google Gemini 3.5 Live Translate with your Gemini key (about $2.20 an hour per source) |
-| **AI & models** | how Rflow hears you (the speech model and the microphone with a live meter) and the AI connection (provider, model, key, a Test), and the **Clean up dictation** switch. One level down: **How Rflow hears you**, the speech models: NVIDIA Parakeet (English, fast; downloaded once when chosen, 663 MB), OpenAI Whisper large-v3 turbo (99 languages, downloaded when chosen, slow without an NVIDIA card), **Scan this PC**, the **cloud** (OpenAI, Groq or Google Gemini with your own key, after a warning that your voice goes to the provider; Parakeet takes over if the provider can't be reached) and **your own server** (Whisper on vLLM, a company AI gateway, any server with OpenAI's transcription API). And **AI connection**: the provider, key, model and backup model (below) |
-| **Settings** | the dictation key, sounds, starting with Windows, numbers as numbers, keeping recordings, keeping the microphone ready, updates. **Advanced**: the voice pipeline, troubleshooting steps, Windows' voice effects, the **Reading test** (below), **Profiles** (below) and the logs |
+| **Live translation** | speech translated while people speak, in a bar you can **move, resize and scroll back through** (it never takes the keyboard from your app; **✕** stops it). A big green **Start**; while it runs, a red **Stop** with a blinking "Live" light and what it's translating into what. **Speak the translation**, right under it: an English voice on the laptop (Piper's Danny, downloaded once, 64 MB) reads each sentence out as it's translated, never heard and translated again. Listen to the **Computer** (a meeting, a video), the **Microphone** (people in the room) or **Both** (an online meeting: your own words marked "You"). Start and stop it with **Ctrl+Alt+L** in any app; the bar stays out of screen shares unless you let colleagues read it; each session's transcript is listed to open. Google Gemini 3.5 Live Translate with your Gemini key (about $2.20 an hour per source) |
+| **Words** | *Your words*: names, products and terms that speech recognition listens for and the AI cleanup spells your way (type to find one, Enter to add, a chip's ✕ to remove with Undo); sound-alikes ("post grass" -> PostgreSQL) and corrections you made twice, to learn |
+| **Snippets** | say a short phrase, get your own text (**"my email"** types your email address), alone or inside a sentence, typed exactly as written and never sent to the AI |
+| **Text Transform** | rewrite text you already have: hold Ctrl+Win and say **"make it concise"**, "make it professional", "bullet points" or "action items" (your own phrases too), or **double-tap Ctrl** for a menu (1-4, U to undo). It works on the selected text in any app, or else your last dictation, checked so no number, name, date, "not" or "maybe" is lost or invented. The section shows what each one does, with before-and-after examples, and a box to try it |
+| **Translate** | select text in any app and press **Ctrl+C twice**: a window at the pointer shows it translated, with the language at the top; **C** copies it, **Enter** replaces the text. Steps, examples and a box to try it |
+| **Formatting** | **Write numbers as numbers**: "twenty five percent" is typed as 25%, money as $25,000, times as 3:30 PM, dates, e-mail addresses. The section shows real examples of what changes and what stays as you said it, and a box to try it |
+| **AI & models** | **Your API keys** in one place (each provider's key, masked, with Edit; adding a key never changes what the AI cleanup uses), how Rflow hears you, the AI connection and the **Clean up dictation** switch, and the **microphone** with a live meter. One level down: **How Rflow hears you**, in two groups: **On this PC**, NVIDIA Parakeet (English, fast; downloaded once when chosen, 663 MB) and OpenAI Whisper large-v3 turbo (99 languages, downloaded when chosen, slow without an NVIDIA card), with **Scan this PC**; and the **Cloud**: OpenAI, Groq, Google Gemini (your own key, after a warning that your voice goes to the provider; Parakeet takes over if the provider can't be reached) or **your own server** (Whisper on vLLM, a company AI gateway, any server with OpenAI's transcription API). And **AI connection**: the provider, model and backup model (below) |
+| **Settings** | the dictation key, sounds, starting with Windows, keeping recordings, keeping the microphone ready, updates, the **Reading test** (below). **Advanced**: the voice pipeline, troubleshooting steps, Windows' voice effects, **Profiles** (below), the logs, the source code. At the end, **Start over**: deletes everything Rflow keeps on this PC (you can keep the downloaded speech models) and restarts it like a new install |
+| **Report a problem** | opens a bug report on GitHub, copies the version information (no dictated text), and opens the logs folder, with a reminder that logs can hold text you dictated |
 
 The **voice pipeline** cuts long dictations at your pauses (or at 20 s) and transcribes them while you speak; the parts
 are merged, then your dictionary fixes known mishearings, numbers, dates, times and money are written as such ("25%",
@@ -86,18 +90,21 @@ or dark mode. Changes in Settings apply at once; the AI connection has a Save bu
    | Ollama (on this computer) | nothing: it uses `http://localhost:11434/v1` (change it if yours runs elsewhere) |
    | vLLM or another OpenAI-compatible server | its **address** (e.g. `http://localhost:8000/v1`, LM Studio, a company AI gateway) and a key if it needs one |
 
-2. **Load models**, choose a **model** and optionally a **backup model**, click **Test**, then **Save**. Fast chat
-   models suit dictation (e.g. gpt-4o-mini, a Haiku model, a Flash-Lite model, llama-3.1-8b-instant); models that
-   "think" first are usually too slow.
+2. **Load models**, choose a **model** and optionally a **backup model**, click **Test**, then **Save**. Fast, cheap
+   models suit dictation (e.g. gpt-4o-mini, claude-haiku-4-5, gemini-3.5-flash-lite, openai/gpt-oss-20b on Groq).
+   Models that "think" first are asked to think as little as they allow; the big ones (Pro, Opus, the largest GPT)
+   are slow and costly for dictation.
 3. Add **your words** in the Dictionary (names, company, products, tech terms), so they come out spelled right.
    Speech recognition listens for them too, even with AI cleanup off: on the owner's reading test, errors on names and
    terms fell from 40% to 24.5%. Add names and terms, not everyday words, which would be heard where you didn't say them.
 
 Each provider gets the request it understands: Anthropic its own Messages API, OpenAI without the options only
-self-hosted models need, and so on. Switching the provider back and forth keeps each one's key and address. Only the
-finished text goes to the provider, never audio. If the model fails, the backup is used; if the provider is slow or
-unreachable, the text is typed as heard at once and the pill says "Typed as heard". Home keeps both versions (hover a
-dictation). Keys are stored in `gateway.json`, encrypted for your Windows account (DPAPI).
+self-hosted models need, Claude 4.7 and later and Gemini 3 no temperature, which they refuse or advise against, and so
+on (`sst/modelrules.py` says what each model accepts). Switching the provider back and forth keeps each one's key and
+address. Only the finished text goes to the provider, never audio. If the model fails or its answer is cut off at the
+token limit, the backup is used; if the provider is slow or unreachable, the text is typed as heard at once and the pill
+says "Typed as heard". Home keeps both versions (hover a dictation). Keys are stored in `gateway.json`, encrypted for
+your Windows account (DPAPI).
 
 **Profiles:** several people on one computer, or a work and a private setup, each get a profile (the button under the
 logo, or the *Profiles* page). Each profile has its own dictation key, microphone, words, AI provider and keys,
@@ -199,7 +206,8 @@ Rach_flow/
 ├─ recordings/                your recordings + transcripts (git-ignored)
 └─ sst/                       the Python package (the app's internal name)
    ├─ app.py                  the app: tray icon, recording pill, dictation, updates; "open Rflow again" (Qt)
-   ├─ window.py               the window: Home, Words, Tools, AI & models, Settings, the first run; light/dark
+   ├─ window.py               the window: its ten sections (Home, Live translation, Words, Snippets, Text Transform,
+   │                          Translate, Formatting, AI & models, Settings, Report a problem), the first run; light/dark
    ├─ theme.py                the look (Obsidian Signal): colours, Geist fonts, icons, the soft depth Qt paints
    ├─ ui.py                   the window's widgets: buttons with keycaps, toggles, lamps, keycaps, the voice orb
    ├─ bench.py                the reading test's sets of sentences, test sessions, the fair word comparison
@@ -207,6 +215,7 @@ Rach_flow/
    ├─ updates.py              in-app updates from GitHub Releases (checksum-verified)
    ├─ settings.py             profiles, settings, history, stats and "start with Windows" (%APPDATA%\sst)
    ├─ gateway.py              AI cleanup: the providers and their request formats, backup model, timeouts, keys (DPAPI)
+   ├─ modelrules.py           what each provider's models accept: how little they can think, whether they take a temperature
    ├─ cli.py                  the `sst` command
    ├─ dictate.py              Dictation: hotkey events -> record -> transcribe -> clean up -> type
    ├─ hotkey.py               global hotkeys (low-level keyboard hook) and sending keys

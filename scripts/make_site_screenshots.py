@@ -41,7 +41,7 @@ def preview():
         if words:
             stats.add(" ".join(["word"] * words), words / 2.3, date.today() - timedelta(days=n))
     stats.add(" ".join(["word"] * 9800), 9800 / 2.3, date.today() - timedelta(days=30))  # the month before
-    settings = Settings(welcomed=True, cleanup=True, cleanup_model="gemini-flash-lite-latest",
+    settings = Settings(welcomed=True, cleanup=True, cleanup_model="gemini-3.5-flash-lite",
                         microphone="Microphone array",
                         vocabulary=["Rflow", "GitHub", "Kubernetes", "Priya", "Q3 roadmap", "Parakeet", "CodeQL",
                                     "Vercel", "Snapdragon"],
@@ -60,7 +60,7 @@ def shot(name: str, page: str, theme_name: str = "dark", size=(1000, 680), setup
     window = w.MainWindow(app or preview())
     window.apply_theme(theme_name)
     window.resize(*size)
-    window.set_status("Ready: hold Ctrl+Win · cleanup: gemini-flash-lite-latest", True)
+    window.set_status("Ready: hold Ctrl+Win · cleanup: gemini-3.5-flash-lite", True)
     window.show_page(page)
     if setup:
         setup(window)
@@ -132,7 +132,8 @@ def main() -> None:
     shot("app.png", "home")
     shot("app-light.png", "home", "light")
     shot("models.png", "models")
-    shot("tools.png", "tools")
+    shot("live.png", "live")
+    shot("transform.png", "transform")
     shot("words.png", "dictionary")
     app = preview()
     app.settings.welcomed = False

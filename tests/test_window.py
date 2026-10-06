@@ -1,4 +1,5 @@
 """The Rflow window, built off-screen with PreviewApp in place of the tray app (no model, no microphone, no hook)."""
+import dataclasses
 import os
 import time
 
@@ -9,6 +10,7 @@ from datetime import date, datetime, timedelta  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtGui import QFontMetrics  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
 
 from sst import bench  # noqa: E402
@@ -18,6 +20,7 @@ from sst.commands import DEFAULT_PHRASES  # noqa: E402
 from sst.gateway import GatewayConfig  # noqa: E402
 from sst.settings import Settings, Stats  # noqa: E402
 from sst.snippets import load  # noqa: E402
+from sst.transform import TRANSFORMS, TransformGuard  # noqa: E402
 from sst.ui import KeyCap  # noqa: E402
 
 
@@ -28,6 +31,16 @@ def qt():
 
 def _labels(widget) -> str:
     return " | ".join(label.text() for label in widget.findChildren(QLabel))
+
+
+def _shown(widget) -> str:
+    """The labels shown, not those of a list just filled again (hidden until Qt deletes them)."""
+    return " | ".join(label.text() for label in widget.findChildren(QLabel) if label.isVisibleTo(widget))
+
+
+def _keys(widget) -> list[str]:
+    """The keys drawn as keys, as shown."""
+    return [cap.key_text for cap in widget.findChildren(KeyCap) if cap.isVisibleTo(widget)]
 
 
 def _button(widget, caption: str) -> QPushButton:
@@ -45,7 +58,7 @@ def test_a_new_user_sees_the_welcome_and_then_home():
     window, app = _window(settings=Settings())
     assert window.current_page() == "welcome" and window.sidebar.isHidden()  # the welcome has the whole window
     welcome = window.pages["welcome"]
-    welcome.show_step(1)
+    welcome.go_to_step("try")
     window.set_status("Loading the speech model...", False)
     assert "Loading the speech model" in welcome.status.text()
     window.set_status("Ready: hold Ctrl+Win", True)
@@ -75,8 +88,16 @@ def test_pages_one_level_down_lead_back():
     assert window.current_page() == "models"
     window.show_page("words")
     assert window.current_page() == "dictionary"  # Words opens on Your words
-    window.pages["dictionary"].tabs.buttons["snippets"].click()
-    assert window.current_page() == "snippets" and window.nav["words"].isChecked()
+
+
+def test_words_and_snippets_are_sections_of_their_own():
+    window, _ = _window()
+    window.nav["snippets"].click()
+    assert window.current_page() == "snippets" and window.nav["snippets"].isChecked()
+    assert window.pages["snippets"].title.text() == "Snippets" and not hasattr(window.pages["snippets"], "tabs")
+    window.nav["words"].click()
+    assert window.current_page() == "dictionary" and window.pages["dictionary"].title.text() == "Words"
+    assert not hasattr(window.pages["dictionary"], "tabs")
 
 
 def test_home_shows_the_stats_and_the_dictations_by_day():
@@ -150,7 +171,7 @@ def test_the_dictionary_adds_several_words_and_removes_one():
     page.entry.setText("Tamil,  CodeQL , github")
     page._add()
     assert app.settings.vocabulary == ["GitHub", "Tamil", "CodeQL"] and page.entry.text() == ""
-    assert page.count.text() == "3 words" and page.tabs.buttons["dictionary"].suffix == "3"
+    assert page.count.text() == "3 words"
     remove = next(b for b in page.findChildren(w.IconButton) if b.toolTip() == "Remove GitHub")
     remove.click()
     assert app.settings.vocabulary == ["Tamil", "CodeQL"]
@@ -444,16 +465,16 @@ def test_switching_providers_keeps_each_one_s_key_and_address():
     page = window.pages["cleanup"]
     page.provider.setCurrentIndex(page.provider.findData("groq"))
     page.api_key.setText("groq-key")
-    page.model.setCurrentText("llama-3.1-8b-instant")
+    page.model.setCurrentText("openai/gpt-oss-20b")
     page.provider.setCurrentIndex(page.provider.findData("vllm"))
     assert page.api_key.text() == "" and page.model.currentText() == ""  # a fresh start for the other provider
     page.gateway_url.setText("http://my-server:8000/v1")
     page.provider.setCurrentIndex(page.provider.findData("groq"))
-    assert page.api_key.text() == "groq-key" and page.model.currentText() == "llama-3.1-8b-instant"
+    assert page.api_key.text() == "groq-key" and page.model.currentText() == "openai/gpt-oss-20b"
     page.cleanup_on.setChecked(True)
     _button(page, "Save").click()
     on, model, _, gateway = app.calls[-1][1:]
-    assert (on, model) == (True, "llama-3.1-8b-instant")
+    assert (on, model) == (True, "openai/gpt-oss-20b")
     assert gateway == GatewayConfig("", "groq-key", "groq", {"vllm": ("http://my-server:8000/v1", "")})
     assert gateway.address == "https://api.groq.com/openai/v1"
 
@@ -519,7 +540,8 @@ def test_a_new_profile_is_made_from_its_name():
 def test_the_welcome_connects_an_ai_and_picks_its_fast_model():
     window, app = _window(settings=Settings())
     welcome = window.pages["welcome"]
-    welcome.show_step(2)
+    welcome.choose_setup("custom")  # each part by hand: the AI last
+    welcome.go_to_step("ai")
     assert welcome.tiles["gemini"].chosen and not welcome.primary.isEnabled()  # a key first
     welcome.ai_key.setText("AIza-test-key")
     assert welcome.primary.text() == "Connect and finish" and welcome.primary.isEnabled()
@@ -534,9 +556,22 @@ def test_the_fast_model_of_each_provider():
     assert w.fast_model("gemini", ["gemini-2.0-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-pro",
                                    "gemini-3.5-flash-lite-preview", "text-embedding-004"]) == "gemini-3.5-flash-lite"
     assert w.fast_model("openai", ["gpt-4o", "gpt-4o-mini", "gpt-4o-mini-tts", "gpt-4.1-mini"]) == "gpt-4.1-mini"
+    assert w.fast_model("openai", ["gpt-4o", "o4-mini", "gpt-5.4-mini", "gpt-4o-mini"]) == "gpt-4o-mini"  # not "any mini"
     assert w.fast_model("anthropic", ["claude-sonnet-5-5", "claude-haiku-4-5"]) == "claude-haiku-4-5"
-    assert w.fast_model("groq", ["whisper-large-v3", "llama-3.1-8b-instant"]) == "llama-3.1-8b-instant"
     assert w.fast_model("ollama", ["llama3.2"]) == "llama3.2" and w.fast_model("ollama", []) == ""
+
+
+def test_the_fast_model_on_groq_is_gpt_oss_and_never_a_speech_model():
+    # The research notes of 2026-10-06: llama-3.1-8b-instant was shut down, and the old fallback (the first model in
+    # the list) would have picked a text-to-speech model.
+    groq = ["canopylabs/orpheus-arabic-saudi", "canopylabs/orpheus-v1-english", "llama-prompt-guard-2-22m",
+            "openai/gpt-oss-120b", "openai/gpt-oss-20b", "openai/gpt-oss-safeguard-20b", "whisper-large-v3",
+            "whisper-large-v3-turbo"]
+    assert w.fast_model("groq", groq) == "openai/gpt-oss-20b"
+    assert w.fast_model("groq", [m for m in groq if m != "openai/gpt-oss-20b"]) == "openai/gpt-oss-120b"  # priced
+    assert w.fast_model("groq", ["canopylabs/orpheus-v1-english", "whisper-large-v3-turbo", "playai-tts"]) == ""
+    assert w.fast_model("gemini", ["gemini-3.8-flash", "gemini-3.6-flash"]) == "gemini-3.6-flash"  # the cheapest priced
+    assert [key for key, _, _ in w.PROVIDER_TILES][:2] == ["gemini", "groq"]  # the two with a free key first
 
 
 # ---- capture settings
@@ -594,11 +629,22 @@ def test_the_speech_page_shows_the_model_in_use_and_what_comes_next():
     assert not whisper.download.isHidden() and "1.6 GB" in whisper.download.text()  # not downloaded yet
     assert whisper.choose.isHidden()
     assert "In use: NVIDIA Parakeet" in page.in_use.title.text() and "hears English" in page.in_use.note.text()
+    assert list(page.where) == ["local", "cloud"]  # two groups: on this PC, and the cloud
     page.where["cloud"].click()
-    assert page.groups.currentIndex() == list(w.WHERE).index("cloud")
-    assert {"openai", "groq", "gemini"} <= set(page.models) and "Your voice is sent to OpenAI" in _labels(page)
-    page.where["server"].click()
-    assert "Your own server" in _labels(page)
+    assert list(page.tiles) == ["openai", "groq", "gemini", "server"]
+
+    def shown() -> list[str]:
+        return [key for key in page.tiles if not page.models[key].frame.isHidden()]
+    assert page.groups.currentIndex() == 1 and shown() == [] and not page.pick.isHidden()  # a tile first
+    assert [page.tiles[key].state.text() for key in page.tiles] == ["Needs a key"] * 3 + ["Needs an address"]
+    assert all(tile.logo.width() == 28 for tile in page.tiles.values())  # room for each provider's logo
+    page.tiles["openai"].clicked.emit()
+    assert page.tiles["openai"].chosen and shown() == ["openai"] and page.pick.isHidden()
+    assert "Your voice is sent to OpenAI" in _labels(page)
+    page.tiles["server"].clicked.emit()
+    assert shown() == ["server"] and not page.tiles["openai"].chosen
+    page.where["local"].click()
+    assert page.groups.currentIndex() == 0 and page.where["local"].isChecked()
 
 
 def test_a_cloud_model_asks_first_then_keeps_its_key_and_model():
@@ -643,8 +689,8 @@ def test_testing_a_cloud_model_shows_its_answer():
         if openai.result.text().startswith("OK"):
             break
         time.sleep(0.01)
-    assert openai.result.text().startswith("OK: gpt-4o-mini-transcribe answered")
-    assert ("test_cloud_speech", "openai", "gpt-4o-mini-transcribe") in app.calls
+    assert openai.result.text().startswith("OK: gpt-transcribe answered")
+    assert ("test_cloud_speech", "openai", "gpt-transcribe") in app.calls
 
 
 def test_a_key_saved_on_one_page_shows_on_the_other():
@@ -741,7 +787,7 @@ def test_the_server_card_starts_from_ai_cleanups_server_and_lists_its_speech_mod
     page.show_where("server")
     server = page.models["server"]
     assert (server.address.text(), server.key.text()) == ("http://gateway.example/v1", "gw-key")
-    assert "Filled in from AI cleanup's server" in server.result.text()
+    assert "Filled in from your own server in Your API keys" in server.result.text()
     server.choose.click()
     assert "Choose a model first" in server.result.text() and not app.calls
     server._load_models()
@@ -780,21 +826,25 @@ def test_a_new_install_chooses_its_speech_model_in_the_welcome(no_parakeet):
     window, app = _window(settings=Settings())
     welcome = window.pages["welcome"]
     window.set_status("Choose a speech model to start dictating", False)
-    assert welcome.step == 0 and welcome.local_option.chosen  # on this PC is the recommended choice
+    welcome.choose_setup("custom")  # each part by hand: how Rflow hears you first
+    welcome.go_to_step("hear")
+    assert welcome.current() == "hear" and welcome.local_option.chosen  # on this PC is the recommended choice
     assert welcome.get_parakeet.text() == "Download Parakeet and continue" and welcome.get_parakeet.isEnabled()
     welcome.get_parakeet.click()
-    assert ("download_speech_model", "parakeet") in app.calls and welcome.step == 1  # trying it while it downloads
+    assert ("download_speech_model", "parakeet") in app.calls and welcome.current() == "try"  # tried while it downloads
     app.downloading = ("parakeet", 331_000_000, 663_043_117)
     welcome.refresh(False)
     assert welcome.orb.state == "loading" and "Downloading Parakeet, 49%" in welcome.orb_text.text()
     assert "Waiting for Parakeet" in welcome.status.text()
-    welcome.show_step(0)
+    welcome.go_to_step("hear")
     assert "Downloading Parakeet: 49%" in welcome.speech_status.text() and welcome.get_parakeet.text() == "Continue"
 
 
 def test_the_welcome_can_lead_to_a_cloud_model_instead(no_parakeet):
     window, app = _window(settings=Settings())
     welcome = window.pages["welcome"]
+    welcome.choose_setup("custom")
+    welcome.go_to_step("hear")
     welcome.cloud_option.clicked.emit()
     assert welcome.cloud_option.chosen and welcome.primary.text() == "Set up a cloud model"
     welcome.primary.click()
@@ -812,7 +862,7 @@ def test_the_welcome_shows_the_speech_model_already_there():
 def test_a_first_dictation_lights_the_orb():
     window, _ = _window(settings=Settings())
     welcome = window.pages["welcome"]
-    welcome.show_step(1)
+    welcome.go_to_step("try")
     welcome.refresh(True)
     welcome.try_box.setPlainText("Hello Rflow, this is my first dictation.")
     assert welcome.orb.state == "done" and welcome.status.text() == "It works. Now try it in any app."
@@ -914,7 +964,7 @@ def test_a_cloud_card_cancel_brings_back_what_is_saved():
     assert openai.edited() and not openai.bar.cancel.isHidden()
     openai.bar.cancel.click()
     assert not openai.edited() and openai.key.text() == "sk-openai-0000"
-    assert openai.model_box.currentText() == "gpt-4o-mini-transcribe"
+    assert openai.model_box.currentText() == "gpt-transcribe"
 
 
 def test_leaving_a_page_with_unsaved_changes_asks_first():
@@ -973,11 +1023,57 @@ def test_the_pipeline_switches_are_settings():
     assert page.mic_ready.currentData() == "always"
     page.mic_ready.setCurrentIndex(page.mic_ready.findData("warm"))
     assert app.settings.always_on_mic is False and app.settings.warm_mic is True
-    page.format_text.setChecked(False)
     page.debug_pipeline.setChecked(True)
     page.voice_pipeline.setChecked(False)
     s = app.settings
-    assert (s.format_text, s.debug_pipeline, s.voice_pipeline) == (False, True, False)
+    assert (s.debug_pipeline, s.voice_pipeline) == (True, False)
+
+
+# ---- Formatting
+
+def test_formatting_is_a_section_with_the_switch_moved_from_settings():
+    window, app = _window(settings=Settings(welcomed=True))
+    assert not hasattr(window.pages["settings"], "format_text")
+    window.nav["formatting"].click()
+    page = window.pages["formatting"]
+    assert window.current_page() == "formatting" and page.format_text.isChecked() and page.pipeline_off.isHidden()
+    page.format_text.setChecked(False)
+    assert app.settings.format_text is False and "Off" in page.switch_words.text()
+    page.trial.setText("it costs five dollars")
+    assert "Formatting is off" in page.trial_result.text()
+    page.format_text.setChecked(True)
+    assert app.settings.format_text is True and "$5" in page.trial_result.text()
+    page.trial.setText("we have two options")
+    assert "Nothing to change" in page.trial_result.text()
+
+
+def test_the_formatting_examples_are_what_the_real_stage_types():
+    expected = {"sales went up twenty five percent this quarter": "sales went up 25% this quarter",
+                "the budget is twenty five thousand dollars": "the budget is $25,000",
+                "it costs nine dollars ninety nine": "it costs $9.99",
+                "let's meet at three thirty pm": "let's meet at 3:30 PM",
+                "the launch is on october first twenty twenty six": "the launch is on October 1, 2026",
+                "we need twenty five hundred copies": "we need 2,500 copies",
+                "send it to john dot smith at gmail dot com": "send it to john.smith@gmail.com"}
+    assert list(expected) == w.FORMAT_EXAMPLES
+    for said, typed in expected.items():
+        assert w.formatted(said)[0] == typed
+    for said in w.FORMAT_KEPT:
+        assert w.formatted(said)[0] == said  # prose stays as said
+    window, _ = _window()
+    page = window.pages["formatting"]
+    page.refresh()
+    shown = _shown(page.changed_box)
+    assert all(w.formatted(said)[1] in shown for said in expected) and "25%</span>" in shown  # its changes in Iris
+
+
+def test_formatting_says_when_the_voice_pipeline_is_off_and_turns_it_on():
+    window, app = _window(settings=Settings(welcomed=True, voice_pipeline=False))
+    window.show_page("formatting")
+    page = window.pages["formatting"]
+    assert not page.pipeline_off.isHidden()
+    _button(page.pipeline_off, "Turn it on").click()
+    assert app.settings.voice_pipeline and page.pipeline_off.isHidden()
 
 
 
@@ -1135,13 +1231,141 @@ def test_ai_and_models_shows_both_halves_and_switches_the_cleanup():
     page = window.pages["models"]
     page.refresh()
     assert page.speech_name.text() == "NVIDIA Parakeet" and page.ai_name.text() == "Google Gemini"
-    assert page.ai_model.text() == "gemini-3.5-flash-lite" and page.key_view.text().endswith("9f3c")
+    assert page.ai_model.text() == "gemini-3.5-flash-lite" and "Google Gemini key" in page.key_line.text()
+    assert page.keys.rows["gemini"].value.text().endswith("9f3c")  # the key itself is in Your API keys, masked
     assert page.cleanup.isChecked() and page.ai_state.text() == "Connected"
     page.cleanup.setChecked(False)
     assert app.calls[-1][:2] == ("save_cleanup", False) and not app.settings.cleanup
     page.test_button.click()
     assert _wait_until(lambda: page.ai_state.text().startswith("Connected ·"))
     assert ("check_ai", "gemini", "gemini-3.5-flash-lite") in app.calls
+
+
+def test_a_key_added_on_ai_and_models_changes_nothing_else():
+    # The user testing's M-04: a Gemini key added for live translation switched AI cleanup to Gemini, with no model.
+    window, app = _window(gateway=GatewayConfig("", "sk-openai-key-0000", "openai"),
+                          settings=Settings(welcomed=True, cleanup=True, cleanup_model="gpt-4o-mini"))
+    window.show_page("models")
+    page = window.pages["models"]
+    keys = page.keys
+    openai, gemini = keys.rows["openai"], keys.rows["gemini"]
+    assert not openai.isHidden() and openai.value.text().endswith("0000") and "sk-openai" not in openai.value.text()
+    assert openai.uses.text() == "Used for AI cleanup" and keys.add_buttons["openai"].isHidden()
+    assert gemini.isHidden() and not keys.add_buttons["gemini"].isHidden() and app.live_problem()
+    keys.add_buttons["gemini"].click()
+    assert gemini.editing and not gemini.isHidden() and not gemini.bar.save.isEnabled()  # nothing typed yet
+    assert "AI cleanup keeps OpenAI" in gemini.note.text() and gemini.remove.isHidden()
+    gemini.key.setText("AIza-test-key-41ab")
+    assert gemini.bar.save.isEnabled() and page.unsaved()
+    gemini.bar.save.click()
+    assert ("save_key", "gemini") in app.calls and app.gateway.key_for("gemini") == "AIza-test-key-41ab"
+    assert (app.gateway.chosen, app.gateway.api_key, app.settings.cleanup_model) == ("openai", "sk-openai-key-0000",
+                                                                                     "gpt-4o-mini")
+    assert not gemini.editing and gemini.value.text().endswith("41ab") and keys.add_buttons["gemini"].isHidden()
+    assert gemini.uses.text() == "Used for live translation" and "AI cleanup keeps OpenAI" in keys.state.text()
+    assert not app.live_problem() and not page.unsaved()
+
+
+def test_a_key_is_changed_or_removed_in_your_api_keys():
+    window, app = _window(gateway=GatewayConfig("", "sk-openai-key-0000", "openai"),
+                          settings=Settings(welcomed=True, cleanup=True, cleanup_model="gpt-4o-mini"))
+    window.show_page("models")
+    page = window.pages["models"]
+    openai = page.keys.rows["openai"]
+    openai.edit.click()
+    assert openai.editing and openai.key.editing and not openai.remove.isHidden() and not openai.bar.save.isEnabled()
+    openai.key.setText("sk-typo")
+    asked = []
+    window.leave_unsaved = lambda title: asked.append(title) or False  # Stay
+    window.nav["home"].click()
+    assert asked == ["AI & models"] and window.current_page() == "models"
+    openai.bar.cancel.click()
+    assert not openai.editing and app.gateway.api_key == "sk-openai-key-0000" and not page.unsaved()
+    openai.edit.click()
+    openai.key.setText("sk-new-key-1111")
+    openai.bar.save.click()
+    assert app.gateway.api_key == "sk-new-key-1111" and openai.value.text().endswith("1111")
+    questions = []
+    page.confirm = lambda question: questions.append(question) or True
+    openai.edit.click()
+    openai.remove.click()
+    assert "AI cleanup stops" in questions[0] and app.gateway.key_for("openai") == ""
+    assert app.gateway.chosen == "openai" and openai.isHidden() and not page.keys.add_buttons["openai"].isHidden()
+    assert not page.keys.empty.isHidden()  # no keys at all now
+    page.add_key("anthropic")  # e.g. from live translation's "Add a Gemini key"
+    assert page.keys.rows["anthropic"].editing and not page.keys.rows["anthropic"].isHidden()
+
+
+def test_your_own_server_is_one_line_for_ai_cleanup_and_speech():
+    from sst.gateway import SPEECH_SERVER
+    gateway = GatewayConfig("http://gateway.example/v1", "gw-key", "vllm").with_entry(
+        SPEECH_SERVER, "http://gateway.example/v1", "gw-key")
+    window, app = _window(gateway=gateway, settings=Settings(welcomed=True, cleanup_model="m", speech_model="server",
+                                                             speech_server_model="whisper-1"))
+    page = window.pages["models"]
+    page.refresh()
+    server = page.keys.rows["vllm"]
+    assert not server.isHidden() and page.keys.rows[SPEECH_SERVER].isHidden() and page.keys.add_buttons["vllm"].isHidden()
+    assert server.value.text().startswith("http://gateway.example/v1") and "gw-key" not in server.value.text()
+    assert server.uses.text() == "Used for AI cleanup and speech"
+    server.edit.click()
+    server.address.setText("http://localhost:8000/v1")
+    server.bar.save.click()
+    assert ("save_server", "http://localhost:8000/v1", ("vllm", SPEECH_SERVER)) in app.calls
+    assert app.gateway.base_url == app.gateway.speech_server()[0] == "http://localhost:8000/v1"
+
+
+def test_a_cloud_tile_takes_its_key_from_your_api_keys():
+    window, app = _window()
+    keys, speech = window.pages["models"].keys, window.pages["speech"]
+    keys.add_buttons["groq"].click()
+    keys.rows["groq"].key.setText("gsk-test-key-0000")
+    keys.rows["groq"].bar.save.click()
+    assert app.gateway.chosen == "" and app.settings.speech_model == "parakeet"  # nothing chosen by saving a key
+    window.show_page("speech")
+    speech.show_where("groq")
+    groq = speech.models["groq"]
+    assert speech.tiles["groq"].chosen and speech.tiles["groq"].state.text() == "Key saved"
+    assert groq.key.text() == "gsk-test-key-0000" and "From Your API keys" in groq.key_note.text()
+
+
+def test_switching_the_cleanup_s_provider_needs_a_model_first():
+    # M-04 on the AI connection page: choosing Gemini there only to save its key must not leave the cleanup without a model.
+    window, app = _window(gateway=GatewayConfig("", "sk-openai", "openai"),
+                          settings=Settings(welcomed=True, cleanup=True, cleanup_model="gpt-4o-mini"))
+    page = window.pages["cleanup"]
+    page.provider.setCurrentIndex(page.provider.findData("gemini"))
+    page.api_key.setText("AIza-live")
+    page.bar.save.click()
+    assert not any(call[0] == "save_cleanup" for call in app.calls) and "Your API keys" in page.test_result.text()
+    assert (app.gateway.chosen, app.settings.cleanup_model) == ("openai", "gpt-4o-mini")
+    page.model.setCurrentText("gemini-3.5-flash-lite")
+    page.bar.save.click()
+    assert app.gateway.chosen == "gemini" and app.settings.cleanup_model == "gemini-3.5-flash-lite"
+
+
+def test_a_long_microphone_name_is_cut_short_and_whole_in_its_tooltip():
+    # The user testing's M-03: the owner's own laptop microphone made AI & models 1418 px wide in a 696 px view.
+    long = "Microphone Array (Intel® Smart Sound Technology for Digital Microphones)"
+    box = w.MicrophoneBox(long, [long, "Headset (Buds)"], long)
+    assert box.minimumSizeHint().width() < 300 and box.combo.sizeHint().width() < 300  # not the name's width
+    assert box.combo.currentText() == long and box.combo.toolTip() == long  # cut with … in the box, whole in its tooltip
+    assert box.combo.itemData(box.combo.findData(long), Qt.ItemDataRole.ToolTipRole) == long
+
+
+def test_a_long_microphone_name_never_makes_ai_and_models_wider_than_the_window():
+    # The user testing's M-03: the owner's own laptop microphone made the page 1418 px wide in a 696 px view.
+    long = "Microphone Array (Intel® Smart Sound Technology for Digital Microphones)"
+    window, _ = _window(microphones=[long, "Headset (Buds)"], settings=Settings(welcomed=True, microphone=long))
+    window.resize(780, 540)
+    window.show_page("models")
+    page = window.pages["models"]
+    window.grab()  # lays the page out
+    assert page.widget().width() <= page.viewport().width()
+    box = page.microphone.combo
+    assert box.currentText() == long and box.toolTip() == long  # cut with … in the box, whole in its tooltip
+    assert box.itemData(box.findData(long), Qt.ItemDataRole.ToolTipRole) == long
+    assert page.pair.direction() == w.QBoxLayout.Direction.TopToBottom  # too narrow for the two cards side by side
 
 
 def test_ai_and_models_without_a_connection_offers_one():
@@ -1154,31 +1378,77 @@ def test_ai_and_models_without_a_connection_offers_one():
     assert window.current_page() == "cleanup"
 
 
-def test_tools_switch_text_transform_and_translate_and_try_them():
+def test_text_transform_and_translate_are_sections_with_the_tools_switches():
     window, app = _window(gateway=GatewayConfig(provider="openai", api_key="sk"),
                           settings=Settings(welcomed=True, cleanup_model="gpt-4o-mini"))
-    window.show_page("tools")
-    page = window.pages["tools"]
-    assert page.transform_on.isChecked() and page.translate_on.isChecked() and page.connect_card.isHidden()
+    assert "tools" not in window.pages and "tools" not in dict(w.NAV)
+    window.nav["translate"].click()
+    page = window.pages["translate"]
+    assert window.current_page() == "translate" and page.translate_on.isChecked() and page.setup.isHidden()
     page.translate_on.setChecked(False)
-    assert app.settings.translate_shortcut == ""
+    assert app.settings.translate_shortcut == "" and page.steps.isHidden() and "Off" in page.switch_words.text()
     page.translate_on.setChecked(True)
-    assert app.settings.translate_shortcut == "ctrl+c+c"
+    assert app.settings.translate_shortcut == "ctrl+c+c" and not page.steps.isHidden()
+    window.nav["transform"].click()
+    page = window.pages["transform"]
+    assert window.current_page() == "transform" and page.transform_on.isChecked()
     page.transform_on.setChecked(False)
-    assert app.settings.transform_shortcut == "" and not app.settings.voice_commands
-    page.target.setCurrentText("Japanese")
-    assert app.settings.translate_to == "Japanese"
-    page.trial_tabs.buttons["concise"].click()
-    assert _wait_until(lambda: "database migration" in page.result.toPlainText())
-    page.trial_tabs.buttons["translate"].click()
-    assert _wait_until(lambda: "informe" in page.result.toPlainText())
+    assert app.settings.transform_shortcut == "" and not app.settings.voice_commands and page.steps.isHidden()
+    page.transform_on.setChecked(True)
+    assert (app.settings.transform_shortcut, app.settings.voice_commands) == ("double ctrl", True)
+    window.show_page("tools")  # a link to the old Tools section (another page, the tray menu) opens Text Transform
+    assert window.current_page() == "transform" and window.nav["transform"].isChecked()
 
 
-def test_tools_without_an_ai_connection_say_so():
-    window, _ = _window()
-    page = window.pages["tools"]
+def test_text_transform_says_how_to_use_it_with_the_users_own_keys_and_phrases():
+    window, app = _window(settings=Settings(welcomed=True, hotkey="menu", command_phrases={"concise": "trim it"},
+                                            transforms=["bullets", "concise"]))
+    window.show_page("transform")
+    page = window.pages["transform"]
+    steps = _shown(page.steps)
+    assert "and say “trim it”" in steps and "Or double-tap" in steps and "Bullet points" in steps
+    assert _keys(page.steps) == ["Menu", "Ctrl", "1", "2"]  # the menu: as it is numbered
+    app.apply_settings(dataclasses.replace(app.settings, voice_commands=False))
     page.refresh()
-    assert not page.connect_card.isHidden() and not page.trial_tabs.buttons["concise"].isEnabled()
+    assert "trim it" not in _shown(page.steps) and "Then double-tap" in _shown(page.steps)
+
+
+def test_text_transform_shows_examples_of_each_transform():
+    window, _ = _window()
+    page = window.pages["transform"]
+    page.refresh()
+    for key, transform in TRANSFORMS.items():
+        page.example_tabs.buttons[key].click()
+        shown = page.findChildren(w.Example)
+        assert len([e for e in shown if e.isVisibleTo(page)]) == len(w.TRANSFORM_EXAMPLES[key]) >= 2
+        assert page.example_words.text() == transform.description
+
+
+@pytest.mark.parametrize("key, before, after", [(key, before, after) for key, pairs in w.TRANSFORM_EXAMPLES.items()
+                                                for before, after in pairs])
+def test_every_text_transform_example_is_one_rflow_would_accept(key, before, after):
+    got = TransformGuard().validate(before, after, key)  # the real check: nothing invented, nothing lost
+    assert got.accepted, got.reasons
+
+
+def test_translate_says_how_to_use_it_and_shows_examples():
+    window, app = _window(settings=Settings(welcomed=True, translate_to="German", translate_second="English"))
+    window.show_page("translate")
+    page = window.pages["translate"]
+    steps = _shown(page.steps)
+    assert "shows it in German" in steps and "already in German goes into English" in steps
+    assert _keys(page.steps) == ["Ctrl", "C", "C", "C", "↵"]
+    assert len([e for e in page.findChildren(w.Example) if e.isVisibleTo(page)]) == len(w.TRANSLATE_EXAMPLES)
+    page.shortcut.setCurrentIndex(page.shortcut.findData("ctrl+alt+l"))
+    assert app.settings.translate_shortcut == "ctrl+alt+l" and "to translate it." in _shown(page.steps)
+
+
+def test_text_transform_and_translate_without_an_ai_connection_say_so():
+    window, _ = _window()
+    for key in ("transform", "translate"):
+        page = window.pages[key]
+        page.refresh()
+        assert not page.setup.isHidden() and "needs an AI connection" in page.model.text()
 
 
 def test_the_smallest_window_folds_the_sidebar_into_a_rail():
@@ -1189,6 +1459,110 @@ def test_the_smallest_window_folds_the_sidebar_into_a_rail():
     assert not window.grab().isNull()
     window._set_compact(False)
     assert window.nav["models"].text() == "AI & models"
+
+
+def test_the_sidebar_has_the_ten_sections_in_order():
+    window, _ = _window()
+    assert [key for key, _ in w.NAV] == ["home", "live", "words", "snippets", "transform", "translate", "formatting",
+                                         "models", "settings", "report"]
+    assert all(key in w.NAV_ICONS and w.NAV_ICONS[key] in w.theme.ICONS for key in window.nav)
+
+
+@pytest.mark.parametrize("size", [(780, 540), (1000, 540), (1000, 700)])
+def test_every_section_fits_the_smallest_window_in_the_sidebar_and_the_rail(size):
+    profiles = w.Profiles()
+    profiles.add("Rahul")  # two profiles: the profile button shows too
+    window, _ = _window(profiles=profiles)
+    window.show_update("Rflow 9.9.9 is available (you have 1.0.0).", version="9.9.9")
+    window.resize(*size)
+    assert not window.grab().isNull()
+    buttons = [window.nav[key] for key, _ in w.NAV]
+    tops = [b.geometry().top() for b in buttons]
+    assert tops == sorted(tops)
+    assert all(a.geometry().bottom() < b.geometry().top() for a, b in zip(buttons, buttons[1:], strict=False))  # no overlap
+    below = [x for x in (window.update_link, window.status_card, window.profile_button) if x.isVisibleTo(window)]
+    assert window.status_card in below and all(buttons[-1].geometry().bottom() < x.geometry().top() for x in below)
+    assert max(x.geometry().bottom() for x in below) < window.sidebar.height()  # nothing cut off at the bottom
+    assert min(b.height() for b in buttons) >= w.NAV_HEIGHTS[window.compact][1]
+    if window.compact:  # the rail: each short name fits under its icon
+        metrics = QFontMetrics(w.font(11, 600))
+        assert all(metrics.horizontalAdvance(b.text()) <= b.width() - 4 for b in buttons)
+    else:
+        assert window.update_link.isVisibleTo(window) and window.profile_button.isVisibleTo(window)
+
+
+# ---- Report a problem
+
+def test_report_a_problem_opens_an_issue_and_copies_only_the_version_info(monkeypatch):
+    opened, copied, folders = [], [], []
+    monkeypatch.setattr(w, "open_link", opened.append)
+    monkeypatch.setattr(w, "copy_text", copied.append)
+    monkeypatch.setattr(w, "open_folder", folders.append)
+    window, app = _window(settings=Settings(welcomed=True, vocabulary=["Priya"],
+                                            snippets=[{"cue": "my email", "text": "alex@example.com"}]))
+    window.nav["report"].click()
+    page = window.pages["report"]
+    assert window.current_page() == "report" and page.title.text() == "Report a problem"
+    page.issue_button.click()
+    assert opened == [w.REPO + "/issues/new/choose"]
+    page.copy_button.click()
+    lines = copied[0].splitlines()
+    assert lines[0].startswith(f"Rflow {w.__version__}") and lines[1].startswith("Windows") and "x64" in lines[2]
+    assert "Priya" not in copied[0] and "alex@example.com" not in copied[0] and page.copy_button.text() == "Copied"
+    assert "can contain text you dictated" in page.privacy.text()
+    page.logs_button.click()
+    assert folders == [w.LOG_DIR]
+
+
+def test_settings_name_the_key_plainly_and_list_the_reading_test():
+    window, _ = _window()
+    page = window.pages["settings"]
+    assert page.hotkey.currentText() == "Ctrl+Win" and "Wispr" not in page.hotkey.itemText(0)
+    assert not page.advanced_card.isAncestorOf(page.reading) and page.reading.isVisibleTo(page)  # not under Advanced
+    page.reading.click()
+    assert window.current_page() == "reading" and window.nav["settings"].isChecked()
+
+
+def test_start_over_asks_first_and_can_keep_the_speech_models():
+    window, app = _window()
+    page = window.pages["settings"]
+    layout = page.body
+    cards = [layout.itemAt(i).widget() for i in range(layout.count()) if layout.itemAt(i).widget() is not None]
+    assert cards[-1].isAncestorOf(page.start_over)  # at the very end
+    assert page.start_over.kind == "danger" and page.start_over.text().startswith("Start over")
+    page.confirm_start_over = lambda: None  # cancelled
+    page.start_over.click()
+    assert not any(call[0] == "start_over" for call in app.calls)
+    page.confirm_start_over = lambda: True  # "Keep the downloaded speech models" ticked
+    page.start_over.click()
+    page.confirm_start_over = lambda: False
+    page.start_over.click()
+    assert [call for call in app.calls if call[0] == "start_over"] == [("start_over", True), ("start_over", False)]
+
+
+def test_the_start_over_dialog_says_plainly_what_is_deleted(monkeypatch):
+    seen = {}
+
+    def answer(box):  # in place of showing it: read it, untick, press the red button
+        seen["words"] = f"{box.text()} {box.informativeText()}"
+        seen["keep"] = box.checkBox().isChecked() and box.checkBox().text() == "Keep the downloaded speech models"
+        box.checkBox().setChecked(False)
+        next(b for b in box.buttons() if b.text() == "Delete everything and restart").click()
+        return 0
+    monkeypatch.setattr(w.QMessageBox, "exec", answer)
+    window, _ = _window()
+    assert window.pages["settings"].confirm_start_over() is False  # go on, without keeping the models
+    assert seen["keep"]  # ticked at first
+    assert all(word in seen["words"] for word in ("every profile", "settings", "words and snippets", "history", "stats",
+                                                  "API keys", "recordings", "reading tests", "live translation", "logs",
+                                                  "welcome"))
+
+
+def test_report_a_problem_left_settings_advanced():
+    window, _ = _window()
+    advanced = window.pages["settings"].advanced_card
+    names = [b.accessibleName() for b in advanced.findChildren(QPushButton) if b.accessibleName()]
+    assert "Report a problem" not in names and "Source code" in names and "Profiles" in names
 
 
 # ---- the microphone list follows Windows (phase 26)
@@ -1234,15 +1608,68 @@ def _live_window(**settings):
 
 def test_live_translation_is_a_section_of_its_own_and_starts_and_stops_there():
     window, app = _live_window()
-    assert ("live", "Live translation") in w.NAV and not hasattr(window.pages["tools"], "live_card")
+    assert ("live", "Live translation") in w.NAV and "tools" not in window.pages
     window.show_page("live")
     page = window.pages["live"]
     assert page.state.text() == "Off" and page.start_button.text() == "Start" and page.connect_card.isHidden()
+    assert page.doing.text() == "Ready to translate what the computer plays into English" and not page.light.blinking
+    assert not page.start_button.running and not page.start_card.grab().isNull()  # green, with its glow
     page.start_button.click()
-    assert ("start_live", "computer") in app.calls and page.start_button.text() == "Stop"
-    assert page.state.text() == "On: translating your laptop's sound"
+    assert ("start_live", "computer") in app.calls and page.start_button.text() == "Stop" and page.start_button.running
+    assert page.state.text() == "Live" and page.light.state == "live" and page.light.blinking
+    assert page.doing.text() == "Translating what the computer plays into English"
+    assert not page.start_card.grab().isNull()  # red
     page.start_button.click()
     assert ("stop_live",) in app.calls and page.start_button.text() == "Start" and page.state.text() == "Off"
+    assert not page.start_button.running and not page.light.blinking
+
+
+def test_the_page_follows_live_translation_started_or_stopped_elsewhere():
+    window, app = _live_window()
+    window.show_page("live")
+    page = window.pages["live"]
+    app._live = True  # started with the shortcut or from the tray menu
+    window.refresh()  # what the TrayApp does when live translation starts or stops
+    assert page.start_button.text() == "Stop" and page.state.text() == "Live" and page.light.blinking
+    app._live = False  # stopped with the bar's ✕
+    window.refresh()
+    assert page.start_button.text() == "Start" and page.state.text() == "Off" and not page.light.blinking
+
+
+def test_the_live_light_blinks_only_while_it_runs_and_is_shown():
+    from PySide6.QtGui import QHideEvent, QShowEvent
+    window, _ = _live_window()
+    window.show_page("live")
+    light = window.pages["live"].light
+    window.pages["live"].start_button.click()
+    assert light.blinking and not light._timer.isActive()  # the window isn't on the screen: nothing ticks
+    QApplication.sendEvent(light, QShowEvent())  # shown
+    assert light._timer.isActive() and light._timer.interval() == 500  # lit half a second, dimmed the other half
+    light._tick()
+    assert not light.lit
+    QApplication.sendEvent(light, QHideEvent())  # another page, or the window closed or minimised
+    assert not light._timer.isActive()
+    QApplication.sendEvent(light, QShowEvent())
+    assert light._timer.isActive() and light.lit
+    window.pages["live"].start_button.click()  # stopped
+    assert not light.blinking and not light._timer.isActive() and light.lit
+
+
+def test_what_it_does_names_the_languages_and_a_new_one_waits_for_the_next_start():
+    window, app = _live_window(live_source="both", live_target="en", live_mic_target="ja")
+    window.show_page("live")
+    page = window.pages["live"]
+    page.start_button.click()
+    assert page.doing.text() == "Translating what the computer plays into English, and what you say into Japanese"
+    page.target.setCurrentIndex(page.target.findData("ta"))
+    assert app.settings.live_target == "ta" and page.doing.text().startswith("Translating what the computer plays into "
+                                                                            "English")  # the session keeps its language
+    assert page.note.text() == "Saved: the next start uses the new language." and not page.note.isHidden()
+    page.sources.buttons["computer"].click()  # a source changes at once
+    assert page.doing.text() == "Translating what the computer plays into English"
+    app._live = False  # stopped elsewhere: the note about that session goes
+    window.refresh()
+    assert page.note.isHidden() and page.doing.text() == "Ready to translate what the computer plays into Tamil"
 
 
 def test_the_source_decides_which_languages_are_asked_for():
@@ -1288,6 +1715,12 @@ def test_without_a_gemini_key_it_says_where_to_add_one():
     window.show_page("live")
     page = window.pages["live"]
     assert not page.connect_card.isHidden() and not page.start_button.isEnabled()
+    assert page.state.text() == "Off" and page.doing.text() == "Add a Gemini key to start it"
+    assert not page.start_card.grab().isNull()  # pressed in, quiet
+    _button(page.connect_card, "Add a Gemini key").click()
+    assert window.current_page() == "models"
+    gemini = window.pages["models"].keys.rows["gemini"]
+    assert gemini.editing and not gemini.isHidden() and gemini.key.editing  # its line open, ready to paste
 
 
 def test_past_sessions_are_listed_to_open():
@@ -1320,4 +1753,4 @@ def test_hearing_the_translation_is_switched_on_in_the_section():
 def test_the_section_says_when_the_voice_cant_speak_the_language_chosen():
     window, _ = _live_window(live_target="ja")
     window.show_page("live")
-    assert window.pages["live"].speak_caption.text().startswith("Danny speaks English: choose English above")
+    assert window.pages["live"].speak_caption.text().startswith("Danny speaks English: choose English below")

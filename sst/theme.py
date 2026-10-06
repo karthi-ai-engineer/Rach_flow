@@ -192,6 +192,15 @@ ICONS = {
     "warning": '<path d="M12 4 21 19.5H3zM12 10v4M12 17v.3"/>',
     "reading": '<path d="M5 5h14M5 9.5h14M5 14h9M5 18.5h6"/>',
     "live": '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10.5h5M14.5 10.5h2.5M7 14.5h2.5M12 14.5h5"/>',
+    # the sections of phase 31: a page with a bolt (a phrase that types your text), a wand, A to 文, #, a flag
+    "snippets": '<path d="M13.5 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5zM13.5 3.5v5h5'
+                'M12.5 11 10 14.5h4L11.5 18"/>',
+    "transform": '<path d="M4.5 19.5l10-10M13 8l3 3M18 3.5v3.5M16.25 5.25h3.5M19.5 12.5v2.5M18.25 13.75h2.5M9.5 3.5v2.5'
+                 'M8.25 4.75h2.5"/>',
+    "translate": '<path d="M3.5 6h9M8 3.5V6M10.5 6c-.6 3.6-2.9 6.6-6 8M6 9.5c1 1.9 2.6 3.4 4.5 4.3M12.5 20.5l3.75-9'
+                 ' 3.75 9M13.9 17.3h4.7"/>',
+    "formatting": '<path d="M10 4 8 20M16.5 4l-2 16M5 9h15M4 15h15"/>',
+    "report": '<path d="M5.5 21V4M5.5 4.5h12.5l-2.5 4.25L18 13H5.5"/>',
 }
 
 

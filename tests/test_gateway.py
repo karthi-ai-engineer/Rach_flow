@@ -44,6 +44,13 @@ class FakeGateway:
                     return self._reply(500, {"error": {"message": "backend exploded"}})
                 if model == "slow":
                     time.sleep(1.0)
+                if model.startswith("cut"):  # stopped at the token limit: part of an answer, or none (thinking used it)
+                    part = "So we merge the five" if model == "cut" else ""
+                    if anthropic:
+                        return self._reply(200, {"type": "message", "role": "assistant", "stop_reason": "max_tokens",
+                                                 "content": [{"type": "text", "text": part}] if part else []})
+                    return self._reply(200, {"choices": [{"message": {"role": "assistant", "content": part},
+                                                          "finish_reason": "length"}]})
                 answer = {"long": text + " and then some more words " * 10,
                           "think": "<think>let me see</think> So we merge the five PRs today.",
                           "quoted": '"So we merge the five PRs today."'}.get(model, "So we merge the five PRs today.")
@@ -149,6 +156,24 @@ def test_an_implausible_answer_is_not_used(fake, model):
     assert p.polish(HEARD) == HEARD and "unusual" in p.last_error
 
 
+@pytest.mark.parametrize("provider", ["groq", "anthropic"])
+def test_an_answer_cut_off_at_the_token_limit_is_never_used(fake, provider):
+    # "So we merge the five" would pass as plausible: a text with a hole in it. The backup model's is used instead.
+    assert fake.polisher(model="cut", fallback="good", provider=provider).polish(HEARD) == "So we merge the five PRs today."
+    p = fake.polisher(model="cut-empty", provider=provider)  # a model whose thinking used up the limit
+    assert p.polish(HEARD) == HEARD and "ran out of tokens before answering" in p.last_error
+    with pytest.raises(GatewayError, match="ran out of tokens before the end of its answer"):
+        fake.polisher(model="cut", provider=provider).complete(HEARD)
+
+
+def test_text_transform_and_translate_get_a_higher_token_limit(fake):
+    polisher = fake.polisher(model="gpt-4.1-mini", provider="openai")
+    polisher.polish(HEARD)
+    cleanup = _last_post(fake)["max_completion_tokens"]
+    polisher.complete(HEARD)  # a translation into Tamil or Japanese takes several tokens a word
+    assert _last_post(fake)["max_completion_tokens"] >= cleanup + 200
+
+
 @pytest.mark.parametrize("model", ["think", "quoted"])
 def test_thinking_tags_and_quotes_are_removed(fake, model):
     assert fake.polisher(model=model).polish(HEARD) == "So we merge the five PRs today."
@@ -232,20 +257,31 @@ def test_openai_gets_its_current_limit_name_and_no_self_hosted_options(fake):
     assert "max_tokens" not in sent and "chat_template_kwargs" not in sent  # OpenAI refuses fields it doesn't know
 
 
-def test_openai_reasoning_models_get_room_to_think_and_no_temperature(fake):
-    fake.polisher(model="gpt-5-mini", provider="openai").polish(HEARD)
+@pytest.mark.parametrize("model, effort", [("gpt-5-mini", "minimal"), ("gpt-6-luna", "none"), ("gpt-6-astra", "low"),
+                                           ("o3", None)])
+def test_openai_reasoning_models_think_least_with_room_and_no_temperature(fake, model, effort):
+    fake.polisher(model=model, provider="openai").polish(HEARD)
     sent = _last_post(fake)
-    assert "temperature" not in sent and sent["max_completion_tokens"] > 2000
+    assert "temperature" not in sent and sent["max_completion_tokens"] > gateway.THINKING_ROOM
+    assert sent.get("reasoning_effort") == effort  # the least it allows; a model not known keeps its default
 
 
 def test_anthropic_gets_its_messages_api(fake):
-    polisher = fake.polisher(provider="anthropic", vocabulary=["PRs"])
+    polisher = fake.polisher(model="claude-haiku-4-5", provider="anthropic", vocabulary=["PRs"])
     assert polisher.polish(HEARD) == "So we merge the five PRs today."
     sent = _last_post(fake)
     assert sent["path"] == "/v1/messages" and sent["auth"] is None
     assert sent["x-api-key"] == "test-key" and sent["anthropic-version"] == gateway.ANTHROPIC_VERSION
     assert "PRs" in sent["system"] and [m["role"] for m in sent["messages"]] == ["user"]
-    assert sent["max_tokens"] > 0 and sent["temperature"] == 0
+    assert 0 < sent["max_tokens"] < gateway.THINKING_ROOM and sent["temperature"] == 0  # Haiku 4.5 takes it
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-opus-4-7", "a-name-of-its-own"])
+def test_claude_4_7_and_later_get_no_temperature_and_room_to_think(fake, model):
+    # Anthropic answers HTTP 400 to temperature 0 from Claude 4.7 on, and Opus 5.5 thinks whether asked or not.
+    fake.polisher(model=model, provider="anthropic").polish(HEARD)
+    sent = _last_post(fake)
+    assert "temperature" not in sent and sent["max_tokens"] > gateway.THINKING_ROOM
 
 
 def test_anthropic_errors_are_readable(fake):
@@ -253,24 +289,43 @@ def test_anthropic_errors_are_readable(fake):
     assert polisher.polish(HEARD) == HEARD and "backend exploded" in polisher.last_error
 
 
-def test_gemini_gets_no_token_limit(fake):
-    fake.polisher(provider="gemini").polish(HEARD)
+@pytest.mark.parametrize("model, sent_too", [
+    ("gemini-3.5-flash-lite", {"reasoning_effort": "minimal"}), ("gemini-3.8-flash", {"reasoning_effort": "low"}),
+    ("gemini-flash-lite-latest", {}), ("gemini-2.5-flash-lite", {"temperature": 0})])
+def test_gemini_gets_no_token_limit_and_gemini_3_thinks_least_at_its_own_temperature(fake, model, sent_too):
+    fake.polisher(model=model, provider="gemini").polish(HEARD)
     sent = _last_post(fake)
-    assert sent["temperature"] == 0 and "max_tokens" not in sent and "max_completion_tokens" not in sent
-    assert "chat_template_kwargs" not in sent
+    assert "max_tokens" not in sent and "max_completion_tokens" not in sent and "chat_template_kwargs" not in sent
+    assert {k: sent[k] for k in ("reasoning_effort", "temperature") if k in sent} == sent_too
 
 
-@pytest.mark.parametrize("provider, self_hosted", [("groq", False), ("ollama", True), ("vllm", True)])
-def test_self_hosted_servers_get_the_no_thinking_option(fake, provider, self_hosted):
+@pytest.mark.parametrize("provider", ["ollama", "vllm"])
+def test_self_hosted_servers_get_the_no_thinking_option(fake, provider):
     fake.polisher(provider=provider).polish(HEARD)
     sent = _last_post(fake)
-    assert sent["max_tokens"] > 0 and ("chat_template_kwargs" in sent) is self_hosted
+    assert sent["max_tokens"] > 0 and sent["temperature"] == 0 and sent["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_groq_s_gpt_oss_thinks_little_with_room_for_it(fake):
+    # llama-3.1-8b-instant is shut down; gpt-oss-20b thinks at "medium" unless told, and its thinking counts against
+    # the limit: without room, the answer could come back empty.
+    assert fake.polisher(model="openai/gpt-oss-20b", provider="groq").polish(HEARD) == "So we merge the five PRs today."
+    sent = _last_post(fake)
+    assert sent["reasoning_effort"] == "low" and sent["include_reasoning"] is False and "temperature" not in sent
+    assert sent["max_completion_tokens"] > gateway.THINKING_ROOM and "max_tokens" not in sent  # Groq's current name
+    assert "chat_template_kwargs" not in sent
+    fake.polisher(model="a-model-that-answers", provider="groq").polish(HEARD)
+    sent = _last_post(fake)
+    assert sent["temperature"] == 0 and 0 < sent["max_completion_tokens"] < gateway.THINKING_ROOM
+    assert "reasoning_effort" not in sent and "include_reasoning" not in sent
 
 
 def test_load_models_leaves_out_models_that_dont_write_text(fake):
     fake.models = [{"id": "gpt-4o-mini"}, {"id": "whisper-1"}, {"id": "text-embedding-3-small"}, {"id": "tts-1"},
-                   {"id": "models/gemini-2.5-flash"}, {"id": "llama-guard-4"}, {"id": "dall-e-3"}]
-    assert fake.polisher().models() == ["gemini-2.5-flash", "gpt-4o-mini"]
+                   {"id": "models/gemini-2.5-flash"}, {"id": "llama-guard-4"}, {"id": "dall-e-3"},
+                   {"id": "canopylabs/orpheus-arabic-saudi"}, {"id": "openai/gpt-oss-safeguard-20b"},
+                   {"id": "openai/gpt-oss-20b"}]
+    assert fake.polisher().models() == ["gemini-2.5-flash", "gpt-4o-mini", "openai/gpt-oss-20b"]
 
 
 def test_anthropic_models_are_listed_with_its_headers(fake):
@@ -319,6 +374,20 @@ def test_cloud_speech_shares_each_providers_key():
     assert vllm.others["vllm"] == ("http://10.0.0.5/v1", "secret")  # its address is kept
     assert "groq" not in groq.with_key("groq", "").others  # a key removed leaves nothing behind
     assert set(groq.entries()) == {"openai", "anthropic", "vllm", "groq"}
+
+
+def test_saving_a_key_never_chooses_or_changes_the_cleanup_s_provider():
+    # The user testing's M-04: a Gemini key added for live translation switched AI cleanup to Gemini, with no model.
+    config = GatewayConfig("", "sk-openai", "openai").with_key("gemini", "AIza-live")
+    assert (config.chosen, config.api_key, config.key_for("gemini")) == ("openai", "sk-openai", "AIza-live")
+    legacy = GatewayConfig("https://api.openai.com/v1", "sk-old")  # from before the provider choice: by its address
+    assert legacy.with_key("openai", "sk-new") == GatewayConfig("https://api.openai.com/v1", "sk-new")
+    nothing = GatewayConfig()  # a new install: no provider chosen yet
+    assert nothing.chosen == "" and nothing.service.key == "vllm"
+    server = nothing.with_entry("vllm", "http://localhost:8000/v1", "")
+    assert server.chosen == "" and server.address == ""  # kept for later, not made the cleanup's server
+    assert server.entries() == {"vllm": ("http://localhost:8000/v1", "")} and server.key_for("vllm") == ""
+    assert server.with_key("vllm", "srv-key").others["vllm"] == ("http://localhost:8000/v1", "srv-key")
 
 
 def test_a_key_saved_for_speech_survives_saving_and_loading(tmp_path):

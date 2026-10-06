@@ -148,6 +148,10 @@ def tray_app(monkeypatch, tmp_path):
     saved, files = {}, {}  # files: each profile's settings by path, as if on disk
     monkeypatch.setattr(settings_module, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(sst_app.bench, "BENCH_DIR", tmp_path / "bench")
+    # quit() marks a clean exit in the log folder: never the real one, where a running Rflow keeps its marker
+    monkeypatch.setattr(sst_app, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(sst_app, "DEBUG_DIR", tmp_path / "debug")
+    monkeypatch.setattr(sst_app, "DATA_DIRS", (tmp_path / "roaming" / "sst", tmp_path / "local" / "sst"))  # Start over
     monkeypatch.setattr(Settings, "load", classmethod(lambda cls, path=None: files.get(path) or Settings(
         welcomed=path == tmp_path / "settings.json")))  # the first profile is set up already, a new one isn't
 
@@ -426,6 +430,26 @@ def test_a_model_on_your_own_server_switches_its_address_without_a_reload(tray_a
     assert _wait_for(lambda: app.speech_in_use() == "parakeet", QTest.qWait)
 
 
+def test_a_key_added_on_ai_and_models_never_changes_the_cleanup_or_the_speech_model(tray_app, monkeypatch):
+    # The user testing's M-04: a Gemini key added for live translation switched AI cleanup to Gemini, with no model.
+    from sst.gateway import SPEECH_SERVER
+    monkeypatch.setattr(sst_app.Polisher, "prepare", lambda self: None)  # no connection to the provider
+    app, saved, _ = tray_app
+    app.save_cleanup(True, "gpt-4o-mini", "", GatewayConfig("", "sk-openai", "openai"))
+    assert "add a Gemini key" in app.live_problem()
+    app.save_key("gemini", "AIza-live")
+    assert saved["gateway"].key_for("gemini") == "AIza-live" and not app.live_problem()
+    assert (app.gateway.chosen, app.gateway.api_key, app.settings.cleanup_model) == ("openai", "sk-openai", "gpt-4o-mini")
+    assert app.dictation.cleanup.model == "gpt-4o-mini" and app.speech_in_use() == "parakeet"
+    app.save_key("openai", "sk-new")  # the cleanup's own key: used from the next dictation
+    assert app.dictation.cleanup.config.api_key == "sk-new" and app.gateway.chosen == "openai"
+    app.save_server("http://localhost:8000/v1", "", ("vllm", SPEECH_SERVER))
+    assert app.gateway.speech_server() == ("http://localhost:8000/v1", "") and app.gateway.chosen == "openai"
+    assert app.settings.speech_model == "parakeet"  # kept for when it's chosen
+    app.save_key("gemini", "")  # removed
+    assert "add a Gemini key" in app.live_problem() and app.gateway.key_for("openai") == "sk-new"
+
+
 def test_a_new_install_starts_without_a_speech_model_then_downloads_parakeet(no_parakeet, tray_app, monkeypatch,
                                                                               tmp_path):
     from PySide6.QtTest import QTest
@@ -593,6 +617,16 @@ def test_the_source_and_screen_sharing_apply_while_it_runs(tray_app, monkeypatch
     assert app.set_live_source("microphone") == "" and app.settings.live_source == "microphone"
     app.set_live_hidden(False)
     assert not app.settings.live_hide_from_share and calls == [("source", "microphone"), ("hidden", False)]
+
+
+def test_a_running_live_translation_keeps_the_languages_it_started_with(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    app.apply_settings(dataclasses.replace(app.settings, live_target="en", live_mic_target="ja"))
+    assert app.live_languages() == ("en", "ja")
+    monkeypatch.setattr(type(app.live), "running", property(lambda self: True))
+    app.live.config = app.live_config()  # what it started with
+    app.apply_settings(dataclasses.replace(app.settings, live_target="ta", live_mic_target="ko"))
+    assert app.live_languages() == ("en", "ja")  # the page says what it translates into: the new ones wait for a start
 
 
 def test_ctrl_alt_l_starts_and_stops_live_translation_from_any_app(tray_app, monkeypatch):
@@ -801,3 +835,72 @@ def test_only_a_real_crash_counts_not_an_exception_windows_handles_itself():
     assert sst_app.crashed(seen_here + "\nWindows fatal exception: access violation\n\nCurrent thread ...")
     assert sst_app.crashed("Fatal Python error: Segmentation fault\n")
     assert sst_app.crashed("Windows fatal exception: code 0xc0000409\n") and not sst_app.crashed("")
+
+
+# ---- Start over (phase 31): every test works in temporary folders, never in Rflow's real ones
+
+def _rflow_data(root):
+    """Rflow's two data folders as they'd be after some use: %APPDATA%\\sst and %LOCALAPPDATA%\\sst."""
+    roaming, local = root / "Roaming" / "sst", root / "Local" / "sst"
+    for path in (roaming / "settings.json", roaming / "gateway.json", roaming / "profiles" / "rahul" / "dictionary.db",
+                 roaming / "live captions" / "2026-10-06 10-00-00 live captions.txt", local / "logs" / "sst.log",
+                 local / "bench" / "2026-10-06_100000" / "01.wav", local / "recordings" / "a.wav",
+                 local / "models" / "parakeet" / "encoder.int8.onnx"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x", encoding="utf-8")
+    return roaming, local
+
+
+def test_erase_data_deletes_rflows_folders_and_can_keep_the_models(tmp_path):
+    roaming, local = _rflow_data(tmp_path)
+    neighbour = tmp_path / "Roaming" / "Other app"
+    neighbour.mkdir()
+    (neighbour / "keep.txt").write_text("x", encoding="utf-8")
+    assert sst_app.erase_data([roaming, local], keep=("models",)) == []
+    assert not roaming.exists() and [p.name for p in local.iterdir()] == ["models"]
+    assert (local / "models" / "parakeet" / "encoder.int8.onnx").exists() and (neighbour / "keep.txt").exists()
+    assert sst_app.erase_data([roaming, local]) == [] and not local.exists()  # without keeping the models
+
+
+def test_erase_data_never_touches_a_folder_not_named_sst(tmp_path):
+    home = tmp_path / "home"  # e.g. APPDATA unset: never the user's own folder
+    (home / "Documents").mkdir(parents=True)
+    (home / "notes.txt").write_text("mine", encoding="utf-8")
+    assert sst_app.erase_data([home]) == []
+    assert (home / "notes.txt").exists() and (home / "Documents").exists()
+
+
+def test_erase_data_says_what_another_program_holds_open(tmp_path):
+    roaming, _ = _rflow_data(tmp_path)
+    with open(roaming / "settings.json", encoding="utf-8"):  # open: Windows doesn't let it be deleted
+        left = sst_app.erase_data([roaming])
+    assert left == [roaming / "settings.json"] and not (roaming / "profiles").exists()
+
+
+def test_start_over_stops_everything_deletes_the_data_and_starts_rflow_again(tray_app, tmp_path, monkeypatch):
+    app, _, _ = tray_app
+    roaming, local = _rflow_data(tmp_path / "data")
+    monkeypatch.setattr(sst_app, "DATA_DIRS", (roaming, local))
+    events, started = [], []
+    erase, close = sst_app.erase_data, app.dictionary.close
+    monkeypatch.setattr(sst_app, "close_log_files", lambda: events.append("logs"))
+    monkeypatch.setattr(sst_app, "erase_data", lambda folders, keep=(): events.append(("erase", keep)) or erase(folders, keep))
+    monkeypatch.setattr(app.dictionary, "close", lambda: (events.append("dictionary"), close()))
+    monkeypatch.setattr(sst_app.subprocess, "Popen", lambda command, **options: started.append(command) or events.append("start"))
+    monkeypatch.setattr(sst_app.QApplication, "exit", lambda code=0: events.append("exit"))
+    app.start_over(keep_models=True)
+    assert events == ["dictionary", "logs", ("erase", ("models",)), "start", "exit"]  # files let go of before deleting
+    assert not app.listener.running and not app.live.running and not app.tray.isVisible()
+    assert not roaming.exists() and [p.name for p in local.iterdir()] == ["models"]
+    assert started[0][-1] == f"--after={os.getpid()}"  # the new Rflow waits for this one to end
+
+
+def test_rflow_started_again_waits_for_the_one_that_started_it():
+    import subprocess
+    import sys
+    import time
+    assert sst_app.restart_command(1234)[0] == sys.executable and sst_app.restart_command(1234)[-1] == "--after=1234"
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.5)"])
+    began = time.monotonic()
+    sst_app.wait_for_exit(child.pid, 10)
+    assert child.poll() is not None and time.monotonic() - began >= 0.3

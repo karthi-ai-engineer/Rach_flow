@@ -62,8 +62,8 @@ SPEECH_MODELS = {m.key: m for m in [
                 "it takes several seconds per sentence (Parakeet about one).",
                 "99 languages", "1.6 GB, downloaded when chosen", download=whisper.MODEL, language_choice=True),
     SpeechModel("openai", "OpenAI", "cloud",
-                "OpenAI's transcription models: gpt-4o-mini-transcribe is quick, gpt-4o-transcribe the most accurate, "
-                "whisper-1 the original Whisper.",
+                "gpt-transcribe, OpenAI's current transcription model. gpt-4o-mini-transcribe, gpt-4o-transcribe and "
+                "whisper-1 are being retired: they work until OpenAI shuts them down on 26 February 2027.",
                 "Many languages", "Nothing to download", language_choice=True),
     SpeechModel("groq", "Groq", "cloud",
                 "Whisper large-v3 turbo on Groq's servers: the same model as on this computer, back in a fraction of "
@@ -71,7 +71,8 @@ SPEECH_MODELS = {m.key: m for m in [
                 "99 languages", "Nothing to download", language_choice=True),
     SpeechModel("gemini", "Google Gemini", "cloud",
                 "Gemini 3.5 Transcribe writes down exactly what was said, with the time of each word; Gemini's Flash "
-                "models are there too. Good with names and mixed languages.",
+                "models are there too. Good with names and mixed languages. Transcribe doesn't know Tamil: for Tamil, "
+                "choose gemini-3.5-flash-lite.",
                 "Many languages", "Nothing to download", language_choice=True),
     SpeechModel("server", "Your own server", "server",
                 "Whisper or another speech model on a server you run or trust: vLLM, your company's AI gateway, or any "

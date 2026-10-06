@@ -8,8 +8,8 @@ import random
 from functools import lru_cache
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QAbstractButton,
     QCheckBox,
@@ -688,6 +688,197 @@ class Orb(QWidget):
                 h *= unit
                 x = c.x() + (i - 2) * 8 * unit - 2 * unit
                 p.drawRoundedRect(QRectF(x, c.y() - h / 2, 4 * unit, h), 2 * unit, 2 * unit)
+        p.end()
+
+
+# ---------------------------------------------------------------- a feature's big Start / Stop and its light
+
+
+class PowerButton(QPushButton):
+    """The big Start / Stop of something that runs until it's stopped (live translation): Mint with a play mark to
+    start, Coral with a stop mark while it runs. It's its page's one main button, so it glows in its colour; the glow
+    reaches outside the button, so its card (a GlowCard) paints it beneath, as hosts paint the other soft depth."""
+
+    HEIGHT, PADDING, MIN_WIDTH, RADIUS = 48, 28, 148, 14
+
+    def __init__(self, text: str = "Start", parent=None):
+        super().__init__(text, parent)
+        self.running = False
+        self.setAccessibleName(text)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def set_running(self, running: bool, text: str) -> None:
+        """Start (Mint) or Stop (Coral)."""
+        self.running = running
+        self.setText(text)
+        self.setAccessibleName(text)
+        self._glow_changed()
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self.updateGeometry()
+
+    def colour(self) -> QColor:
+        return _t(self, "live" if self.running else "ok")
+
+    def sizeHint(self) -> QSize:
+        width = 12 + 10 + QFontMetrics(font(16, 600)).horizontalAdvance(self.text()) + 2 * self.PADDING
+        return QSize(max(self.MIN_WIDTH, width), self.HEIGHT)
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def hitButton(self, pos) -> bool:
+        return self.rect().contains(pos)
+
+    def paint_glow(self, p: QPainter, host: QWidget) -> None:
+        """The glow beneath it, painted by its card (none while it's pressed in or off)."""
+        if not self.isVisibleTo(host) or not self.isEnabled() or self.isDown():
+            return
+        top_left = self.mapTo(host, self.rect().topLeft())
+        glow = self.colour()
+        glow.setAlphaF(.34 if _shade(self) == "dark" else .30)
+        theme.outer_shadow(p, QRectF(top_left.x(), top_left.y(), self.width(), self.height()), self.RADIUS,
+                           [(0, 4, 16, glow)], host.devicePixelRatioF())
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect())
+        if self.isEnabled():
+            colour = self.colour()
+            face = colour.darker(110) if self.isDown() else colour.lighter(106) if self.underMouse() else colour
+            p.fillPath(theme.rounded(r, self.RADIUS), face)
+            theme.lip(p, r, self.RADIUS, 1, theme.rgba(255, 255, 255, .30))
+            ink = _t(self, "on_primary")  # dark on Obsidian's light Mint and Coral, white on Porcelain's deep ones
+        else:  # off (live translation without its key): pressed in, quiet
+            p.fillPath(theme.rounded(r, self.RADIUS), _t(self, "base"))
+            theme.inner_shadow(p, r, self.RADIUS, theme.SHADOWS[_shade(self)]["in2"], self.devicePixelRatioF())
+            ink = _t(self, "text3")
+        f = font(16, 600)
+        text_w = QFontMetrics(f).horizontalAdvance(self.text())
+        x = (r.width() - (12 + 10 + text_w)) / 2
+        mid = r.height() / 2
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(ink)
+        if self.running:  # a stop mark: a small rounded square
+            p.drawRoundedRect(QRectF(x + 1, mid - 5, 10, 10), 2, 2)
+        else:  # a play mark: a triangle with soft corners
+            p.setPen(QPen(ink, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            p.drawPolygon(QPolygonF([QPointF(x + 2, mid - 5.5), QPointF(x + 11, mid), QPointF(x + 2, mid + 5.5)]))
+        p.setFont(f)
+        p.setPen(ink)
+        p.drawText(QRectF(x + 22, 0, text_w + 2, r.height()), Qt.AlignmentFlag.AlignVCenter, self.text())
+        if self.hasFocus() and getattr(self, "_keyboard_focus", False):
+            p.setPen(QPen(_t(self, "iris"), 2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(r.adjusted(1, 1, -1, -1), self.RADIUS - 1, self.RADIUS - 1)
+        p.end()
+
+    def _glow_changed(self) -> None:
+        self.update()
+        theme.refresh(self)  # the card repaints the glow around it
+
+    def focusInEvent(self, event):
+        self._keyboard_focus = event.reason() in (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason)
+        super().focusInEvent(event)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.update()
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self._glow_changed()
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self._glow_changed()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange:
+            self._glow_changed()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        host = theme.host_of(self)
+        if host is not None:
+            host.update()  # the glow moves with it: its card (small) is painted again whole
+
+
+class GlowCard(Card):
+    """A card that paints the glow of the PowerButton on it, beneath the button, along with its other surfaces."""
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        paint_hosted(self, p)
+        for b in self.findChildren(PowerButton):
+            if theme.host_of(b) is self:
+                b.paint_glow(p, self)
+        p.end()
+
+
+class BlinkLamp(Lamp):
+    """A lamp that blinks while something runs (live translation's red light): lit half a second, dimmed the other
+    half. Its timer runs only while it is blinking and shown, so a page left open, hidden or minimised costs nothing."""
+
+    def __init__(self, state: str = "off", size: int = 14, parent=None):
+        super().__init__(state, parent)
+        self.setFixedSize(size, size)
+        self.blinking, self.lit = False, True
+        self._timer = QTimer(self, interval=500, timeout=self._tick)
+
+    def set_blinking(self, on: bool) -> None:
+        if on == self.blinking:
+            return
+        self.blinking, self.lit = on, True
+        if on and self.isVisible():
+            self._timer.start()
+        elif not on:
+            self._timer.stop()
+        self.update()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.blinking:
+            self.lit = True
+            self._timer.start()
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def _tick(self) -> None:
+        self.lit = not self.lit
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        d = self.width()
+        c = QPointF(d / 2, d / 2)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(_t(self, "well"))
+        p.drawEllipse(QRectF(0, 0, d, d))
+        theme.inner_shadow(p, QRectF(0, 0, d, d), d / 2, theme.SHADOWS[_shade(self)]["in2"], self.devicePixelRatioF())
+        colour = _t(self, self.COLOURS.get(self.state, "text3"))
+        if not self.lit:
+            colour.setAlphaF(.22)  # dimmed, not gone: the light is still there between blinks
+        elif _shade(self) == "dark" and self.state in ("ok", "warn", "live"):
+            halo = QColor(colour)
+            halo.setAlpha(80)
+            p.setBrush(halo)
+            p.drawEllipse(c, d * .375, d * .375)
+        p.setBrush(colour)
+        p.drawEllipse(c, d * .25, d * .25)
         p.end()
 
 

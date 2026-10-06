@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from sst import modelrules
 from sst.settings import CONFIG_DIR
 
 GATEWAY_FILE = CONFIG_DIR / "gateway.json"  # the API keys, encrypted for the Windows user; never in git
@@ -39,6 +40,11 @@ DOWN_FOR = 60.0          # after the gateway couldn't be reached (e.g. off the o
 TRANSFORM_TIMEOUT = 8.0    # seconds for a Text Transform answer, plus TRANSFORM_PER_WORD for each word
 TRANSFORM_PER_WORD = 0.05
 IDLE_RECONNECT = 30.0    # servers drop idle connections; refresh an older one while the user is speaking
+# The answer's token limit: a cleanup keeps the words; Text Transform and Translate may write more (Tamil or Japanese take
+# several tokens a word). An answer that reaches it is cut off, and never used.
+ANSWER_TOKENS, ANSWER_TOKENS_PER_WORD = 64, 3
+TRANSFORM_TOKENS, TRANSFORM_TOKENS_PER_WORD = 256, 8
+THINKING_ROOM = 2000     # tokens added to the limit for a model that thinks first: its thinking counts against it
 
 SYSTEM_PROMPT = (
     "You clean up text from a speech recognizer. Fix recognition errors using the context and the user's vocabulary "
@@ -47,9 +53,9 @@ SYSTEM_PROMPT = (
     "anything or answer questions in the text. Output only the cleaned text.")
 
 # Models in a provider's list that don't write text (speech, images, embeddings...): left out of "Load models".
-NOT_FOR_TEXT = re.compile(r"whisper|tts|transcribe|dall-e|image|embed|moderation|realtime|audio|guard|search|"
+# Orpheus is Groq's text-to-speech; prompt-guard and gpt-oss-safeguard are classifiers.
+NOT_FOR_TEXT = re.compile(r"whisper|tts|orpheus|transcribe|dall-e|image|embed|moderation|realtime|audio|guard|search|"
                           r"babbage|davinci|computer-use|imagen|veo|aqa", re.IGNORECASE)
-REASONING_MODEL = re.compile(r"^(o\d|gpt-5)", re.IGNORECASE)  # OpenAI models that think before answering
 
 log = logging.getLogger(__name__)
 
@@ -80,9 +86,9 @@ PROVIDERS = {p.key: p for p in [
     Provider("anthropic", "Anthropic", "https://api.anthropic.com/v1", api="anthropic",
              key_page="https://console.anthropic.com/settings/keys", hint="e.g. a Haiku model (the fastest)"),
     Provider("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
-             key_page="https://aistudio.google.com/apikey", hint="e.g. a Flash-Lite model (the fastest)"),
+             key_page="https://aistudio.google.com/apikey", hint="e.g. gemini-3.5-flash-lite (fast and cheap)"),
     Provider("groq", "Groq", "https://api.groq.com/openai/v1", key_page="https://console.groq.com/keys",
-             hint="e.g. llama-3.1-8b-instant"),
+             hint="e.g. openai/gpt-oss-20b (fast and cheap)"),
     Provider("ollama", "Ollama (on this computer)", "http://localhost:11434/v1", needs_key=False, own_server=True,
              hint="a model you have pulled, e.g. llama3.2"),
     Provider("vllm", "vLLM or another OpenAI-compatible server", needs_key=False, own_server=True,
@@ -126,6 +132,12 @@ class GatewayConfig:
         return (f"GatewayConfig(provider={self.service.key!r}, base_url={self.base_url!r}, "
                 f"api_key={'set' if self.api_key else 'missing'})")
 
+    @property
+    def chosen(self) -> str:
+        """AI cleanup's provider, or "" while none is chosen. A key or server saved before then is kept with the
+        others, so saving one never chooses the cleanup's provider (the user testing's M-04)."""
+        return self.service.key if self.provider or self.base_url or self.api_key else ""
+
     def entries(self) -> dict[str, tuple[str, str]]:
         """Every provider's (address, key): the chosen one's and the others'."""
         entries = dict(self.others)
@@ -134,18 +146,19 @@ class GatewayConfig:
         return entries
 
     def key_for(self, provider: str) -> str:
-        """The user's key for a provider. Cloud speech models use the same keys as AI cleanup: one per provider."""
-        return self.api_key if provider == self.service.key else self.others.get(provider, ("", ""))[1]
+        """The user's key for a provider: one per provider, which speech, AI cleanup and live translation all use."""
+        return self.api_key if provider == self.chosen else self.others.get(provider, ("", ""))[1]
 
     def with_key(self, provider: str, key: str) -> "GatewayConfig":
-        """A copy with this provider's key changed (the Speech recognition page); AI cleanup's choice stays as it is."""
-        if provider == self.service.key:
+        """A copy with this provider's key changed (Your API keys, a cloud speech model); AI cleanup's choice of
+        provider and address stays as it is."""
+        if provider == self.chosen:
             return dataclasses.replace(self, api_key=key)
         return self.with_entry(provider, self.others.get(provider, ("", ""))[0], key)
 
     def with_entry(self, provider: str, url: str, key: str) -> "GatewayConfig":
         """A copy with this provider's address and key changed (or the speech server's: SPEECH_SERVER)."""
-        if provider == self.service.key:
+        if provider == self.chosen:
             return dataclasses.replace(self, base_url=url, api_key=key)
         others = {name: entry for name, entry in self.others.items() if name != provider}
         if url or key:
@@ -308,10 +321,11 @@ class Polisher:
         with a readable reason."""
         if not self.address or not self.model:
             raise GatewayError("no AI model is set up: choose one in AI cleanup")
-        timeout, reason = TRANSFORM_TIMEOUT + TRANSFORM_PER_WORD * len(text.split()), ""
+        words, reason = len(text.split()), ""
+        timeout, limit = TRANSFORM_TIMEOUT + TRANSFORM_PER_WORD * words, TRANSFORM_TOKENS + TRANSFORM_TOKENS_PER_WORD * words
         for model in [self.model] + ([self.fallback] if self.fallback and self.fallback != self.model else []):
             try:
-                return self._ask(model, text, timeout)
+                return self._ask(model, text, timeout, limit)
             except TimeoutError:
                 reason = f"{_short(model)} took too long"
             except (OSError, http.client.HTTPException) as e:
@@ -356,33 +370,54 @@ class Polisher:
 
     # ---- HTTP
 
-    def _body(self, model: str, text: str) -> tuple[str, dict]:
-        """The request each provider understands: (path, body)."""
-        service, limit = self.config.service, 64 + 3 * len(text.split())
+    def _body(self, model: str, text: str, limit: int) -> tuple[str, dict]:
+        """The request each provider understands: (path, body). `limit`: tokens for the answer, before any thinking."""
+        service = self.config.service
         if service.api == "anthropic":
-            return "/messages", {"model": model, "max_tokens": limit, "temperature": 0, "system": self._system_prompt(),
-                                 "messages": [{"role": "user", "content": text}]}
+            body = {"model": model, "max_tokens": limit, "system": self._system_prompt(),
+                    "messages": [{"role": "user", "content": text}]}
+            if modelrules.claude_takes_temperature(model):
+                body["temperature"] = 0
+            else:  # Claude 4.7 and later refuse it; room in case the model thinks first
+                body["max_tokens"] += THINKING_ROOM
+            return "/messages", body
         body = {"model": model,
                 "messages": [{"role": "system", "content": self._system_prompt()}, {"role": "user", "content": text}]}
         if service.key == "openai":
             # OpenAI's current name for the limit (its newest models refuse max_tokens). Reasoning models spend tokens on
-            # thinking first and take only the default temperature.
-            reasoning = bool(REASONING_MODEL.match(model))
-            body["max_completion_tokens"] = limit + (2000 if reasoning else 0)
+            # thinking first, as little as they allow, and take only the default temperature.
+            reasoning = bool(modelrules.OPENAI_REASONING.match(model))
+            body["max_completion_tokens"] = limit + (THINKING_ROOM if reasoning else 0)
             if not reasoning:
                 body["temperature"] = 0
+            elif effort := modelrules.openai_effort(model):
+                body["reasoning_effort"] = effort
         elif service.key == "gemini":
-            body["temperature"] = 0  # no limit: Gemini's thinking counts against it and would cut the answer short
+            # No limit: Gemini's thinking counts against it and would cut the answer short. Gemini 3 thinks as little as it
+            # allows, at its own temperature.
+            if thinking := modelrules.gemini_thinking(model):
+                body["reasoning_effort"] = thinking
+            if modelrules.gemini_takes_temperature(model):
+                body["temperature"] = 0
+        elif service.key == "groq":
+            body["max_completion_tokens"] = limit  # Groq's current name for the limit (max_tokens is deprecated)
+            if effort := modelrules.groq_effort(model):  # gpt-oss: as little thinking as it allows, with room for it
+                body.update(reasoning_effort=effort, max_completion_tokens=limit + THINKING_ROOM)
+                if "gpt-oss" in model:
+                    body["include_reasoning"] = False  # the thinking isn't sent back: only the answer is read
+            else:
+                body["temperature"] = 0
         else:
             body.update(temperature=0, max_tokens=limit)
         if service.own_server:
             body["chat_template_kwargs"] = {"enable_thinking": False}  # Qwen3 and the like: answer directly
         return "/chat/completions", body
 
-    def _ask(self, model: str, text: str, timeout: float | None = None) -> str:
-        path, body = self._body(model, text)
+    def _ask(self, model: str, text: str, timeout: float | None = None, limit: int | None = None) -> str:
+        words = len(text.split())
+        path, body = self._body(model, text, limit or ANSWER_TOKENS + ANSWER_TOKENS_PER_WORD * words)
         with self._lock:
-            status, data = self._request(path, json.dumps(body), timeout or ANSWER_TIMEOUT + ANSWER_PER_WORD * len(text.split()))
+            status, data = self._request(path, json.dumps(body), timeout or ANSWER_TIMEOUT + ANSWER_PER_WORD * words)
         try:
             answer = json.loads(data)
         except ValueError:
@@ -393,10 +428,15 @@ class Polisher:
             if status != 200 or answer.get("type") == "error" or not isinstance(answer.get("content"), list):
                 raise GatewayError(f"{_short(model)}: HTTP {status} {_detail(answer, data)}")
             content = "".join(b.get("text", "") for b in answer["content"] if isinstance(b, dict) and b.get("type") == "text")
+            cut = answer.get("stop_reason") == "max_tokens"
         else:
             if status != 200 or "error" in answer or not answer.get("choices"):
                 raise GatewayError(f"{_short(model)}: HTTP {status} {_detail(answer, data)}")
-            content = answer["choices"][0].get("message", {}).get("content") or ""
+            choice = answer["choices"][0]
+            content, cut = choice.get("message", {}).get("content") or "", choice.get("finish_reason") == "length"
+        if cut:  # stopped at the limit: never a text with a hole in it (the backup model, or the text as heard)
+            raise GatewayError(f"{_short(model)} ran out of tokens before "
+                               + ("the end of its answer" if content.strip() else "answering (thinking used them up)"))
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
         if len(content) > 1 and content[0] == content[-1] == '"' and not text.startswith('"'):
             content = content[1:-1].strip()  # some models wrap the answer in quotes
