@@ -10,7 +10,8 @@ Gemini Transcribe (gemini-3.5-transcribe), Google's dedicated speech-to-text mod
 and an audioTranscriptionConfig. Always VERBATIM (fillers and false starts kept: the voice pipeline does its own
 cleanup), with either word times ("timestamps", the default: merging overlapping chunks needs them) or Your words as
 custom vocabulary ("vocabulary"): Google offers only one of the two at a time. A recording too big to send inline goes
-through the Files API and is deleted afterwards. Whisper models (OpenAI's whisper-1, Groq's) give word times too.
+through the Files API and is deleted afterwards. Whisper models (OpenAI's whisper-1, Groq's) give word times too;
+OpenAI's gpt-transcribe, which replaces its older models (RETIRING), gives none.
 
 Built never to lose a dictation: a connection is opened while the user speaks (prepare), the first-connection stall
 seen on the dev laptop is retried with a short connect timeout, and when the provider can't be reached or fails, the
@@ -73,13 +74,19 @@ class CloudProvider:
 
 CLOUD = {p.key: p for p in [
     CloudProvider("openai", "OpenAI", "https://api.openai.com/v1", "openai",
-                  ("gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"), "https://platform.openai.com/api-keys"),
+                  ("gpt-transcribe", "gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"),
+                  "https://platform.openai.com/api-keys"),
     CloudProvider("groq", "Groq", "https://api.groq.com/openai/v1", "openai",
                   ("whisper-large-v3-turbo", "whisper-large-v3"), "https://console.groq.com/keys"),
     CloudProvider("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta", "gemini",
                   ("gemini-3.5-transcribe", "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3.5-flash-lite",
                    "gemini-3.6-flash"), "https://aistudio.google.com/apikey"),
 ]}
+
+# Models a provider is shutting down, and the day: still offered, and working, until then (retirement()).
+RETIRING = {"openai": dict.fromkeys(("gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"), "26 February 2027")}
+# Models that take the language as a list (languages[]), never along with the older single field.
+LANGUAGE_LIST = re.compile(r"(^|/)gpt-transcribe", re.IGNORECASE)
 
 # Your own server: its address (and a key, if it needs one) is the user's; the model is whatever the server offers.
 SERVER = CloudProvider("server", "Your server", "", "openai", (), "")
@@ -105,6 +112,13 @@ class CloudError(Exception):
 
 class Unreachable(CloudError):
     pass
+
+
+def retirement(provider: str, model: str) -> str:
+    """What to tell the user about a model its provider is shutting down, or "" (whisper-1 on an own server is the
+    server's own). The provider's default model replaces it."""
+    day = RETIRING.get(provider, {}).get(model)
+    return f"{CLOUD[provider].name} shuts {model} down on {day}: choose {CLOUD[provider].models[0]}" if day else ""
 
 
 def wav_bytes(audio: np.ndarray, rate: int) -> bytes:
@@ -184,7 +198,7 @@ class CloudEngine:
         return "vocabulary" if self.timestamp_mode == "vocabulary" else "timestamps"
 
     def _transcribe_model(self) -> bool:
-        """Gemini Transcribe, Google's speech-to-text model (OpenAI's gpt-4o-*-transcribe are chat-style models)."""
+        """Gemini Transcribe, Google's speech-to-text model (OpenAI's *-transcribe go through OpenAI's transcription API)."""
         return self.provider.api == "gemini" and "transcribe" in self.model
 
     def prepare(self) -> None:
@@ -243,7 +257,8 @@ class CloudEngine:
             raise CloudError(f"a broken answer ({type(e).__name__})") from None
 
     def check(self, audio: np.ndarray, sample_rate: int) -> str:
-        """For the Test button: one recording through the provider, never Parakeet. Raises with a readable reason."""
+        """For the Test button: one recording through the provider, never Parakeet. Raises with a readable reason. A
+        model being retired says so."""
         audio16 = resample(condition(audio), sample_rate, TARGET_RATE)
         t0 = time.perf_counter()
         try:
@@ -252,7 +267,9 @@ class CloudEngine:
             raise CloudError("no answer in time") from None
         except (OSError, http.client.HTTPException) as e:
             raise CloudError(f"could not reach {self.provider.name}: {e}") from None
-        return f"{self.model} answered in {time.perf_counter() - t0:.1f} s: {text or '(nothing recognised)'}"
+        note = retirement(self.name, self.model)
+        return (f"{self.model} answered in {time.perf_counter() - t0:.1f} s: {text or '(nothing recognised)'}"
+                + (f" ({note})" if note else ""))
 
     def _ask_patiently(self, wav: bytes, seconds: float) -> str:
         """ask(), waiting out a rate limit (HTTP 429) when nothing falls back: scoring reading tests sends many
@@ -408,8 +425,8 @@ class CloudEngine:
     # ---- OpenAI's transcription API (OpenAI, Groq, own servers)
 
     def _asks_word_times(self) -> bool:
-        """Whisper models give word times; gpt-4o-*-transcribe only plain JSON. An own server is asked only for a
-        Whisper model, and no more once it refused."""
+        """Whisper models give word times; gpt-transcribe and gpt-4o-*-transcribe only plain JSON. An own server is asked
+        only for a Whisper model, and no more once it refused."""
         return "whisper" in self.model.lower() and (self.url, self.model) not in self._plain_json
 
     def _ask_openai(self, wav: bytes, timeout: float, timed: bool, hints: list[str]) -> RawTranscript:
@@ -418,8 +435,8 @@ class CloudEngine:
         fields["response_format"] = "verbose_json" if timed else "json"
         if timed:
             fields["timestamp_granularities[]"] = "word"
-        if self.language:
-            fields["language"] = self.language
+        if self.language:  # gpt-transcribe takes a list, and OpenAI says not to send both
+            fields["languages[]" if LANGUAGE_LIST.search(self.model) else "language"] = self.language
         if words:
             fields["prompt"] = f"Names and terms: {words}."
         body, content_type = _multipart(fields, "recording.wav", wav)

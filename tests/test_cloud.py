@@ -164,7 +164,25 @@ def test_openai_and_groq_get_a_multipart_upload_with_the_hints(fake):
 def test_no_language_and_no_words_send_no_hints(fake):
     fake.engine("openai").transcribe(AUDIO, RATE)
     assert set(fake.requests[0]["fields"]) == {"model", "response_format", "file"}
-    assert fake.requests[0]["fields"]["model"] == b"gpt-4o-mini-transcribe"
+    assert fake.requests[0]["fields"]["model"] == b"gpt-transcribe"  # OpenAI's current model is the default
+
+
+def test_gpt_transcribe_takes_the_language_as_a_list(fake):
+    fake.engine("openai", language="ja").transcribe(AUDIO, RATE)
+    fields = fake.requests[0]["fields"]
+    assert fields["languages[]"] == b"ja" and "language" not in fields  # OpenAI: don't send both
+    fake.engine("openai", model="gpt-4o-mini-transcribe", language="ja").transcribe(AUDIO, RATE)
+    assert fake.requests[1]["fields"]["language"] == b"ja" and "languages[]" not in fake.requests[1]["fields"]
+
+
+def test_a_model_being_retired_still_works_and_says_so(fake):
+    assert cloud.retirement("openai", "gpt-transcribe") == "" and cloud.retirement("server", "whisper-1") == ""
+    for model in ("gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"):
+        assert model in cloud.CLOUD["openai"].models  # offered until OpenAI shuts it down
+        answer = fake.engine("openai", model=model).check(AUDIO, RATE)
+        assert answer.startswith(f"{model} answered in ") and answer.endswith(
+            f"(OpenAI shuts {model} down on 26 February 2027: choose gpt-transcribe)")
+    assert "(" not in fake.engine("openai").check(AUDIO, RATE)
 
 
 def test_gemini_gets_the_audio_inline_with_an_instruction(fake):
@@ -262,7 +280,7 @@ def test_the_connection_is_opened_while_the_user_speaks_and_kept(fake):
 
 def test_the_test_button_reports_the_time_and_never_falls_back(fake):
     engine = fake.engine(fallback=Parakeet)
-    assert engine.check(AUDIO, RATE).startswith("gpt-4o-mini-transcribe answered in ")
+    assert engine.check(AUDIO, RATE).startswith("gpt-transcribe answered in ")
     fake.statuses = [401]
     with pytest.raises(CloudError, match="Invalid API key"):
         engine.check(AUDIO, RATE)
@@ -272,7 +290,7 @@ def test_a_cloud_model_needs_a_key_which_never_shows():
     with pytest.raises(ValueError, match="needs an API key"):
         CloudEngine("openai", "")
     engine = CloudEngine("openai", "sk-secret")
-    assert "sk-secret" not in repr(engine) and engine.title == "OpenAI gpt-4o-mini-transcribe"
+    assert "sk-secret" not in repr(engine) and engine.title == "OpenAI gpt-transcribe"
 
 
 def test_the_signature_follows_what_the_text_depends_on():
@@ -452,8 +470,8 @@ def test_whisper_models_give_word_times(fake, provider, model):
     assert raw.backend == f"{cloud.CLOUD[provider].name} {model}"
 
 
-def test_gpt_4o_models_and_dictation_keep_plain_json(fake):
-    raw = fake.engine("openai").transcribe_chunk(AUDIO, RATE)  # gpt-4o-mini-transcribe gives no word times
+def test_gpt_transcribe_models_and_dictation_keep_plain_json(fake):
+    raw = fake.engine("openai").transcribe_chunk(AUDIO, RATE)  # gpt-transcribe gives no word times
     assert raw.text == "Hello from OpenAI." and raw.words == []
     assert set(fake.requests[0]["fields"]) == {"model", "response_format", "file"}
     assert fake.requests[0]["fields"]["response_format"] == b"json"

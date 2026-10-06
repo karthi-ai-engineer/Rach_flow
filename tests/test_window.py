@@ -675,8 +675,8 @@ def test_testing_a_cloud_model_shows_its_answer():
         if openai.result.text().startswith("OK"):
             break
         time.sleep(0.01)
-    assert openai.result.text().startswith("OK: gpt-4o-mini-transcribe answered")
-    assert ("test_cloud_speech", "openai", "gpt-4o-mini-transcribe") in app.calls
+    assert openai.result.text().startswith("OK: gpt-transcribe answered")
+    assert ("test_cloud_speech", "openai", "gpt-transcribe") in app.calls
 
 
 def test_a_key_saved_on_one_page_shows_on_the_other():
@@ -946,7 +946,7 @@ def test_a_cloud_card_cancel_brings_back_what_is_saved():
     assert openai.edited() and not openai.bar.cancel.isHidden()
     openai.bar.cancel.click()
     assert not openai.edited() and openai.key.text() == "sk-openai-0000"
-    assert openai.model_box.currentText() == "gpt-4o-mini-transcribe"
+    assert openai.model_box.currentText() == "gpt-transcribe"
 
 
 def test_leaving_a_page_with_unsaved_changes_asks_first():
