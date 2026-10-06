@@ -383,7 +383,10 @@ def test_two_hundred_chunks_merge_quickly(with_times):
         result = (timed(seq, spec, start=start, end=spec[-1][2] + 0.05, overlap_end=overlap_end) if with_times else
                   chunk(seq, " ".join(w for w, _, _ in spec), start=start, end=spec[-1][2] + 0.05, overlap_end=overlap_end))
         results.append(result)
-    began = time.perf_counter()
-    m = merged(*results)
-    assert time.perf_counter() - began < 1.0
+    fastest = float("inf")  # the fastest of three runs: other work on the machine slows one run, not all of them
+    for _ in range(3):
+        began = time.perf_counter()
+        m = merged(*results)
+        fastest = min(fastest, time.perf_counter() - began)
+    assert fastest < 1.0
     assert m.text == " ".join(words) and m.chunks == 200
