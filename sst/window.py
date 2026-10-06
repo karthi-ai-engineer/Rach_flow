@@ -3571,7 +3571,7 @@ class LivePage(Page):
         info.setPixmap(theme.icon_pixmap("info", tok("warn").name(), 16, 1.0))
         connect.addWidget(info)
         connect.addWidget(caption("Live translation uses Google Gemini 3.5 Live Translate: add a Gemini key.", "2"), 1)
-        connect.addWidget(button("Add a Gemini key", lambda: go_to("models"), primary=True, size="sm"))
+        connect.addWidget(button("Add a Gemini key", lambda: self._add_key(go_to), primary=True, size="sm"))
         self.add(self.connect_card)
 
         # Start / Stop first, with the light and what it's doing next to it
@@ -3675,6 +3675,13 @@ class LivePage(Page):
                          "Google, and with a free key Google may use it to improve its products; the transcripts stay "
                          "on this laptop.", "3"))
         self.body.addStretch()
+
+    def _add_key(self, go_to) -> None:
+        """AI & models, with the Gemini line of Your API keys open to paste the key."""
+        go_to("models")
+        models = getattr(self.window(), "pages", {}).get("models")
+        if models is not None and self.window().current_page() == "models":
+            models.add_key("gemini")
 
     def _languages(self) -> Choice:
         box = Choice(search=True, small=True)

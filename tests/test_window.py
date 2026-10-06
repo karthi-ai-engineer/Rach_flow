@@ -1714,6 +1714,8 @@ def test_without_a_gemini_key_it_says_where_to_add_one():
     assert not page.start_card.grab().isNull()  # pressed in, quiet
     _button(page.connect_card, "Add a Gemini key").click()
     assert window.current_page() == "models"
+    gemini = window.pages["models"].keys.rows["gemini"]
+    assert gemini.editing and not gemini.isHidden() and gemini.key.editing  # its line open, ready to paste
 
 
 def test_past_sessions_are_listed_to_open():
