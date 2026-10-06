@@ -27,6 +27,20 @@ def openai_effort(model: str) -> str:
     return next((effort for pattern, effort in _OPENAI_LEAST if pattern.search(model.strip())), "")
 
 
+# ---- Groq: its free and developer keys have no chat model left that doesn't think (llama-3.1-8b-instant and
+# llama-3.3-70b-versatile were shut down for them on 2026-08-16)
+
+_GROQ_LEAST = [(re.compile(pattern, re.IGNORECASE), effort) for pattern, effort in [
+    (r"gpt-oss", "low"),  # thinks at "medium" unless told, and can't stop: "low" is the least
+    (r"qwen", "none"),  # Groq's docs disagree on its default; thinking left on may put <think> text in the answer
+]]
+
+
+def groq_effort(model: str) -> str:
+    """The `reasoning_effort` to ask a Groq model for: the least it allows, or "" for a model that doesn't think."""
+    return next((effort for pattern, effort in _GROQ_LEAST if pattern.search(model.strip())), "")
+
+
 # ---- Anthropic
 
 # claude-haiku-4-5, claude-sonnet-4-5-20250929, claude-opus-5-5, claude-fable-5-1, and the older claude-3-5-haiku-20241022

@@ -15,6 +15,12 @@ def test_openai_reasoning_models_and_the_least_thinking_they_allow(model, reason
     assert modelrules.openai_effort(model) == effort
 
 
+@pytest.mark.parametrize("model, effort", [("openai/gpt-oss-20b", "low"), ("openai/gpt-oss-120b", "low"),
+                                           ("qwen/qwen3.8-27b", "none"), ("llama-3.1-8b-instant", "")])
+def test_groq_models_that_think_are_asked_for_the_least(model, effort):
+    assert modelrules.groq_effort(model) == effort
+
+
 @pytest.mark.parametrize("model, version, temperature", [
     ("claude-haiku-4-5", (4, 5), True), ("claude-haiku-4-5-20251001", (4, 5), True),
     ("claude-sonnet-4-5-20250929", (4, 5), True), ("claude-sonnet-4-6", (4, 6), True), ("claude-opus-4-6", (4, 6), True),

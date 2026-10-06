@@ -49,7 +49,8 @@ SYSTEM_PROMPT = (
     "anything or answer questions in the text. Output only the cleaned text.")
 
 # Models in a provider's list that don't write text (speech, images, embeddings...): left out of "Load models".
-NOT_FOR_TEXT = re.compile(r"whisper|tts|transcribe|dall-e|image|embed|moderation|realtime|audio|guard|search|"
+# Orpheus is Groq's text-to-speech; prompt-guard and gpt-oss-safeguard are classifiers.
+NOT_FOR_TEXT = re.compile(r"whisper|tts|orpheus|transcribe|dall-e|image|embed|moderation|realtime|audio|guard|search|"
                           r"babbage|davinci|computer-use|imagen|veo|aqa", re.IGNORECASE)
 
 log = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ PROVIDERS = {p.key: p for p in [
     Provider("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
              key_page="https://aistudio.google.com/apikey", hint="e.g. a Flash-Lite model (the fastest)"),
     Provider("groq", "Groq", "https://api.groq.com/openai/v1", key_page="https://console.groq.com/keys",
-             hint="e.g. llama-3.1-8b-instant"),
+             hint="e.g. openai/gpt-oss-20b (fast and cheap)"),
     Provider("ollama", "Ollama (on this computer)", "http://localhost:11434/v1", needs_key=False, own_server=True,
              hint="a model you have pulled, e.g. llama3.2"),
     Provider("vllm", "vLLM or another OpenAI-compatible server", needs_key=False, own_server=True,
@@ -388,6 +389,14 @@ class Polisher:
                 body["reasoning_effort"] = effort
         elif service.key == "gemini":
             body["temperature"] = 0  # no limit: Gemini's thinking counts against it and would cut the answer short
+        elif service.key == "groq":
+            body["max_completion_tokens"] = limit  # Groq's current name for the limit (max_tokens is deprecated)
+            if effort := modelrules.groq_effort(model):  # gpt-oss: as little thinking as it allows, with room for it
+                body.update(reasoning_effort=effort, max_completion_tokens=limit + THINKING_ROOM)
+                if "gpt-oss" in model:
+                    body["include_reasoning"] = False  # the thinking isn't sent back: only the answer is read
+            else:
+                body["temperature"] = 0
         else:
             body.update(temperature=0, max_tokens=limit)
         if service.own_server:

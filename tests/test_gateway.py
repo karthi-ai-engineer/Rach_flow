@@ -271,17 +271,33 @@ def test_gemini_gets_no_token_limit(fake):
     assert "chat_template_kwargs" not in sent
 
 
-@pytest.mark.parametrize("provider, self_hosted", [("groq", False), ("ollama", True), ("vllm", True)])
-def test_self_hosted_servers_get_the_no_thinking_option(fake, provider, self_hosted):
+@pytest.mark.parametrize("provider", ["ollama", "vllm"])
+def test_self_hosted_servers_get_the_no_thinking_option(fake, provider):
     fake.polisher(provider=provider).polish(HEARD)
     sent = _last_post(fake)
-    assert sent["max_tokens"] > 0 and ("chat_template_kwargs" in sent) is self_hosted
+    assert sent["max_tokens"] > 0 and sent["temperature"] == 0 and sent["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_groq_s_gpt_oss_thinks_little_with_room_for_it(fake):
+    # llama-3.1-8b-instant is shut down; gpt-oss-20b thinks at "medium" unless told, and its thinking counts against
+    # the limit: without room, the answer could come back empty.
+    assert fake.polisher(model="openai/gpt-oss-20b", provider="groq").polish(HEARD) == "So we merge the five PRs today."
+    sent = _last_post(fake)
+    assert sent["reasoning_effort"] == "low" and sent["include_reasoning"] is False and "temperature" not in sent
+    assert sent["max_completion_tokens"] > gateway.THINKING_ROOM and "max_tokens" not in sent  # Groq's current name
+    assert "chat_template_kwargs" not in sent
+    fake.polisher(model="a-model-that-answers", provider="groq").polish(HEARD)
+    sent = _last_post(fake)
+    assert sent["temperature"] == 0 and 0 < sent["max_completion_tokens"] < gateway.THINKING_ROOM
+    assert "reasoning_effort" not in sent and "include_reasoning" not in sent
 
 
 def test_load_models_leaves_out_models_that_dont_write_text(fake):
     fake.models = [{"id": "gpt-4o-mini"}, {"id": "whisper-1"}, {"id": "text-embedding-3-small"}, {"id": "tts-1"},
-                   {"id": "models/gemini-2.5-flash"}, {"id": "llama-guard-4"}, {"id": "dall-e-3"}]
-    assert fake.polisher().models() == ["gemini-2.5-flash", "gpt-4o-mini"]
+                   {"id": "models/gemini-2.5-flash"}, {"id": "llama-guard-4"}, {"id": "dall-e-3"},
+                   {"id": "canopylabs/orpheus-arabic-saudi"}, {"id": "openai/gpt-oss-safeguard-20b"},
+                   {"id": "openai/gpt-oss-20b"}]
+    assert fake.polisher().models() == ["gemini-2.5-flash", "gpt-4o-mini", "openai/gpt-oss-20b"]
 
 
 def test_anthropic_models_are_listed_with_its_headers(fake):
