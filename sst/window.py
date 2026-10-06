@@ -119,6 +119,7 @@ from sst.ui import (
     Orb,
     PowerButton,
     Segmented,
+    Slider,
     Toast,
     Toggle,
     WaveProgress,
@@ -4254,6 +4255,17 @@ class LivePage(Page):
         line = setting_row("Speed", "It speeds up by itself when it falls behind.", self.speed)[0]
         line.layout().setContentsMargins(0, 14, 0, 0)
         speed.addWidget(line)
+        # How loud the other apps stay while it speaks: lowered like an interpreter's, back after each sentence
+        self.duck = Slider(10, 100, 5)
+        self.duck.setAccessibleName("Other sound while it speaks")
+        self.duck.setFixedWidth(160)
+        self.duck_value = label("", wrap=False)
+        self.duck_value.setMinimumWidth(QFontMetrics(self.duck_value.font()).horizontalAdvance("Unchanged") + 4)
+        self.duck.valueChanged.connect(self._duck_moved)
+        self.duck.sliderReleased.connect(self._duck_chosen)
+        line, _, self.duck_caption = setting_row("Other sound while it speaks", " ", self.duck, self.duck_value)
+        line.layout().setContentsMargins(0, 14, 0, 0)
+        speed.addWidget(line)
         column.addWidget(self.speed_row)
         self.add(self.voice_card)
 
@@ -4386,6 +4398,11 @@ class LivePage(Page):
         self.speed.blockSignals(True)
         self.speed.setCurrentIndex(max(0, self.speed.findData(s.live_speak_speed)))
         self.speed.blockSignals(False)
+        if not self.duck.isSliderDown():
+            self.duck.blockSignals(True)
+            self.duck.setValue(round(s.live_duck * 100))
+            self.duck.blockSignals(False)
+            self._show_duck(self.duck.value())
         if state == "downloading":
             words = f"Downloading the voice {voice.name}: {percent}%. It starts speaking when it's here."
         elif problem:
@@ -4410,6 +4427,20 @@ class LivePage(Page):
     def _speed_chosen(self, *_) -> None:
         self.app.set_live_speak_speed(self.speed.currentData())
         self.refresh()
+
+    def _duck_moved(self, value: int) -> None:
+        self._show_duck(value)
+        if not self.duck.isSliderDown():  # the arrow keys: chosen at once; a drag: once it's let go
+            self._duck_chosen()
+
+    def _duck_chosen(self) -> None:
+        self.app.set_live_duck(self.duck.value() / 100)
+
+    def _show_duck(self, value: int) -> None:
+        self.duck_value.setText("Unchanged" if value >= 100 else f"{value}%")
+        self.duck_caption.setText("Left as it is: the voice speaks over it." if value >= 100 else
+                                  "Other apps get quieter while each sentence is spoken, and come back after it. "
+                                  "Rflow still hears and translates them.")
 
     def _say(self, message: str) -> None:
         self.note.setText(message)
@@ -6890,6 +6921,10 @@ class PreviewApp:
     def set_live_speak_speed(self, speed: float) -> None:
         self.calls.append(("set_live_speak_speed", speed))
         self.apply_settings(dataclasses.replace(self.settings, live_speak_speed=speed))
+
+    def set_live_duck(self, depth: float) -> None:
+        self.calls.append(("set_live_duck", depth))
+        self.apply_settings(dataclasses.replace(self.settings, live_duck=depth))
 
     def run_translation(self, text: str, target: str, second: str = ""):
         from sst.translate import Translation
