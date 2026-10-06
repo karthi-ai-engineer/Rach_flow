@@ -1357,6 +1357,15 @@ def test_report_a_problem_opens_an_issue_and_copies_only_the_version_info(monkey
     assert folders == [w.LOG_DIR]
 
 
+def test_settings_name_the_key_plainly_and_list_the_reading_test():
+    window, _ = _window()
+    page = window.pages["settings"]
+    assert page.hotkey.currentText() == "Ctrl+Win" and "Wispr" not in page.hotkey.itemText(0)
+    assert not page.advanced_card.isAncestorOf(page.reading) and page.reading.isVisibleTo(page)  # not under Advanced
+    page.reading.click()
+    assert window.current_page() == "reading" and window.nav["settings"].isChecked()
+
+
 def test_report_a_problem_left_settings_advanced():
     window, _ = _window()
     advanced = window.pages["settings"].advanced_card

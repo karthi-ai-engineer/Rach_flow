@@ -143,7 +143,7 @@ UI_IMAGES = Path(__file__).parent / "static" / "ui"  # drawn by scripts/make_ui_
 LOG_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "sst" / "logs"
 WEBSITE = "https://rachflow.vercel.app"
 REPO = "https://github.com/karthi-ai-engineer/Rach_flow"
-HOTKEY_CHOICES = [("Ctrl+Win (like Wispr Flow)", "ctrl+win"), ("Menu key", "menu"), ("Ctrl+Alt+D", "ctrl+alt+d")]
+HOTKEY_CHOICES = [("Ctrl+Win", "ctrl+win"), ("Menu key", "menu"), ("Ctrl+Alt+D", "ctrl+alt+d")]
 # Text Transform's menu shortcut: not Ctrl+Win+... (that starts a dictation) and not a plain Ctrl+letter (apps use those).
 # A double tap of Ctrl is the easiest; PowerToys' "Find My Mouse" uses a double Ctrl too (Rflow's still works with it).
 # Translate's shortcut: a double copy (the app copies; Rflow reads it), or a shortcut after which Rflow copies.
@@ -3981,6 +3981,10 @@ class SettingsPage(Page):
         self.start_with_windows.setEnabled(can_start_with_windows())
         layout.addWidget(setting_row("Start when I sign in", "Rflow waits quietly in the tray" if can_start_with_windows()
                                      else "Available in the installed app", self.start_with_windows)[0])
+        layout.addWidget(divider())
+        self.reading = link_row("Reading test", "Read 30 sentences aloud: how many words does Rflow get wrong?",
+                                lambda _=False: go_to("reading"))
+        layout.addWidget(self.reading)
         self.add(everyday)
 
         privacy, layout = card(0, (20, 4, 20, 4))
@@ -4018,7 +4022,7 @@ class SettingsPage(Page):
         layout.addWidget(about)
         self.add(privacy)
 
-        self.advanced = advanced_row("Advanced", "Voice pipeline, troubleshooting, Reading test, profiles, logs",
+        self.advanced = advanced_row("Advanced", "Voice pipeline, troubleshooting, profiles, logs, source code",
                                      self._toggle_advanced)
         self.add(self.advanced)
         self.advanced_card, layout = card(0, (20, 4, 20, 4))
@@ -4047,7 +4051,6 @@ class SettingsPage(Page):
         layout.addWidget(setting_row("Turn off Windows' voice effects", "The microphone as it is: no noise suppression "
                                      "or gain. Check it with the Reading test.", self.raw_audio)[0])
         for title, words, on_click in [
-                ("Reading test", "Read 30 sentences: how many words does Rflow get wrong?", lambda: go_to("reading")),
                 ("Profiles", "One setup per person sharing this PC", lambda: go_to("profiles")),
                 ("Logs", "Open the folder with Rflow's logs", lambda: open_folder(LOG_DIR)),
                 ("Website", WEBSITE.removeprefix("https://"), lambda: QDesktopServices.openUrl(QUrl(WEBSITE))),
