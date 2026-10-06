@@ -133,15 +133,18 @@ class Speaker:
             if event.lane not in self.lanes:
                 return
             line = self._lines.setdefault(event.lane, _Line())
+            # Without its leading space: Google's first piece of a line often has one (" Tomorrow, I'm"), the finished
+            # line doesn't, and the whole line looked rewritten and was said again at every pause (owner, 2026-10-07)
+            text = event.text.lstrip()
             done = line.text[:line.spoken]
-            if not event.text.startswith(done):  # the model rewrote the line: what both still share stays said
-                line.spoken = len(os.path.commonprefix([event.text, done]))
-            line.text, line.at = event.text, self._clock()
+            if not text.startswith(done):  # the model rewrote the line: what both still share stays said
+                line.spoken = len(os.path.commonprefix([text, done]))
+            line.text, line.at = text, self._clock()
             if event.kind is Kind.LINE:
-                self._put(event.lane, event.text[line.spoken:])
+                self._put(event.lane, text[line.spoken:])
                 del self._lines[event.lane]
             else:
-                sentences, end = whole_sentences(event.text[line.spoken:])
+                sentences, end = whole_sentences(text[line.spoken:])
                 for sentence in sentences:
                     self._put(event.lane, sentence)
                 line.spoken += end

@@ -247,6 +247,19 @@ def test_muting_drops_what_waits_and_stops_what_plays():
     speaker.stop()
 
 
+def test_a_line_that_began_with_a_space_is_not_said_again_when_it_ends():
+    speaker, said = speaker_with()  # the owner's report: at every pause in the video, the last line again
+    speaker.start()
+    speaker.hear(translation(" Tomorrow, I'm going"))  # Google's first piece of a line, with its space
+    speaker.hear(translation(" Tomorrow, I'm going to see a movie with a friend. I'm looking"))
+    speaker.hear(translation(" Tomorrow, I'm going to see a movie with a friend. I'm looking forward to it."))
+    speaker.hear(LiveEvent(Kind.LINE, "Tomorrow, I'm going to see a movie with a friend. I'm looking forward to it."))
+    assert wait_until(lambda: len(said) >= 2)
+    time.sleep(0.3)  # anything said again would come now
+    assert [text for text, _ in said] == ["Tomorrow, I'm going to see a movie with a friend.", "I'm looking forward to it."]
+    speaker.stop()
+
+
 def test_a_rewritten_line_is_not_said_twice():
     speaker, said = speaker_with()
     speaker.start()
