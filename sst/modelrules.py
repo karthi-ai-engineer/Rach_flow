@@ -1,6 +1,6 @@
 """What the providers' models accept in a request, so that each gets one that works and costs no more than it must.
-From the providers' model pages, seen 2026-10-06 (the research notes "Rflow model costs and setups"); a model these rules
-don't know keeps its provider's defaults, which always work.
+From the providers' model pages, seen 2026-10-06 (the research notes "Rflow model costs and setups"). For a model these
+rules don't know, a value it might refuse is left out (its default always works) or the request stays as it was.
 
 AI cleanup, Text Transform and Translate ask through these (sst.gateway), and so do Gemini's Flash models as speech
 models (sst.engines.cloud). Thinking is billed as output and makes the answer slower, and a dictation needs next to none.
