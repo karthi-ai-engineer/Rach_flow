@@ -1366,6 +1366,41 @@ def test_settings_name_the_key_plainly_and_list_the_reading_test():
     assert window.current_page() == "reading" and window.nav["settings"].isChecked()
 
 
+def test_start_over_asks_first_and_can_keep_the_speech_models():
+    window, app = _window()
+    page = window.pages["settings"]
+    layout = page.body
+    cards = [layout.itemAt(i).widget() for i in range(layout.count()) if layout.itemAt(i).widget() is not None]
+    assert cards[-1].isAncestorOf(page.start_over)  # at the very end
+    assert page.start_over.kind == "danger" and page.start_over.text().startswith("Start over")
+    page.confirm_start_over = lambda: None  # cancelled
+    page.start_over.click()
+    assert not any(call[0] == "start_over" for call in app.calls)
+    page.confirm_start_over = lambda: True  # "Keep the downloaded speech models" ticked
+    page.start_over.click()
+    page.confirm_start_over = lambda: False
+    page.start_over.click()
+    assert [call for call in app.calls if call[0] == "start_over"] == [("start_over", True), ("start_over", False)]
+
+
+def test_the_start_over_dialog_says_plainly_what_is_deleted(monkeypatch):
+    seen = {}
+
+    def answer(box):  # in place of showing it: read it, untick, press the red button
+        seen["words"] = f"{box.text()} {box.informativeText()}"
+        seen["keep"] = box.checkBox().isChecked() and box.checkBox().text() == "Keep the downloaded speech models"
+        box.checkBox().setChecked(False)
+        next(b for b in box.buttons() if b.text() == "Delete everything and restart").click()
+        return 0
+    monkeypatch.setattr(w.QMessageBox, "exec", answer)
+    window, _ = _window()
+    assert window.pages["settings"].confirm_start_over() is False  # go on, without keeping the models
+    assert seen["keep"]  # ticked at first
+    assert all(word in seen["words"] for word in ("every profile", "settings", "words and snippets", "history", "stats",
+                                                  "API keys", "recordings", "reading tests", "live translation", "logs",
+                                                  "welcome"))
+
+
 def test_report_a_problem_left_settings_advanced():
     window, _ = _window()
     advanced = window.pages["settings"].advanced_card

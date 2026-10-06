@@ -51,6 +51,7 @@ from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QBoxLayout,
+    QCheckBox,
     QComboBox,
     QCompleter,
     QFormLayout,
@@ -4059,6 +4060,13 @@ class SettingsPage(Page):
             layout.addWidget(link_row(title, words, lambda _=False, f=on_click: f()))
         self.advanced_card.hide()
         self.add(self.advanced_card)
+
+        # the very end: Rflow as if just installed (sst.app.TrayApp.start_over)
+        start_over, layout = card(0, (20, 4, 20, 4))
+        self.start_over = button("Start over…", self._start_over, kind="danger", size="sm")
+        layout.addWidget(setting_row("Start over", "Delete everything Rflow keeps on this PC, for every profile, and begin "
+                                     "again with the welcome, like a new install.", self.start_over)[0])
+        self.add(start_over)
         self.body.addStretch()
 
         self.hotkey.currentIndexChanged.connect(self._apply)
@@ -4067,6 +4075,42 @@ class SettingsPage(Page):
             box.toggled.connect(self._apply)
         self.start_with_windows.toggled.connect(lambda on: set_start_with_windows(on) if can_start_with_windows() else None)
         self._show_keys()
+
+    def confirm_start_over(self) -> bool | None:
+        """Asks before Start over, saying plainly what goes: None to cancel, else whether to keep the downloaded speech
+        models (a dialog; the tests replace it)."""
+        box, keep, delete = self.start_over_box()
+        box.exec()
+        return keep.isChecked() if box.clickedButton() is delete else None
+
+    def start_over_box(self) -> tuple[QMessageBox, QCheckBox, QPushButton]:
+        box = QMessageBox(self)
+        box.setWindowTitle(APP_NAME)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText("Start over and delete everything Rflow keeps on this PC?")
+        box.setInformativeText("For every profile: the settings, your words and snippets, the dictation history and "
+                               "stats, the API keys, the recordings, the reading tests and the live translation "
+                               "transcripts. Rflow's logs too. This can't be undone.\n\nRflow then restarts with the "
+                               "welcome, like a new install.")
+        keep = QCheckBox("Keep the downloaded speech models")
+        c = {name: theme.css(tok(name)) for name in ("rim", "well", "primary")}
+        keep.setStyleSheet(  # a box that shows unticked too (Windows' own is barely visible on these colours)
+            f"QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {c['rim']}; border-radius: 5px; "
+            f"background: {c['well']}; }} QCheckBox::indicator:checked {{ background: {c['primary']}; "
+            f"border-color: {c['primary']}; image: url({(UI_IMAGES / 'check.png').as_posix()}); }}")
+        keep.setChecked(True)
+        keep.setToolTip("Parakeet, Whisper and the live translation voice stay: no need to download them again.")
+        box.setCheckBox(keep)
+        delete = box.addButton("Delete everything and restart", QMessageBox.ButtonRole.DestructiveRole)
+        delete.setStyleSheet(f"QPushButton {{ color: {theme.css(tok('err'))}; }}")  # in red, like the button that asked
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        return box, keep, delete
+
+    def _start_over(self) -> None:
+        keep_models = self.confirm_start_over()
+        if keep_models is not None:
+            self.app.start_over(keep_models)
 
     def _toggle_advanced(self) -> None:
         open_ = self.advanced_card.isHidden()
@@ -5353,6 +5397,9 @@ class PreviewApp:
 
     def window_closed(self) -> None:
         self.calls.append(("window_closed",))
+
+    def start_over(self, keep_models: bool = True) -> None:
+        self.calls.append(("start_over", keep_models))  # the preview deletes nothing
 
     def check_for_updates(self, manual: bool = False) -> None:
         self.calls.append(("check_for_updates", manual))
