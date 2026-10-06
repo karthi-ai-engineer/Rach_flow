@@ -1690,6 +1690,10 @@ ask whether the start/stop beep stopped. Not done: Home's own long microphone la
 - **The app:** Live translation → Speak the translation → "Other sound while it speaks": a slider (`ui.Slider`, new:
   the switch's inset track, Iris fill, round knob) from 10 % to 100 % ("Unchanged"), 30 % by default, saved when let
   go (`live_duck`), applied at once while it speaks (`LiveCaptions.set_duck`). `sst live --speak` uses it too.
+- **Fixed in 2.4.1** (the owner's report on 2.4.0, issue #118): at a pause in the video, the voice said the last line
+  again. Google's first piece of a line often starts with a space and the finished line doesn't, so `Speaker.hear`
+  took the line for rewritten and queued all of it again (since phase 29). Reproduced end to end with Japanese clips
+  and gaps through the real capture, Gemini and Danny (into a recording player), and gone after the fix.
 - **Owner to try:** a video, Computer into English, speaking on: the video gets quieter while Danny speaks and comes
   back after; turn the video's own volume (or Windows') right down: captions go on. Mute Windows' sound on the other
   PC: the bar says so.
