@@ -56,7 +56,7 @@ def test_frames_are_100_ms_of_pcm16():
 
 class FakeStream:
     """An opened output device: hands out the packets queued in it, then nothing (silence)."""
-    rate, channels = 48_000, 2
+    rate, channels, bits, is_float = 48_000, 2, 32, True
 
     def __init__(self, packets=(), changed_after=None):
         self.packets, self.changed_after, self.reads, self.closed = list(packets), changed_after, 0, False
@@ -82,9 +82,9 @@ class Clock:
         return self.now
 
 
-def run_capture(streams, seconds, until=None):
+def run_capture(streams, seconds, until=None, **named):
     frames, opened = [], list(streams)
-    capture = Capture(opener=lambda: opened.pop(0), clock=Clock())
+    capture = Capture(opener=lambda: opened.pop(0), clock=Clock(), **named)
     capture._stop.wait = lambda s: time.sleep(0.0005)  # the loop's 10 ms pauses, much faster
     capture.start(frames.append)
     end = time.monotonic() + (5.0 if until else seconds)
@@ -151,3 +151,54 @@ def test_the_capture_says_whether_rflows_own_voice_is_in_it():
 
 def test_the_real_mix_format_parts_are_the_documented_sizes():
     assert wasapi.ctypes.sizeof(wasapi._WAVEFORMATEX) == 18 and wasapi.ctypes.sizeof(wasapi._WAVEFORMATEXTENSIBLE) == 40
+    f = wasapi._WAVEFORMATEX.float32(16_000)  # what process loopback is asked for first
+    assert (f.wFormatTag, f.nChannels, f.nSamplesPerSec, f.nAvgBytesPerSec, f.nBlockAlign, f.wBitsPerSample) == (
+        3, 1, 16_000, 64_000, 4, 32)
+
+
+def level_db(frames):
+    audio = np.concatenate([np.frombuffer(f, "<i2") for f in frames]).astype(np.float32) / 32768
+    return 20 * np.log10(np.sqrt(np.mean(audio ** 2)))
+
+
+def test_the_computers_sound_turned_far_down_still_reaches_the_model_at_a_normal_level():
+    def heard(**named):
+        stream = FakeStream([sine(440, 0.1, 48_000) * 10 ** (-70 / 20)] * 60)  # 6 s at -73 dBFS: a few 16-bit steps
+        frames, _ = run_capture([stream], 0, until=lambda: not stream.packets, **named)
+        return [f for f in frames if any(f)][-10:]  # its last second (not the silence after it)
+    plain, raised = heard(), heard(level=True)
+    assert level_db(plain) < -70 and -26 < level_db(raised) < -20  # its loudest 20 ms at -20 dBFS: a normal level
+    assert abs(pitch(np.concatenate([np.frombuffer(f, "<i2") for f in raised]).astype(np.float32), 16_000) - 440) < 3
+    assert Capture.speakers().level and not Capture.microphone().level  # the computer's sound only
+
+
+def test_nothing_heard_with_windows_sound_muted_is_said_once():
+    class Muted(FakeStream):
+        def muted(self):
+            return True
+    problems = []
+    capture = Capture(opener=lambda: Muted(), clock=Clock(), level=True)
+    capture.on_problem = problems.append
+    capture._stop.wait = lambda s: time.sleep(0.0002)
+    capture.start(lambda frame: None)
+    end = time.monotonic() + 5
+    while time.monotonic() < end and capture._clock.now < 12:  # 12 s of the capture's own time
+        time.sleep(0.01)
+    capture.stop()
+    assert problems == [wasapi.MUTED]
+
+
+def test_sound_coming_through_a_muted_output_is_no_problem():
+    class Muted(FakeStream):  # a PC whose loopback is taken before Windows' volume: muted, and still heard
+        def muted(self):
+            return True
+    problems = []
+    capture = Capture(opener=lambda: Muted([sine(440, 0.1, 48_000) * 0.01] * 2000), clock=Clock(), level=True)
+    capture.on_problem = problems.append
+    capture._stop.wait = lambda s: time.sleep(0.0002)
+    capture.start(lambda frame: None)
+    end = time.monotonic() + 5
+    while time.monotonic() < end and capture._clock.now < 8:
+        time.sleep(0.01)
+    capture.stop()
+    assert problems == []
