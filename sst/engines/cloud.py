@@ -3,14 +3,15 @@ server (vLLM, a company AI gateway, any server with OpenAI's transcription API).
 
 The voice is sent to the provider: the window asks before a cloud model is used. OpenAI, Groq and own servers share
 OpenAI's transcription API (a multipart upload of the recording); Gemini's Flash models get the recording inline in a
-generateContent request, with an instruction to write down exactly what was said. Your words and the chosen language
-go along as hints.
+generateContent request, with an instruction to write down exactly what was said; Gemini 3's are asked to think as little
+as they allow (sst.modelrules). Your words and the chosen language go along as hints.
 
 Gemini Transcribe (gemini-3.5-transcribe), Google's dedicated speech-to-text model, gets no instruction: the recording
 and an audioTranscriptionConfig. Always VERBATIM (fillers and false starts kept: the voice pipeline does its own
 cleanup), with either word times ("timestamps", the default: merging overlapping chunks needs them) or Your words as
 custom vocabulary ("vocabulary"): Google offers only one of the two at a time. A recording too big to send inline goes
-through the Files API and is deleted afterwards. Whisper models (OpenAI's whisper-1, Groq's) give word times too.
+through the Files API and is deleted afterwards. Whisper models (OpenAI's whisper-1, Groq's) give word times too;
+OpenAI's gpt-transcribe, which replaces its older models (RETIRING), gives none.
 
 Built never to lose a dictation: a connection is opened while the user speaks (prepare), the first-connection stall
 seen on the dev laptop is retried with a short connect timeout, and when the provider can't be reached or fails, the
@@ -40,6 +41,7 @@ import numpy as np
 
 from sst.audio import TARGET_RATE, condition, resample
 from sst.engines.whisper import LANGUAGES
+from sst.modelrules import gemini_takes_temperature, gemini_thinking
 from sst.pipeline.contracts import RawTranscript, WordInfo
 from sst.pipeline.dictionary import speech_hints
 
@@ -72,13 +74,20 @@ class CloudProvider:
 
 CLOUD = {p.key: p for p in [
     CloudProvider("openai", "OpenAI", "https://api.openai.com/v1", "openai",
-                  ("gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"), "https://platform.openai.com/api-keys"),
+                  ("gpt-transcribe", "gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"),
+                  "https://platform.openai.com/api-keys"),
     CloudProvider("groq", "Groq", "https://api.groq.com/openai/v1", "openai",
                   ("whisper-large-v3-turbo", "whisper-large-v3"), "https://console.groq.com/keys"),
+    # Explicit ids, not the -latest aliases: gemini-flash-latest moved to 3.5 Flash, the dearest Flash, and
+    # gemini-flash-lite-latest's model isn't documented. A name typed in still works.
     CloudProvider("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta", "gemini",
-                  ("gemini-3.5-transcribe", "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3.5-flash-lite",
-                   "gemini-3.6-flash"), "https://aistudio.google.com/apikey"),
+                  ("gemini-3.5-transcribe", "gemini-3.5-flash-lite", "gemini-3.6-flash"), "https://aistudio.google.com/apikey"),
 ]}
+
+# Models a provider is shutting down, and the day: still offered, and working, until then (retirement()).
+RETIRING = {"openai": dict.fromkeys(("gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"), "26 February 2027")}
+# Models that take the language as a list (languages[]), never along with the older single field.
+LANGUAGE_LIST = re.compile(r"(^|/)gpt-transcribe", re.IGNORECASE)
 
 # Your own server: its address (and a key, if it needs one) is the user's; the model is whatever the server offers.
 SERVER = CloudProvider("server", "Your server", "", "openai", (), "")
@@ -104,6 +113,13 @@ class CloudError(Exception):
 
 class Unreachable(CloudError):
     pass
+
+
+def retirement(provider: str, model: str) -> str:
+    """What to tell the user about a model its provider is shutting down, or "" (whisper-1 on an own server is the
+    server's own). The provider's default model replaces it."""
+    day = RETIRING.get(provider, {}).get(model)
+    return f"{CLOUD[provider].name} shuts {model} down on {day}: choose {CLOUD[provider].models[0]}" if day else ""
 
 
 def wav_bytes(audio: np.ndarray, rate: int) -> bytes:
@@ -170,7 +186,12 @@ class CloudEngine:
     def signature(self) -> str:
         words = hashlib.sha1("/".join(self.words).encode("utf-8")).hexdigest()[:10] if self.words else "none"
         where = self.name if self.name in CLOUD else f"{self.name}@{hashlib.sha1(self.url.encode()).hexdigest()[:8]}"
-        mode = f"|verbatim:{self._mode}" if self._transcribe_model() else ""  # the vocabulary changes the text
+        if self._transcribe_model():
+            mode = f"|verbatim:{self._mode}"  # the vocabulary changes the text
+        elif self.provider.api == "gemini" and not gemini_takes_temperature(self.model):  # Gemini 3 asked to think less
+            mode = f"|think:{gemini_thinking(self.model) or 'default'}"
+        else:
+            mode = ""  # requests as they always were
         return f"cloud|{where}|{self.model}|lang:{self.language or 'auto'}|words:{words}{mode}|peak-1"
 
     @property
@@ -178,7 +199,7 @@ class CloudEngine:
         return "vocabulary" if self.timestamp_mode == "vocabulary" else "timestamps"
 
     def _transcribe_model(self) -> bool:
-        """Gemini Transcribe, Google's speech-to-text model (OpenAI's gpt-4o-*-transcribe are chat-style models)."""
+        """Gemini Transcribe, Google's speech-to-text model (OpenAI's *-transcribe go through OpenAI's transcription API)."""
         return self.provider.api == "gemini" and "transcribe" in self.model
 
     def prepare(self) -> None:
@@ -237,7 +258,8 @@ class CloudEngine:
             raise CloudError(f"a broken answer ({type(e).__name__})") from None
 
     def check(self, audio: np.ndarray, sample_rate: int) -> str:
-        """For the Test button: one recording through the provider, never Parakeet. Raises with a readable reason."""
+        """For the Test button: one recording through the provider, never Parakeet. Raises with a readable reason. A
+        model being retired says so."""
         audio16 = resample(condition(audio), sample_rate, TARGET_RATE)
         t0 = time.perf_counter()
         try:
@@ -246,7 +268,9 @@ class CloudEngine:
             raise CloudError("no answer in time") from None
         except (OSError, http.client.HTTPException) as e:
             raise CloudError(f"could not reach {self.provider.name}: {e}") from None
-        return f"{self.model} answered in {time.perf_counter() - t0:.1f} s: {text or '(nothing recognised)'}"
+        note = retirement(self.name, self.model)
+        return (f"{self.model} answered in {time.perf_counter() - t0:.1f} s: {text or '(nothing recognised)'}"
+                + (f" ({note})" if note else ""))
 
     def _ask_patiently(self, wav: bytes, seconds: float) -> str:
         """ask(), waiting out a rate limit (HTTP 429) when nothing falls back: scoring reading tests sends many
@@ -314,11 +338,19 @@ class CloudEngine:
             instruction += " " + HINTS.format(terms=", ".join(f'"{h}"' for h in hints))
         body = json.dumps({"contents": [{"parts": [
             {"inline_data": {"mime_type": "audio/wav", "data": base64.b64encode(wav).decode("ascii")}},
-            {"text": instruction}]}], "generationConfig": {"temperature": 0}}).encode("utf-8")
+            {"text": instruction}]}], "generationConfig": self._flash_config()}).encode("utf-8")
         status, data, _ = self._request(f"/models/{self.model}:generateContent", body, self._google(), timeout)
         answer = _json(status, data)
         parts = ((answer.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
         return RawTranscript("".join(p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought")))
+
+    def _flash_config(self) -> dict:
+        """A Flash model's generationConfig: Gemini 3 thinks as little as it allows ("medium" unless told: slower, and
+        3-4 times the cost) at its own temperature; an older model writes at temperature 0 (sst.modelrules)."""
+        config = {"temperature": 0} if gemini_takes_temperature(self.model) else {}
+        if thinking := gemini_thinking(self.model):
+            config["thinkingConfig"] = {"thinkingLevel": thinking}
+        return config
 
     # ---- Gemini Transcribe (the owner's plan, sections 18-21): upload, transcribe and delete kept apart
 
@@ -394,8 +426,8 @@ class CloudEngine:
     # ---- OpenAI's transcription API (OpenAI, Groq, own servers)
 
     def _asks_word_times(self) -> bool:
-        """Whisper models give word times; gpt-4o-*-transcribe only plain JSON. An own server is asked only for a
-        Whisper model, and no more once it refused."""
+        """Whisper models give word times; gpt-transcribe and gpt-4o-*-transcribe only plain JSON. An own server is asked
+        only for a Whisper model, and no more once it refused."""
         return "whisper" in self.model.lower() and (self.url, self.model) not in self._plain_json
 
     def _ask_openai(self, wav: bytes, timeout: float, timed: bool, hints: list[str]) -> RawTranscript:
@@ -404,8 +436,8 @@ class CloudEngine:
         fields["response_format"] = "verbose_json" if timed else "json"
         if timed:
             fields["timestamp_granularities[]"] = "word"
-        if self.language:
-            fields["language"] = self.language
+        if self.language:  # gpt-transcribe takes a list, and OpenAI says not to send both
+            fields["languages[]" if LANGUAGE_LIST.search(self.model) else "language"] = self.language
         if words:
             fields["prompt"] = f"Names and terms: {words}."
         body, content_type = _multipart(fields, "recording.wav", wav)

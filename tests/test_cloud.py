@@ -164,22 +164,55 @@ def test_openai_and_groq_get_a_multipart_upload_with_the_hints(fake):
 def test_no_language_and_no_words_send_no_hints(fake):
     fake.engine("openai").transcribe(AUDIO, RATE)
     assert set(fake.requests[0]["fields"]) == {"model", "response_format", "file"}
-    assert fake.requests[0]["fields"]["model"] == b"gpt-4o-mini-transcribe"
+    assert fake.requests[0]["fields"]["model"] == b"gpt-transcribe"  # OpenAI's current model is the default
+
+
+def test_gpt_transcribe_takes_the_language_as_a_list(fake):
+    fake.engine("openai", language="ja").transcribe(AUDIO, RATE)
+    fields = fake.requests[0]["fields"]
+    assert fields["languages[]"] == b"ja" and "language" not in fields  # OpenAI: don't send both
+    fake.engine("openai", model="gpt-4o-mini-transcribe", language="ja").transcribe(AUDIO, RATE)
+    assert fake.requests[1]["fields"]["language"] == b"ja" and "languages[]" not in fake.requests[1]["fields"]
+
+
+def test_a_model_being_retired_still_works_and_says_so(fake):
+    assert cloud.retirement("openai", "gpt-transcribe") == "" and cloud.retirement("server", "whisper-1") == ""
+    for model in ("gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"):
+        assert model in cloud.CLOUD["openai"].models  # offered until OpenAI shuts it down
+        answer = fake.engine("openai", model=model).check(AUDIO, RATE)
+        assert answer.startswith(f"{model} answered in ") and answer.endswith(
+            f"(OpenAI shuts {model} down on 26 February 2027: choose gpt-transcribe)")
+    assert "(" not in fake.engine("openai").check(AUDIO, RATE)
 
 
 def test_gemini_gets_the_audio_inline_with_an_instruction(fake):
-    engine = fake.engine("gemini", model="gemini-flash-latest", language="ta", path="/v1beta")
+    engine = fake.engine("gemini", model="gemini-3.6-flash", language="ta", path="/v1beta")
     engine.words = ["Karthi"]
     assert engine.transcribe(AUDIO, RATE) == "Hello from Gemini."  # its thinking is left out
     request = fake.requests[0]
-    assert request["path"] == "/v1beta/models/gemini-flash-latest:generateContent"
+    assert request["path"] == "/v1beta/models/gemini-3.6-flash:generateContent"
     assert request["x-goog-api-key"] == "test-key" and request["auth"] is None
     body = request["json"]
     audio, instruction = body["contents"][0]["parts"]
     assert audio["inline_data"]["mime_type"] == "audio/wav"
     assert _wav(base64.b64decode(audio["inline_data"]["data"])) == (16_000, 32_000)
     assert "word for word" in instruction["text"] and "Tamil" in instruction["text"] and "Karthi" in instruction["text"]
-    assert body["generationConfig"]["temperature"] == 0
+    # Gemini 3 Flash thinks at "medium" unless told, and Google advises its own temperature (1.0) over 0.
+    assert body["generationConfig"] == {"thinkingConfig": {"thinkingLevel": "minimal"}}
+
+
+@pytest.mark.parametrize("model, config", [
+    ("gemini-3.5-flash-lite", {"thinkingConfig": {"thinkingLevel": "minimal"}}),
+    ("gemini-3.8-flash", {"thinkingConfig": {"thinkingLevel": "low"}}),  # "minimal" is an error on 3.7 and 3.8
+    ("gemini-flash-latest", {"thinkingConfig": {"thinkingLevel": "low"}}),  # Gemini 3.5 Flash, by Google's docs
+    ("gemini-flash-lite-latest", {}),  # its model isn't documented: its own settings, which always work
+    ("gemini-2.5-flash-lite", {"temperature": 0}),  # before Gemini 3: as always
+])
+def test_each_gemini_flash_model_thinks_as_little_as_it_allows(fake, model, config):
+    engine = fake.engine("gemini", model=model, path="/v1beta")
+    engine.transcribe(AUDIO, RATE)
+    assert fake.requests[0]["json"]["generationConfig"] == config
+    assert ("|think:" in engine.signature) is ("temperature" not in config)  # cached apart from the old requests' text
 
 
 def test_a_provider_error_is_typed_by_parakeet_and_said(fake):
@@ -247,7 +280,7 @@ def test_the_connection_is_opened_while_the_user_speaks_and_kept(fake):
 
 def test_the_test_button_reports_the_time_and_never_falls_back(fake):
     engine = fake.engine(fallback=Parakeet)
-    assert engine.check(AUDIO, RATE).startswith("gpt-4o-mini-transcribe answered in ")
+    assert engine.check(AUDIO, RATE).startswith("gpt-transcribe answered in ")
     fake.statuses = [401]
     with pytest.raises(CloudError, match="Invalid API key"):
         engine.check(AUDIO, RATE)
@@ -257,7 +290,7 @@ def test_a_cloud_model_needs_a_key_which_never_shows():
     with pytest.raises(ValueError, match="needs an API key"):
         CloudEngine("openai", "")
     engine = CloudEngine("openai", "sk-secret")
-    assert "sk-secret" not in repr(engine) and engine.title == "OpenAI gpt-4o-mini-transcribe"
+    assert "sk-secret" not in repr(engine) and engine.title == "OpenAI gpt-transcribe"
 
 
 def test_the_signature_follows_what_the_text_depends_on():
@@ -437,8 +470,8 @@ def test_whisper_models_give_word_times(fake, provider, model):
     assert raw.backend == f"{cloud.CLOUD[provider].name} {model}"
 
 
-def test_gpt_4o_models_and_dictation_keep_plain_json(fake):
-    raw = fake.engine("openai").transcribe_chunk(AUDIO, RATE)  # gpt-4o-mini-transcribe gives no word times
+def test_gpt_transcribe_models_and_dictation_keep_plain_json(fake):
+    raw = fake.engine("openai").transcribe_chunk(AUDIO, RATE)  # gpt-transcribe gives no word times
     assert raw.text == "Hello from OpenAI." and raw.words == []
     assert set(fake.requests[0]["fields"]) == {"model", "response_format", "file"}
     assert fake.requests[0]["fields"]["response_format"] == b"json"
@@ -547,7 +580,7 @@ def _prompt(request) -> str:
 
 def test_only_names_and_terms_go_to_the_speech_model_as_a_spelling_reference(fake):
     for provider, path in (("gemini", "/v1beta"), ("groq", "/v1")):
-        engine = fake.engine(provider, model="gemini-flash-lite-latest" if provider == "gemini" else "", path=path)
+        engine = fake.engine(provider, model="gemini-3.5-flash-lite" if provider == "gemini" else "", path=path)
         engine.words = OWNER_WORDS
         engine.transcribe(AUDIO, RATE)
         prompt = _prompt(fake.requests[-1])
@@ -559,7 +592,7 @@ def test_only_names_and_terms_go_to_the_speech_model_as_a_spelling_reference(fak
 def test_a_copied_hint_list_is_replaced_by_the_transcript_made_without_hints(fake):
     fake.reply = lambda request: ("What is the problem. GitHub, Rflow, Parakeet, Vercel." if "GitHub" in _prompt(request)
                                   else "What is the problem.")
-    engine = fake.engine("gemini", model="gemini-flash-lite-latest", path="/v1beta")
+    engine = fake.engine("gemini", model="gemini-3.5-flash-lite", path="/v1beta")
     engine.words = OWNER_WORDS
     raw = engine.transcribe_chunk(AUDIO, RATE)
     assert raw.text == "What is the problem." and raw.diagnostics["hint_echo"] == "replaced"
@@ -583,7 +616,7 @@ def test_without_a_second_opinion_the_copied_list_is_taken_out(fake):
             return "Send it to me, GitHub Rflow Parakeet Vercel."
         return None
     fake.reply = reply
-    engine = fake.engine("gemini", model="gemini-flash-lite-latest", path="/v1beta")
+    engine = fake.engine("gemini", model="gemini-3.5-flash-lite", path="/v1beta")
     engine.words = OWNER_WORDS
     raw = engine.transcribe_chunk(AUDIO, RATE)
     assert raw.text == "Send it to me." and raw.diagnostics["hint_echo"] == "removed"
