@@ -50,11 +50,13 @@ CF_EXCLUDE_FROM_HISTORY = user32.RegisterClipboardFormatW("ExcludeClipboardConte
 _NOT_MEMORY = {2, 3, 9, 14, 0x80, 0x82, 0x83, 0x8E}
 
 RESTORE_DELAY = 0.5  # seconds the target app gets to read the clipboard before the old content returns
+HELD_WAIT = 200.0  # seconds a dictation waits for held keys: they may be held for the next one already (up to 3 min)
 
 
 def paste_text(text: str) -> None:
-    """Paste `text` into the focused app, leaving the user's clipboard as it was."""
-    _wait_for_modifiers_released()
+    """Paste `text` into the focused app, leaving the user's clipboard as it was. Raises OSError when it can't: the
+    clipboard held by another app, or keys held down for more than HELD_WAIT."""
+    _wait_until_keys_released()
     with _clipboard():
         saved = _snapshot()
         # Windows text has "\r\n" line breaks (a snippet's lines): a classic edit box shows a bare "\n" as nothing.
@@ -68,11 +70,24 @@ def paste_text(text: str) -> None:
             _put(saved + [(CF_EXCLUDE_FROM_HISTORY, b"\0" * 4)] if saved else [])
 
 
+def _modifiers_held() -> bool:
+    return any(user32.GetAsyncKeyState(vk) & 0x8000 for vk in (VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN))
+
+
 def _wait_for_modifiers_released(timeout: float = 5.0) -> None:
     # Ctrl+V pressed while the user still holds Alt from the hotkey would arrive as Ctrl+Alt+V.
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline and any(
-            user32.GetAsyncKeyState(vk) & 0x8000 for vk in (VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN)):
+    while time.monotonic() < deadline and _modifiers_held():
+        time.sleep(0.02)
+
+
+def _wait_until_keys_released(timeout: float = HELD_WAIT) -> None:
+    """A dictation's Ctrl+V pressed while Ctrl+Win is still held would arrive as Win+Ctrl+V, not a paste. It waits until
+    the keys are let go, also when they're held for the next dictation already, and is never pressed with them held."""
+    deadline = time.monotonic() + timeout
+    while _modifiers_held():
+        if time.monotonic() >= deadline:
+            raise OSError("the keys stayed held down")
         time.sleep(0.02)
 
 

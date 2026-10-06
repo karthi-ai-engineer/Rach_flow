@@ -113,8 +113,8 @@ def test_auto_repeat_while_holding_does_not_press_again():
 def test_windows_shortcuts_still_work_and_interrupt_dictation():
     m = Matcher(parse_hotkey("ctrl+win"))
     results = feed(m, ("down", LCTRL), ("down", LWIN), ("down", D), ("up", D), ("up", LWIN), ("up", LCTRL))
-    assert results == [(False, None), (False, "press"), (False, "interrupt"), (False, None), (False, None),
-                       (False, None)]  # D reaches Windows (new desktop), and no "release" follows
+    assert results == [(False, None), (False, "press"), (False, "interrupt"), (False, None), (False, "release"),
+                       (False, None)]  # D reaches Windows (new desktop); the release still comes: the dictation decides
 
 
 def test_ctrl_win_space_is_hands_free_and_windows_never_gets_the_space():
@@ -479,3 +479,44 @@ def test_a_third_copy_starts_a_new_pair():
     m, clock = tapping("ctrl+c+c")
     assert events(play(m, clock, ("down", LCTRL), *press_c(), *press_c(), *press_c(), *press_c(),
                        ("up", LCTRL))) == ["release", "release"]
+
+
+def test_the_hook_is_renewed_while_no_key_is_held(monkeypatch):
+    """Windows silently drops a hook that answers too slowly: a fresh one goes in now and then, never mid-chord."""
+    from sst import hotkey
+    from sst.hotkey import WM_TIMER, HotkeyListener
+
+    listener = HotkeyListener(parse_hotkey("ctrl+win"))
+    hooks, unhooked = iter(range(1, 10)), []
+
+    def held(msg):
+        listener._matcher._down = {LCTRL}  # Ctrl is down: not now
+        msg.message = WM_TIMER
+
+    def released(msg):
+        listener._matcher._down = set()
+        msg.message = WM_TIMER
+    steps = iter([lambda msg: setattr(msg, "message", WM_TIMER), held, released])
+
+    class User32:
+        SetWindowsHookExW = staticmethod(lambda *args: next(hooks))
+        UnhookWindowsHookEx = staticmethod(unhooked.append)
+        SetTimer = staticmethod(lambda *args: 7)
+        KillTimer = staticmethod(lambda *args: None)
+
+        @staticmethod
+        def GetMessageW(ref, *args):
+            step = next(steps, None)
+            if step is None:
+                return 0
+            step(ref._obj)
+            return 1
+
+    class Kernel32:
+        GetCurrentThreadId = staticmethod(lambda: 1)
+        GetModuleHandleW = staticmethod(lambda name: 0)
+
+    monkeypatch.setattr(hotkey, "user32", User32)
+    monkeypatch.setattr(hotkey, "kernel32", Kernel32)
+    listener._run()
+    assert unhooked == [1, 2, 3]  # hook 1 replaced by 2 (idle), kept while Ctrl was held, then by 3; 3 removed at the end
