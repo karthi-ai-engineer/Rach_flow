@@ -1,4 +1,5 @@
 """The Rflow window, built off-screen with PreviewApp in place of the tray app (no model, no microphone, no hook)."""
+import dataclasses
 import os
 import time
 
@@ -9,6 +10,7 @@ from datetime import date, datetime, timedelta  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtGui import QFontMetrics  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
 
 from sst import bench  # noqa: E402
@@ -18,6 +20,7 @@ from sst.commands import DEFAULT_PHRASES  # noqa: E402
 from sst.gateway import GatewayConfig  # noqa: E402
 from sst.settings import Settings, Stats  # noqa: E402
 from sst.snippets import load  # noqa: E402
+from sst.transform import TRANSFORMS, TransformGuard  # noqa: E402
 from sst.ui import KeyCap  # noqa: E402
 
 
@@ -28,6 +31,16 @@ def qt():
 
 def _labels(widget) -> str:
     return " | ".join(label.text() for label in widget.findChildren(QLabel))
+
+
+def _shown(widget) -> str:
+    """The labels shown, not those of a list just filled again (hidden until Qt deletes them)."""
+    return " | ".join(label.text() for label in widget.findChildren(QLabel) if label.isVisibleTo(widget))
+
+
+def _keys(widget) -> list[str]:
+    """The keys drawn as keys, as shown."""
+    return [cap.key_text for cap in widget.findChildren(KeyCap) if cap.isVisibleTo(widget)]
 
 
 def _button(widget, caption: str) -> QPushButton:
@@ -75,8 +88,16 @@ def test_pages_one_level_down_lead_back():
     assert window.current_page() == "models"
     window.show_page("words")
     assert window.current_page() == "dictionary"  # Words opens on Your words
-    window.pages["dictionary"].tabs.buttons["snippets"].click()
-    assert window.current_page() == "snippets" and window.nav["words"].isChecked()
+
+
+def test_words_and_snippets_are_sections_of_their_own():
+    window, _ = _window()
+    window.nav["snippets"].click()
+    assert window.current_page() == "snippets" and window.nav["snippets"].isChecked()
+    assert window.pages["snippets"].title.text() == "Snippets" and not hasattr(window.pages["snippets"], "tabs")
+    window.nav["words"].click()
+    assert window.current_page() == "dictionary" and window.pages["dictionary"].title.text() == "Words"
+    assert not hasattr(window.pages["dictionary"], "tabs")
 
 
 def test_home_shows_the_stats_and_the_dictations_by_day():
@@ -150,7 +171,7 @@ def test_the_dictionary_adds_several_words_and_removes_one():
     page.entry.setText("Tamil,  CodeQL , github")
     page._add()
     assert app.settings.vocabulary == ["GitHub", "Tamil", "CodeQL"] and page.entry.text() == ""
-    assert page.count.text() == "3 words" and page.tabs.buttons["dictionary"].suffix == "3"
+    assert page.count.text() == "3 words"
     remove = next(b for b in page.findChildren(w.IconButton) if b.toolTip() == "Remove GitHub")
     remove.click()
     assert app.settings.vocabulary == ["Tamil", "CodeQL"]
@@ -984,11 +1005,57 @@ def test_the_pipeline_switches_are_settings():
     assert page.mic_ready.currentData() == "always"
     page.mic_ready.setCurrentIndex(page.mic_ready.findData("warm"))
     assert app.settings.always_on_mic is False and app.settings.warm_mic is True
-    page.format_text.setChecked(False)
     page.debug_pipeline.setChecked(True)
     page.voice_pipeline.setChecked(False)
     s = app.settings
-    assert (s.format_text, s.debug_pipeline, s.voice_pipeline) == (False, True, False)
+    assert (s.debug_pipeline, s.voice_pipeline) == (True, False)
+
+
+# ---- Formatting
+
+def test_formatting_is_a_section_with_the_switch_moved_from_settings():
+    window, app = _window(settings=Settings(welcomed=True))
+    assert not hasattr(window.pages["settings"], "format_text")
+    window.nav["formatting"].click()
+    page = window.pages["formatting"]
+    assert window.current_page() == "formatting" and page.format_text.isChecked() and page.pipeline_off.isHidden()
+    page.format_text.setChecked(False)
+    assert app.settings.format_text is False and "Off" in page.switch_words.text()
+    page.trial.setText("it costs five dollars")
+    assert "Formatting is off" in page.trial_result.text()
+    page.format_text.setChecked(True)
+    assert app.settings.format_text is True and "$5" in page.trial_result.text()
+    page.trial.setText("we have two options")
+    assert "Nothing to change" in page.trial_result.text()
+
+
+def test_the_formatting_examples_are_what_the_real_stage_types():
+    expected = {"sales went up twenty five percent this quarter": "sales went up 25% this quarter",
+                "the budget is twenty five thousand dollars": "the budget is $25,000",
+                "it costs nine dollars ninety nine": "it costs $9.99",
+                "let's meet at three thirty pm": "let's meet at 3:30 PM",
+                "the launch is on october first twenty twenty six": "the launch is on October 1, 2026",
+                "we need twenty five hundred copies": "we need 2,500 copies",
+                "send it to john dot smith at gmail dot com": "send it to john.smith@gmail.com"}
+    assert list(expected) == w.FORMAT_EXAMPLES
+    for said, typed in expected.items():
+        assert w.formatted(said)[0] == typed
+    for said in w.FORMAT_KEPT:
+        assert w.formatted(said)[0] == said  # prose stays as said
+    window, _ = _window()
+    page = window.pages["formatting"]
+    page.refresh()
+    shown = _shown(page.changed_box)
+    assert all(w.formatted(said)[1] in shown for said in expected) and "25%</span>" in shown  # its changes in Iris
+
+
+def test_formatting_says_when_the_voice_pipeline_is_off_and_turns_it_on():
+    window, app = _window(settings=Settings(welcomed=True, voice_pipeline=False))
+    window.show_page("formatting")
+    page = window.pages["formatting"]
+    assert not page.pipeline_off.isHidden()
+    _button(page.pipeline_off, "Turn it on").click()
+    assert app.settings.voice_pipeline and page.pipeline_off.isHidden()
 
 
 
@@ -1293,31 +1360,77 @@ def test_ai_and_models_without_a_connection_offers_one():
     assert window.current_page() == "cleanup"
 
 
-def test_tools_switch_text_transform_and_translate_and_try_them():
+def test_text_transform_and_translate_are_sections_with_the_tools_switches():
     window, app = _window(gateway=GatewayConfig(provider="openai", api_key="sk"),
                           settings=Settings(welcomed=True, cleanup_model="gpt-4o-mini"))
-    window.show_page("tools")
-    page = window.pages["tools"]
-    assert page.transform_on.isChecked() and page.translate_on.isChecked() and page.connect_card.isHidden()
+    assert "tools" not in window.pages and "tools" not in dict(w.NAV)
+    window.nav["translate"].click()
+    page = window.pages["translate"]
+    assert window.current_page() == "translate" and page.translate_on.isChecked() and page.setup.isHidden()
     page.translate_on.setChecked(False)
-    assert app.settings.translate_shortcut == ""
+    assert app.settings.translate_shortcut == "" and page.steps.isHidden() and "Off" in page.switch_words.text()
     page.translate_on.setChecked(True)
-    assert app.settings.translate_shortcut == "ctrl+c+c"
+    assert app.settings.translate_shortcut == "ctrl+c+c" and not page.steps.isHidden()
+    window.nav["transform"].click()
+    page = window.pages["transform"]
+    assert window.current_page() == "transform" and page.transform_on.isChecked()
     page.transform_on.setChecked(False)
-    assert app.settings.transform_shortcut == "" and not app.settings.voice_commands
-    page.target.setCurrentText("Japanese")
-    assert app.settings.translate_to == "Japanese"
-    page.trial_tabs.buttons["concise"].click()
-    assert _wait_until(lambda: "database migration" in page.result.toPlainText())
-    page.trial_tabs.buttons["translate"].click()
-    assert _wait_until(lambda: "informe" in page.result.toPlainText())
+    assert app.settings.transform_shortcut == "" and not app.settings.voice_commands and page.steps.isHidden()
+    page.transform_on.setChecked(True)
+    assert (app.settings.transform_shortcut, app.settings.voice_commands) == ("double ctrl", True)
+    window.show_page("tools")  # a link to the old Tools section (another page, the tray menu) opens Text Transform
+    assert window.current_page() == "transform" and window.nav["transform"].isChecked()
 
 
-def test_tools_without_an_ai_connection_say_so():
-    window, _ = _window()
-    page = window.pages["tools"]
+def test_text_transform_says_how_to_use_it_with_the_users_own_keys_and_phrases():
+    window, app = _window(settings=Settings(welcomed=True, hotkey="menu", command_phrases={"concise": "trim it"},
+                                            transforms=["bullets", "concise"]))
+    window.show_page("transform")
+    page = window.pages["transform"]
+    steps = _shown(page.steps)
+    assert "and say “trim it”" in steps and "Or double-tap" in steps and "Bullet points" in steps
+    assert _keys(page.steps) == ["Menu", "Ctrl", "1", "2"]  # the menu: as it is numbered
+    app.apply_settings(dataclasses.replace(app.settings, voice_commands=False))
     page.refresh()
-    assert not page.connect_card.isHidden() and not page.trial_tabs.buttons["concise"].isEnabled()
+    assert "trim it" not in _shown(page.steps) and "Then double-tap" in _shown(page.steps)
+
+
+def test_text_transform_shows_examples_of_each_transform():
+    window, _ = _window()
+    page = window.pages["transform"]
+    page.refresh()
+    for key, transform in TRANSFORMS.items():
+        page.example_tabs.buttons[key].click()
+        shown = page.findChildren(w.Example)
+        assert len([e for e in shown if e.isVisibleTo(page)]) == len(w.TRANSFORM_EXAMPLES[key]) >= 2
+        assert page.example_words.text() == transform.description
+
+
+@pytest.mark.parametrize("key, before, after", [(key, before, after) for key, pairs in w.TRANSFORM_EXAMPLES.items()
+                                                for before, after in pairs])
+def test_every_text_transform_example_is_one_rflow_would_accept(key, before, after):
+    got = TransformGuard().validate(before, after, key)  # the real check: nothing invented, nothing lost
+    assert got.accepted, got.reasons
+
+
+def test_translate_says_how_to_use_it_and_shows_examples():
+    window, app = _window(settings=Settings(welcomed=True, translate_to="German", translate_second="English"))
+    window.show_page("translate")
+    page = window.pages["translate"]
+    steps = _shown(page.steps)
+    assert "shows it in German" in steps and "already in German goes into English" in steps
+    assert _keys(page.steps) == ["Ctrl", "C", "C", "C", "↵"]
+    assert len([e for e in page.findChildren(w.Example) if e.isVisibleTo(page)]) == len(w.TRANSLATE_EXAMPLES)
+    page.shortcut.setCurrentIndex(page.shortcut.findData("ctrl+alt+l"))
+    assert app.settings.translate_shortcut == "ctrl+alt+l" and "to translate it." in _shown(page.steps)
+
+
+def test_text_transform_and_translate_without_an_ai_connection_say_so():
+    window, _ = _window()
+    for key in ("transform", "translate"):
+        page = window.pages[key]
+        page.refresh()
+        assert not page.setup.isHidden() and "needs an AI connection" in page.model.text()
 
 
 def test_the_smallest_window_folds_the_sidebar_into_a_rail():
@@ -1328,6 +1441,110 @@ def test_the_smallest_window_folds_the_sidebar_into_a_rail():
     assert not window.grab().isNull()
     window._set_compact(False)
     assert window.nav["models"].text() == "AI & models"
+
+
+def test_the_sidebar_has_the_ten_sections_in_order():
+    window, _ = _window()
+    assert [key for key, _ in w.NAV] == ["home", "live", "words", "snippets", "transform", "translate", "formatting",
+                                         "models", "settings", "report"]
+    assert all(key in w.NAV_ICONS and w.NAV_ICONS[key] in w.theme.ICONS for key in window.nav)
+
+
+@pytest.mark.parametrize("size", [(780, 540), (1000, 540), (1000, 700)])
+def test_every_section_fits_the_smallest_window_in_the_sidebar_and_the_rail(size):
+    profiles = w.Profiles()
+    profiles.add("Rahul")  # two profiles: the profile button shows too
+    window, _ = _window(profiles=profiles)
+    window.show_update("Rflow 9.9.9 is available (you have 1.0.0).", version="9.9.9")
+    window.resize(*size)
+    assert not window.grab().isNull()
+    buttons = [window.nav[key] for key, _ in w.NAV]
+    tops = [b.geometry().top() for b in buttons]
+    assert tops == sorted(tops)
+    assert all(a.geometry().bottom() < b.geometry().top() for a, b in zip(buttons, buttons[1:], strict=False))  # no overlap
+    below = [x for x in (window.update_link, window.status_card, window.profile_button) if x.isVisibleTo(window)]
+    assert window.status_card in below and all(buttons[-1].geometry().bottom() < x.geometry().top() for x in below)
+    assert max(x.geometry().bottom() for x in below) < window.sidebar.height()  # nothing cut off at the bottom
+    assert min(b.height() for b in buttons) >= w.NAV_HEIGHTS[window.compact][1]
+    if window.compact:  # the rail: each short name fits under its icon
+        metrics = QFontMetrics(w.font(11, 600))
+        assert all(metrics.horizontalAdvance(b.text()) <= b.width() - 4 for b in buttons)
+    else:
+        assert window.update_link.isVisibleTo(window) and window.profile_button.isVisibleTo(window)
+
+
+# ---- Report a problem
+
+def test_report_a_problem_opens_an_issue_and_copies_only_the_version_info(monkeypatch):
+    opened, copied, folders = [], [], []
+    monkeypatch.setattr(w, "open_link", opened.append)
+    monkeypatch.setattr(w, "copy_text", copied.append)
+    monkeypatch.setattr(w, "open_folder", folders.append)
+    window, app = _window(settings=Settings(welcomed=True, vocabulary=["Priya"],
+                                            snippets=[{"cue": "my email", "text": "alex@example.com"}]))
+    window.nav["report"].click()
+    page = window.pages["report"]
+    assert window.current_page() == "report" and page.title.text() == "Report a problem"
+    page.issue_button.click()
+    assert opened == [w.REPO + "/issues/new/choose"]
+    page.copy_button.click()
+    lines = copied[0].splitlines()
+    assert lines[0].startswith(f"Rflow {w.__version__}") and lines[1].startswith("Windows") and "x64" in lines[2]
+    assert "Priya" not in copied[0] and "alex@example.com" not in copied[0] and page.copy_button.text() == "Copied"
+    assert "can contain text you dictated" in page.privacy.text()
+    page.logs_button.click()
+    assert folders == [w.LOG_DIR]
+
+
+def test_settings_name_the_key_plainly_and_list_the_reading_test():
+    window, _ = _window()
+    page = window.pages["settings"]
+    assert page.hotkey.currentText() == "Ctrl+Win" and "Wispr" not in page.hotkey.itemText(0)
+    assert not page.advanced_card.isAncestorOf(page.reading) and page.reading.isVisibleTo(page)  # not under Advanced
+    page.reading.click()
+    assert window.current_page() == "reading" and window.nav["settings"].isChecked()
+
+
+def test_start_over_asks_first_and_can_keep_the_speech_models():
+    window, app = _window()
+    page = window.pages["settings"]
+    layout = page.body
+    cards = [layout.itemAt(i).widget() for i in range(layout.count()) if layout.itemAt(i).widget() is not None]
+    assert cards[-1].isAncestorOf(page.start_over)  # at the very end
+    assert page.start_over.kind == "danger" and page.start_over.text().startswith("Start over")
+    page.confirm_start_over = lambda: None  # cancelled
+    page.start_over.click()
+    assert not any(call[0] == "start_over" for call in app.calls)
+    page.confirm_start_over = lambda: True  # "Keep the downloaded speech models" ticked
+    page.start_over.click()
+    page.confirm_start_over = lambda: False
+    page.start_over.click()
+    assert [call for call in app.calls if call[0] == "start_over"] == [("start_over", True), ("start_over", False)]
+
+
+def test_the_start_over_dialog_says_plainly_what_is_deleted(monkeypatch):
+    seen = {}
+
+    def answer(box):  # in place of showing it: read it, untick, press the red button
+        seen["words"] = f"{box.text()} {box.informativeText()}"
+        seen["keep"] = box.checkBox().isChecked() and box.checkBox().text() == "Keep the downloaded speech models"
+        box.checkBox().setChecked(False)
+        next(b for b in box.buttons() if b.text() == "Delete everything and restart").click()
+        return 0
+    monkeypatch.setattr(w.QMessageBox, "exec", answer)
+    window, _ = _window()
+    assert window.pages["settings"].confirm_start_over() is False  # go on, without keeping the models
+    assert seen["keep"]  # ticked at first
+    assert all(word in seen["words"] for word in ("every profile", "settings", "words and snippets", "history", "stats",
+                                                  "API keys", "recordings", "reading tests", "live translation", "logs",
+                                                  "welcome"))
+
+
+def test_report_a_problem_left_settings_advanced():
+    window, _ = _window()
+    advanced = window.pages["settings"].advanced_card
+    names = [b.accessibleName() for b in advanced.findChildren(QPushButton) if b.accessibleName()]
+    assert "Report a problem" not in names and "Source code" in names and "Profiles" in names
 
 
 # ---- the microphone list follows Windows (phase 26)
@@ -1373,7 +1590,7 @@ def _live_window(**settings):
 
 def test_live_translation_is_a_section_of_its_own_and_starts_and_stops_there():
     window, app = _live_window()
-    assert ("live", "Live translation") in w.NAV and not hasattr(window.pages["tools"], "live_card")
+    assert ("live", "Live translation") in w.NAV and "tools" not in window.pages
     window.show_page("live")
     page = window.pages["live"]
     assert page.state.text() == "Off" and page.start_button.text() == "Start" and page.connect_card.isHidden()

@@ -13,11 +13,13 @@ import contextlib
 import ctypes
 import dataclasses
 import faulthandler
+import gc
 import logging
 import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -32,7 +34,7 @@ from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QFontMetri
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from sst import __version__, bench, downloads, evaluate, scan, theme, updates
+from sst import DOWNLOADS_DIR, __version__, bench, downloads, evaluate, scan, theme, updates
 from sst.audio import PREROLL_SECONDS, TAIL_SECONDS, Recorder, default_microphone, input_device_names
 from sst.commands import UNDO, match_command, phrases_for
 from sst.dictate import DEFAULT_HOTKEY, Dictation, already_running, wispr_flow_running
@@ -57,7 +59,7 @@ from sst.pipeline.guard import Guard
 from sst.pipeline.learning import CorrectionEvent, Learner
 from sst.pipeline.polish import GatewayLLM
 from sst.pipeline.session import LazyBackend, Stages, VoicePipeline
-from sst.settings import LOAD_PROBLEMS, Profiles, Settings, Stats, add_to_history, read_history
+from sst.settings import CONFIG_DIR, LOAD_PROBLEMS, Profiles, Settings, Stats, add_to_history, read_history
 from sst.snippets import Snippet
 from sst.snippets import load as load_snippets
 from sst.transform import Transformer
@@ -128,6 +130,71 @@ def mark_clean_exit(log_dir: Path) -> None:
     """Rflow quit on purpose, or Windows ended the session: there's no crash to report at the next start."""
     with contextlib.suppress(OSError):
         (log_dir / RUNNING_FILE).unlink()
+
+
+def close_log_files() -> None:
+    """Let go of the log and of the crash report, so their folder can be deleted (Start over). Nothing is logged after."""
+    global _crash_file
+    root = logging.getLogger()
+    for handler in [h for h in root.handlers if isinstance(h, logging.FileHandler)]:
+        root.removeHandler(handler)
+        handler.close()
+    if _crash_file is not None:
+        faulthandler.disable()
+        _crash_file.close()
+        _crash_file = None
+
+
+# ---------------------------------------------------------------- Start over: Rflow as if just installed
+
+# What Rflow keeps: %APPDATA%\sst (every profile's settings, words, snippets, history, stats, keys, dictionary, live
+# transcripts; the last scan) and %LOCALAPPDATA%\sst (logs, reading tests, the installed app's recordings, the debug
+# steps, and the downloaded speech models and voice in "models"). The source code's recordings/ is never touched.
+DATA_DIRS = (CONFIG_DIR, LOG_DIR.parent)
+AFTER = "--after="  # Rflow started again by Start over waits for the one that started it (its process id) to end
+
+
+def erase_data(folders=DATA_DIRS, keep: tuple[str, ...] = ()) -> list[Path]:
+    """Delete everything in Rflow's data folders but the names in `keep` (e.g. "models"), and the folders themselves
+    when nothing is kept. Only folders named "sst" are touched, whatever the environment says. Returns what couldn't be
+    deleted (a file another program holds open)."""
+    left = []
+    for folder in map(Path, folders):
+        if folder.name != "sst" or not folder.is_dir():
+            continue
+        for item in folder.iterdir():
+            if item.name in keep:
+                continue
+            if item.is_dir() and not item.is_symlink():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                with contextlib.suppress(OSError):
+                    item.unlink()
+            if item.exists() or item.is_symlink():
+                left.append(item)
+        with contextlib.suppress(OSError):
+            folder.rmdir()  # empty only: a kept folder keeps it
+    return left
+
+
+def restart_command(pid: int) -> list[str]:
+    """How to start this Rflow again once process `pid` (this one) has ended: Rflow.exe, or the app from the source."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, f"{AFTER}{pid}"]
+    return [sys.executable, "-c", "import sys; from sst.app import main; sys.exit(main())", f"{AFTER}{pid}"]
+
+
+def wait_for_exit(pid: int, seconds: float = 30) -> None:
+    """Wait for the Rflow that started this one to end: until then it holds the mutex that says Rflow runs, and this
+    one would only ask it to show its window."""
+    SYNCHRONIZE = 0x00100000
+    _kernel32.OpenProcess.restype = ctypes.c_void_p
+    _kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    _kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    handle = _kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+    if handle:  # none: it has ended already
+        _kernel32.WaitForSingleObject(handle, int(seconds * 1000))
+        _kernel32.CloseHandle(handle)
 
 
 # ---------------------------------------------------------------- the recording pill
@@ -424,7 +491,8 @@ class TrayApp:
         menu.addSeparator()
         menu.addAction(f"Open {APP_NAME}", lambda: self.window.open("home"))
         menu.addAction("Words", lambda: self.window.open("dictionary"))
-        menu.addAction("Tools", lambda: self.window.open("tools"))
+        menu.addAction("Text Transform", lambda: self.window.open("transform"))
+        menu.addAction("Translate", lambda: self.window.open("translate"))
         self.live_action = QAction("Live translation", menu, checkable=True)
         self.live_action.triggered.connect(lambda: self.toggle_live())
         menu.addAction(self.live_action)
@@ -1589,7 +1657,8 @@ class TrayApp:
         if self.update and self.update.page:
             QDesktopServices.openUrl(QUrl(self.update.page))
 
-    def quit(self) -> None:
+    def _stop_all(self) -> None:
+        """Stop the shortcuts' keyboard hooks, live translation and dictation (a recording is dropped), before quitting."""
         self.transforms.stop()
         self.translator.stop()
         self.live.stop()
@@ -1600,9 +1669,39 @@ class TrayApp:
         if self.dictation:
             self.dictation.close()
         self.server.close()
+
+    def quit(self) -> None:
+        self._stop_all()
         self.tray.hide()
         mark_clean_exit(LOG_DIR)
         QApplication.quit()
+
+    def start_over(self, keep_models: bool = True) -> None:
+        """Settings' Start over: stop dictation and live translation, let go of every open file (the dictionary, the
+        log, the microphone), delete what Rflow keeps (every profile's settings, words, snippets, history, stats, keys,
+        recordings, reading tests, live transcripts, logs; the downloaded speech models too unless kept), and start
+        Rflow again: it opens on the welcome, like a new install."""
+        log.info("Starting over: the downloaded speech models are %s", "kept" if keep_models else "deleted too")
+        self._cancel_download.set()  # a download in progress stops writing into the models folder
+        for timer in (self.pump, self.live_keys):
+            timer.stop()
+        self._stop_all()
+        self.dictation, self._local = None, None  # the speech models let go of, so their files can be deleted too
+        gc.collect()
+        self.recorder.close()
+        self.dictionary.close()
+        close_log_files()
+        erase_data(DATA_DIRS, keep=(DOWNLOADS_DIR.name,) if keep_models else ())
+        release_running_mutex()
+        try:  # the new Rflow waits for this one to end, then starts on the welcome
+            subprocess.Popen(restart_command(os.getpid()), close_fds=True,
+                             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+        except OSError as e:
+            QMessageBox.information(None, APP_NAME, f"Everything is deleted, but {APP_NAME} couldn't start again ({e}). "
+                                                    "Start it from the Start menu.")
+        self.tray.hide()
+        self.window.hide()
+        QApplication.exit(0)  # not quit(): that asks the windows first, and the main window only hides when closed
 
     def _set_status(self, message: str, ready: bool = False) -> None:
         self._status = (message, ready)  # a window built later (another profile) shows it too
@@ -1694,6 +1793,9 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if "--self-test" in argv:
         return self_test()
+    after = next((a.removeprefix(AFTER) for a in argv if a.startswith(AFTER)), "")
+    if after.isdigit():  # started again by Start over
+        wait_for_exit(int(after))
     log_dir = setup_logging()
     log.info("%s %s starting (%s)", APP_NAME, __version__, scan.machine())  # which kind of computer the log is from
     app = QApplication(sys.argv)

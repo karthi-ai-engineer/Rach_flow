@@ -831,3 +831,72 @@ def test_only_a_real_crash_counts_not_an_exception_windows_handles_itself():
     assert sst_app.crashed(seen_here + "\nWindows fatal exception: access violation\n\nCurrent thread ...")
     assert sst_app.crashed("Fatal Python error: Segmentation fault\n")
     assert sst_app.crashed("Windows fatal exception: code 0xc0000409\n") and not sst_app.crashed("")
+
+
+# ---- Start over (phase 31): every test works in temporary folders, never in Rflow's real ones
+
+def _rflow_data(root):
+    """Rflow's two data folders as they'd be after some use: %APPDATA%\\sst and %LOCALAPPDATA%\\sst."""
+    roaming, local = root / "Roaming" / "sst", root / "Local" / "sst"
+    for path in (roaming / "settings.json", roaming / "gateway.json", roaming / "profiles" / "rahul" / "dictionary.db",
+                 roaming / "live captions" / "2026-10-06 10-00-00 live captions.txt", local / "logs" / "sst.log",
+                 local / "bench" / "2026-10-06_100000" / "01.wav", local / "recordings" / "a.wav",
+                 local / "models" / "parakeet" / "encoder.int8.onnx"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x", encoding="utf-8")
+    return roaming, local
+
+
+def test_erase_data_deletes_rflows_folders_and_can_keep_the_models(tmp_path):
+    roaming, local = _rflow_data(tmp_path)
+    neighbour = tmp_path / "Roaming" / "Other app"
+    neighbour.mkdir()
+    (neighbour / "keep.txt").write_text("x", encoding="utf-8")
+    assert sst_app.erase_data([roaming, local], keep=("models",)) == []
+    assert not roaming.exists() and [p.name for p in local.iterdir()] == ["models"]
+    assert (local / "models" / "parakeet" / "encoder.int8.onnx").exists() and (neighbour / "keep.txt").exists()
+    assert sst_app.erase_data([roaming, local]) == [] and not local.exists()  # without keeping the models
+
+
+def test_erase_data_never_touches_a_folder_not_named_sst(tmp_path):
+    home = tmp_path / "home"  # e.g. APPDATA unset: never the user's own folder
+    (home / "Documents").mkdir(parents=True)
+    (home / "notes.txt").write_text("mine", encoding="utf-8")
+    assert sst_app.erase_data([home]) == []
+    assert (home / "notes.txt").exists() and (home / "Documents").exists()
+
+
+def test_erase_data_says_what_another_program_holds_open(tmp_path):
+    roaming, _ = _rflow_data(tmp_path)
+    with open(roaming / "settings.json", encoding="utf-8"):  # open: Windows doesn't let it be deleted
+        left = sst_app.erase_data([roaming])
+    assert left == [roaming / "settings.json"] and not (roaming / "profiles").exists()
+
+
+def test_start_over_stops_everything_deletes_the_data_and_starts_rflow_again(tray_app, tmp_path, monkeypatch):
+    app, _, _ = tray_app
+    roaming, local = _rflow_data(tmp_path / "data")
+    monkeypatch.setattr(sst_app, "DATA_DIRS", (roaming, local))
+    events, started = [], []
+    erase, close = sst_app.erase_data, app.dictionary.close
+    monkeypatch.setattr(sst_app, "close_log_files", lambda: events.append("logs"))
+    monkeypatch.setattr(sst_app, "erase_data", lambda folders, keep=(): events.append(("erase", keep)) or erase(folders, keep))
+    monkeypatch.setattr(app.dictionary, "close", lambda: (events.append("dictionary"), close()))
+    monkeypatch.setattr(sst_app.subprocess, "Popen", lambda command, **options: started.append(command) or events.append("start"))
+    monkeypatch.setattr(sst_app.QApplication, "exit", lambda code=0: events.append("exit"))
+    app.start_over(keep_models=True)
+    assert events == ["dictionary", "logs", ("erase", ("models",)), "start", "exit"]  # files let go of before deleting
+    assert not app.listener.running and not app.live.running and not app.tray.isVisible()
+    assert not roaming.exists() and [p.name for p in local.iterdir()] == ["models"]
+    assert started[0][-1] == f"--after={os.getpid()}"  # the new Rflow waits for this one to end
+
+
+def test_rflow_started_again_waits_for_the_one_that_started_it():
+    import subprocess
+    import sys
+    import time
+    assert sst_app.restart_command(1234)[0] == sys.executable and sst_app.restart_command(1234)[-1] == "--after=1234"
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.5)"])
+    began = time.monotonic()
+    sst_app.wait_for_exit(child.pid, 10)
+    assert child.poll() is not None and time.monotonic() - began >= 0.3
