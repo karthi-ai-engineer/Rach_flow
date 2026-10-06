@@ -58,7 +58,7 @@ def test_a_new_user_sees_the_welcome_and_then_home():
     window, app = _window(settings=Settings())
     assert window.current_page() == "welcome" and window.sidebar.isHidden()  # the welcome has the whole window
     welcome = window.pages["welcome"]
-    welcome.show_step(1)
+    welcome.go_to_step("try")
     window.set_status("Loading the speech model...", False)
     assert "Loading the speech model" in welcome.status.text()
     window.set_status("Ready: hold Ctrl+Win", True)
@@ -540,7 +540,8 @@ def test_a_new_profile_is_made_from_its_name():
 def test_the_welcome_connects_an_ai_and_picks_its_fast_model():
     window, app = _window(settings=Settings())
     welcome = window.pages["welcome"]
-    welcome.show_step(2)
+    welcome.choose_setup("custom")  # each part by hand: the AI last
+    welcome.go_to_step("ai")
     assert welcome.tiles["gemini"].chosen and not welcome.primary.isEnabled()  # a key first
     welcome.ai_key.setText("AIza-test-key")
     assert welcome.primary.text() == "Connect and finish" and welcome.primary.isEnabled()
@@ -555,9 +556,22 @@ def test_the_fast_model_of_each_provider():
     assert w.fast_model("gemini", ["gemini-2.0-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-pro",
                                    "gemini-3.5-flash-lite-preview", "text-embedding-004"]) == "gemini-3.5-flash-lite"
     assert w.fast_model("openai", ["gpt-4o", "gpt-4o-mini", "gpt-4o-mini-tts", "gpt-4.1-mini"]) == "gpt-4.1-mini"
+    assert w.fast_model("openai", ["gpt-4o", "o4-mini", "gpt-5.4-mini", "gpt-4o-mini"]) == "gpt-4o-mini"  # not "any mini"
     assert w.fast_model("anthropic", ["claude-sonnet-5-5", "claude-haiku-4-5"]) == "claude-haiku-4-5"
-    assert w.fast_model("groq", ["whisper-large-v3", "llama-3.1-8b-instant"]) == "llama-3.1-8b-instant"
     assert w.fast_model("ollama", ["llama3.2"]) == "llama3.2" and w.fast_model("ollama", []) == ""
+
+
+def test_the_fast_model_on_groq_is_gpt_oss_and_never_a_speech_model():
+    # The research notes of 2026-10-06: llama-3.1-8b-instant was shut down, and the old fallback (the first model in
+    # the list) would have picked a text-to-speech model.
+    groq = ["canopylabs/orpheus-arabic-saudi", "canopylabs/orpheus-v1-english", "llama-prompt-guard-2-22m",
+            "openai/gpt-oss-120b", "openai/gpt-oss-20b", "openai/gpt-oss-safeguard-20b", "whisper-large-v3",
+            "whisper-large-v3-turbo"]
+    assert w.fast_model("groq", groq) == "openai/gpt-oss-20b"
+    assert w.fast_model("groq", [m for m in groq if m != "openai/gpt-oss-20b"]) == "openai/gpt-oss-120b"  # priced
+    assert w.fast_model("groq", ["canopylabs/orpheus-v1-english", "whisper-large-v3-turbo", "playai-tts"]) == ""
+    assert w.fast_model("gemini", ["gemini-3.8-flash", "gemini-3.6-flash"]) == "gemini-3.6-flash"  # the cheapest priced
+    assert [key for key, _, _ in w.PROVIDER_TILES][:2] == ["gemini", "groq"]  # the two with a free key first
 
 
 # ---- capture settings
@@ -812,21 +826,25 @@ def test_a_new_install_chooses_its_speech_model_in_the_welcome(no_parakeet):
     window, app = _window(settings=Settings())
     welcome = window.pages["welcome"]
     window.set_status("Choose a speech model to start dictating", False)
-    assert welcome.step == 0 and welcome.local_option.chosen  # on this PC is the recommended choice
+    welcome.choose_setup("custom")  # each part by hand: how Rflow hears you first
+    welcome.go_to_step("hear")
+    assert welcome.current() == "hear" and welcome.local_option.chosen  # on this PC is the recommended choice
     assert welcome.get_parakeet.text() == "Download Parakeet and continue" and welcome.get_parakeet.isEnabled()
     welcome.get_parakeet.click()
-    assert ("download_speech_model", "parakeet") in app.calls and welcome.step == 1  # trying it while it downloads
+    assert ("download_speech_model", "parakeet") in app.calls and welcome.current() == "try"  # tried while it downloads
     app.downloading = ("parakeet", 331_000_000, 663_043_117)
     welcome.refresh(False)
     assert welcome.orb.state == "loading" and "Downloading Parakeet, 49%" in welcome.orb_text.text()
     assert "Waiting for Parakeet" in welcome.status.text()
-    welcome.show_step(0)
+    welcome.go_to_step("hear")
     assert "Downloading Parakeet: 49%" in welcome.speech_status.text() and welcome.get_parakeet.text() == "Continue"
 
 
 def test_the_welcome_can_lead_to_a_cloud_model_instead(no_parakeet):
     window, app = _window(settings=Settings())
     welcome = window.pages["welcome"]
+    welcome.choose_setup("custom")
+    welcome.go_to_step("hear")
     welcome.cloud_option.clicked.emit()
     assert welcome.cloud_option.chosen and welcome.primary.text() == "Set up a cloud model"
     welcome.primary.click()
@@ -844,7 +862,7 @@ def test_the_welcome_shows_the_speech_model_already_there():
 def test_a_first_dictation_lights_the_orb():
     window, _ = _window(settings=Settings())
     welcome = window.pages["welcome"]
-    welcome.show_step(1)
+    welcome.go_to_step("try")
     welcome.refresh(True)
     welcome.try_box.setPlainText("Hello Rflow, this is my first dictation.")
     assert welcome.orb.state == "done" and welcome.status.text() == "It works. Now try it in any app."
@@ -1701,6 +1719,8 @@ def test_without_a_gemini_key_it_says_where_to_add_one():
     assert not page.start_card.grab().isNull()  # pressed in, quiet
     _button(page.connect_card, "Add a Gemini key").click()
     assert window.current_page() == "models"
+    gemini = window.pages["models"].keys.rows["gemini"]
+    assert gemini.editing and not gemini.isHidden() and gemini.key.editing  # its line open, ready to paste
 
 
 def test_past_sessions_are_listed_to_open():
