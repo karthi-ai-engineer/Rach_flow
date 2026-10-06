@@ -41,6 +41,10 @@ be cleaned up by a model from the provider the user chooses (OpenAI, Anthropic, 
 another OpenAI-compatible server). Each person can have a profile with their own setup. Hold Ctrl+Win in any app and
 speak; the text is typed at the cursor.
 The public download site is `site/` (Vercel). The Python package keeps its internal name `sst`.
+Rflow is open source under the MIT License (`LICENSE`; the owner's choice of 2026-10-06); the Rflow name and logo
+are not covered. Accounts, sync, web and mobile will come later as a closed-source layer in a separate private
+repository: keep it out of this one. Anything added from elsewhere (a library, model, voice, font) goes into
+`packaging/NOTICES.txt`; sherpa-onnx's library already contains espeak-ng's GPL-3.0 code.
 
 ```
 uv sync                                          # app + dev tools (pytest, ruff)

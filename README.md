@@ -1,11 +1,15 @@
 # Rflow
 
 [![CI](https://github.com/karthi-ai-engineer/Rach_flow/actions/workflows/ci.yml/badge.svg)](https://github.com/karthi-ai-engineer/Rach_flow/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Speak anywhere, Rflow types it.** Hold **Ctrl+Win** in any Windows app, speak, let go: your words are typed where
 your cursor is. Speech is recognised **on your laptop** by NVIDIA Parakeet (English), so your voice never leaves it;
 or choose Whisper (99 languages), a cloud model with your own key, or your own server. Optionally, an AI model you
 choose cleans up the text (punctuation, fillers, your own words).
+
+Rflow is **free and open source** ([MIT License](LICENSE)): no account, no subscription, no telemetry. Bug reports,
+ideas and pull requests are welcome; see [Contributing](#contributing).
 
 ## Install
 
@@ -175,6 +179,10 @@ Rach_flow/
 ├─ web.cmd                    double-click: web page
 ├─ start.cmd                  double-click: terminal version
 ├─ build_installer.cmd        double-click: build dist\Rflow-Setup-<version>.exe
+├─ LICENSE                    MIT
+├─ CONTRIBUTING.md            how to report, set up, test and send a pull request
+├─ SECURITY.md                how to report a security flaw privately
+├─ CODE_OF_CONDUCT.md         the Contributor Covenant
 ├─ CLAUDE.md                  working rules (branches, PRs, authorship)
 ├─ HANDOFF.md                 current state and next steps, to resume on any device
 ├─ .github/                   CI, CodeQL, Release, Dependabot, issue and PR templates
@@ -221,3 +229,17 @@ a class that has `name` (its catalog key), `title` (what reports call it), `sign
 `sst eval` caches by it), an optional `words` list (Your words) and `transcribe(audio, sample_rate) -> str`. Then add it
 to `SPEECH_MODELS` and `load_engine()` in `sst/engines/__init__.py`. It shows up on AI & models (How Rflow hears you), the app
 loads it in the background when chosen, and `uv run sst --engine <name> start` or `sst eval --engine <name>` use it.
+
+## Contributing
+
+Bug reports, feature requests and pull requests are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) says how to set up, what
+the tests must never do, and how a pull request is reviewed. Security flaws are reported privately
+([SECURITY.md](SECURITY.md)). Everyone follows the [code of conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+Rflow is released under the [MIT License](LICENSE). The files it builds on keep their own licenses, listed in
+[packaging/NOTICES.txt](packaging/NOTICES.txt): NVIDIA Parakeet's tokenizer vocabulary (`sst/static/parakeet/bpe.vocab`,
+NVIDIA Open Model License), the Geist fonts (SIL Open Font License), the sample sentence (`sst/static/sample.wav`,
+CC BY 4.0), and the models and voice Rflow downloads when you choose them. The Rflow name and logo are not covered by
+the MIT License: a fork is welcome, under its own name.
