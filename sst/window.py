@@ -3742,6 +3742,7 @@ class SettingsPage(Page):
                 ("Profiles", "One setup per person sharing this PC", lambda: go_to("profiles")),
                 ("Logs", "Open the folder with Rflow's logs", lambda: open_folder(LOG_DIR)),
                 ("Website", WEBSITE.removeprefix("https://"), lambda: QDesktopServices.openUrl(QUrl(WEBSITE))),
+                ("Source code", "Free and open source, MIT License", lambda: QDesktopServices.openUrl(QUrl(REPO))),
                 ("Report a problem", "On GitHub", lambda: QDesktopServices.openUrl(QUrl(REPO + "/issues")))]:
             layout.addWidget(divider())
             layout.addWidget(link_row(title, words, lambda _=False, f=on_click: f()))

@@ -1,6 +1,9 @@
 Rflow - third-party notices
 ===========================
 
+Rflow itself is free and open-source software under the MIT License (LICENSE.txt, next to this file; the source is at
+https://github.com/karthi-ai-engineer/Rach_flow). The Rflow name and logo are not covered by that license.
+
 Rflow includes, or downloads when the user chooses them, the following models and software. Each is
 the property of its owners and is distributed under its own license.
 
@@ -28,7 +31,12 @@ Voice for live translation (not included: downloaded from Hugging Face only when
   https://huggingface.co/rhasspy/piper-voices  It was trained from Mycroft's mimic3-voices (CC BY-SA 4.0,
   https://github.com/MycroftAI/mimic3-voices). The voice's model card is kept next to it.
   espeak-ng data, the 6 files English needs (from k2-fsa's sherpa-onnx copy of this voice), GNU GPL v3:
-  https://github.com/espeak-ng/espeak-ng  (data files only, read by sherpa-onnx to turn words into phonemes).
+  https://github.com/espeak-ng/espeak-ng  (read by sherpa-onnx's espeak-ng code, below, to turn words into phonemes).
+
+Fonts
+-----
+Geist and Geist Mono  SIL Open Font License 1.1   https://github.com/vercel/geist-font
+                      (the window's fonts; the license is _internal\sst\static\fonts\OFL.txt in the program's folder)
 
 Software
 --------
@@ -40,6 +48,9 @@ Hugging Face tokenizers, huggingface_hub
 PyAV                  BSD 3-Clause License        https://github.com/PyAV-Org/PyAV
                       (with FFmpeg libraries under the GNU LGPL 2.1 or later, as separate DLLs)
 sherpa-onnx           Apache License 2.0          https://github.com/k2-fsa/sherpa-onnx
+                      (its library has espeak-ng's code compiled in, for text-to-speech: GNU GPL v3,
+                      https://github.com/espeak-ng/espeak-ng; the exact source is the one sherpa-onnx 1.13.8 builds,
+                      named in https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.8)
 ONNX Runtime          MIT License                 https://github.com/microsoft/onnxruntime
 PortAudio             MIT-style license           https://www.portaudio.com/license.html
 python-sounddevice    MIT License                 https://github.com/spatialaudio/python-sounddevice

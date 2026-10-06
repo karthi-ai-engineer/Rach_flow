@@ -20,7 +20,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: sst version or commit
+      label: Rflow version
+      description: Settings, at the bottom (or the commit, if you run it from the source).
   - type: input
     id: windows
     attributes:
@@ -38,5 +39,6 @@ body:
   - type: textarea
     id: output
     attributes:
-      label: Console output
+      label: What the log says
+      description: Settings → Advanced → Logs opens the folder; the lines from around the problem in sst.log help most. The log can contain text you dictated, so remove anything private first.
       render: text

@@ -6,19 +6,31 @@ package keeps its name, `sst`. **Never create a repository named Rach_Darling_Fl
 1.6.0 check for updates under the old name, which GitHub redirects only while that name stays free (checked after
 the rename: an installed 1.5.0 asking under the old name was offered 1.6.0).
 
-_Last updated: 2026-10-04_
+_Last updated: 2026-10-06_
 
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-06):**
+- **Open source first, a closed layer later** (the owner's decision of 2026-10-06): the desktop app, everything it
+  does today, is free and open source under the **MIT License** (the owner's choice; issue #79, branch
+  `chore/open-source`): `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, a feature-request
+  template, complete notices (`packaging/NOTICES.txt`; the installer ships `LICENSE.txt`) and a "Source code" row in
+  Settings → Advanced. The Rflow name and logo stay outside the licence. Accounts, sign-in with Google, sync, the web
+  and mobile come later as a **closed-source** layer in a separate private repository; their plan stays under
+  discussion (`reports/Rflow accounts and device sync.md`, not in git: Supabase, encrypted sync, users not in Japan
+  so no Japan hosting). Before the public announcement: phases 31 (privacy), 32 (first run) and 34 (updates and
+  code signing; open-source projects can be signed free by the SignPath Foundation) are recommended; the owner
+  hasn't decided. Checked: no key or private address in any of the 248 commits (tests use the placeholder
+  10.0.0.5). **sherpa-onnx's library has espeak-ng's code (GPL-3.0) compiled in**, so the installer already ships
+  GPL code: fine for the open app, but the closed version must not bundle it as is.
 - **The user testing of 2026-10-06** (a testing agent, as a user, isolated from the owner's data): 75 flaws (2 blockers,
   22 major, 39 minor, 12 polish) and the capabilities a complete app lacks, in `reports/Rflow user testing
   2026-10-06.md` (not in git; its scripts, to re-run, in `reports/user-testing-2026-10-06/scripts/`). The owner chose
   to fix them in phases: 30 never lose work, 31 privacy and data, 32 first run and shortcuts, 33 layout,
   accessibility and speed, 34 updates, install and trust, 35 networks and moving PCs.
-- **Never lose work** (phase 30, issue #77, branch `phase-30/never-lose-work`, stacked on phase 29's PR #76, not
-  released). See **Never lose work**.
-- **Live translation spoken aloud** (phase 29, issue #75, branch `phase-29/live-voice`, not released): the owner's
+- **Never lose work** (phase 30, PR #78) is merged into `main`, not released (the owner: "update the git; not
+  release"). See **Never lose work**.
+- **Live translation spoken aloud** (phase 29, PR #76, merged into `main`, not released): the owner's
   chosen voice, Piper's Danny (English), reads each sentence of the translation out on the laptop, never heard and
   translated again. See **Live translation spoken aloud**.
 - **Rflow 2.2.0** (2026-10-05, the owner's "release it"): live translation, a section of its own (phase 28, PR #74):
@@ -154,8 +166,9 @@ _Last updated: 2026-10-04_
 | 20 | **Text Transform** (the owner's idea): say "make it concise" (or double-tap Ctrl for a menu) and the selected text or the last dictation becomes Concise, Professional, Bullet points or Action items, checked, with undo; the text is found again if focus moved | done, on `main` (PR #50, with #48), released **v1.7.0** |
 | 19 | **The voice pipeline** (the owner's plan): always-on mic, chunks while speaking, parallel ASR, merge, dictionary, formatting, guarded LLM | done, on `main` (PR #46), released **v1.6.0** |
 | 26 | **Microphones that follow you**: Windows' own device list, open microphones reopened when devices change, silent recordings caught | done, on `main` (PR #70), released **v2.0.2** |
-| 30 | **Never lose work** (the user testing's blockers): a key brushed while dictating keeps the dictation; a damaged dictionary or settings file never stops Rflow (moved aside, restored from a copy); crash reports; a failed start says why; a failed paste keeps the text; updates wait for idle; the keyboard hook is renewed | in review (issue #77) |
-| 29 | **Live translation spoken aloud** (the owner's request): Piper's Danny on the laptop (sherpa-onnx, no new dependency), each sentence spoken as soon as it's whole, faster when behind; process loopback leaves Rflow's own voice out of what's captured; the microphone pauses while it plays through speakers | in review (issue #75) |
+| 30 | **Never lose work** (the user testing's blockers): a key brushed while dictating keeps the dictation; a damaged dictionary or settings file never stops Rflow (moved aside, restored from a copy); crash reports; a failed start says why; a failed paste keeps the text; updates wait for idle; the keyboard hook is renewed | done, on `main` (PR #78), not released |
+| 29 | **Live translation spoken aloud** (the owner's request): Piper's Danny on the laptop (sherpa-onnx, no new dependency), each sentence spoken as soon as it's whole, faster when behind; process loopback leaves Rflow's own voice out of what's captured; the microphone pauses while it plays through speakers | done, on `main` (PR #76), not released |
+| open source | **MIT License** and the files contributors need: CONTRIBUTING, SECURITY, code of conduct, a feature template, complete notices, a "Source code" row | in review (issue #79) |
 | 28 | **Live translation, a section of its own** (the owner's redesign): a sidebar section, Ctrl+Alt+L, a movable, resizable, scrollable bar with ✕, and the source: Computer, Microphone or Both (your words marked "You") | done, on `main` (PR #74), released **v2.2.0** |
 | 27 | **Live captions, part 1** (the owner's idea): what the laptop plays → WASAPI loopback → Gemini 3.5 Live Translate → a caption bar left out of screen shares, and a transcript; a separate pipeline (`sst/live/`) | done, on `main` (PR #72), released **v2.1.0** |
 
@@ -1621,6 +1634,10 @@ no native ARM64 build for now, and the Mac later.
 
 ## Next steps
 
+1. **Open source first** (the owner's plan of 2026-10-06): merge issue #79's PR; then, with the owner's OK, the
+   repository's description and topics, private vulnerability reporting (SECURITY.md points to it) and Discussions.
+   Then the user testing's phases 31-35, release, and announce Rflow as open source. The accounts layer (closed
+   source) after that.
 1. **Owner: update to 2.0.0 from the banner and look around** (both themes: Windows Settings → Personalization →
    Colors):
    - Home: dictate, then search a word with Ctrl+K; hover a dictation: Correct and Copy
