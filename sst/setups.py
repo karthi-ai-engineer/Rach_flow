@@ -147,3 +147,21 @@ def apply(app, setup_key: str, local: str = "parakeet") -> str:
 
 def model_name(model: str) -> str:
     return NAMES.get(model, model)
+
+
+# What the last Scan this PC (sst.scan) says about a model on this PC, in plain words
+CAN = {"recommended": "runs {name} well", "fast": "runs {name} well", "usable": "runs {name}, with a short wait",
+       "slow": "runs {name} slowly", "no": "can't run {name}"}
+
+
+def pc_check(scan: dict | None, key: str) -> tuple[str, str]:
+    """(level, a sentence) for a model on this PC from the last scan's verdict: ("", "") before a scan. The level is
+    sst.scan's: recommended, fast, usable, slow or no."""
+    for verdict in (scan or {}).get("verdicts", []):
+        if verdict.get("key") == key and verdict.get("level") in CAN:
+            level, name = verdict["level"], SPEECH_MODELS[key].name
+            words = f"This PC {CAN[level].format(name=name)}: {verdict.get('reason', '')}."
+            if level == "slow" and key != "parakeet":
+                words += " Parakeet is quicker for English."
+            return level, words
+    return "", ""

@@ -33,23 +33,11 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import (
-    QEvent,
-    QObject,
-    QPoint,
-    QPointF,
-    QRect,
-    QRectF,
-    QSize,
-    QSortFilterProxyModel,
-    Qt,
-    QTimer,
-    QUrl,
-    Signal,
-)
-from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon, QKeySequence, QPainter, QShortcut
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSize, QSortFilterProxyModel, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QFontMetrics, QGuiApplication, QIcon, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QBoxLayout,
     QCheckBox,
     QComboBox,
@@ -74,7 +62,9 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QStyle,
+    QStyledItemDelegate,
     QStyleOptionComboBox,
+    QStyleOptionViewItem,
     QStylePainter,
     QTextBrowser,
     QVBoxLayout,
@@ -82,7 +72,7 @@ from PySide6.QtWidgets import (
     QWidgetItem,
 )
 
-from sst import RECORDINGS_DIR, __version__, bench, costs, theme
+from sst import RECORDINGS_DIR, __version__, bench, costs, setups, theme
 from sst.audio import LevelMeter, Take, call_quality, save_wav
 from sst.commands import DEFAULT_PHRASES, UNDO, normalize, parse_phrases, phrases_for
 from sst.engines import DEFAULT_MODEL, SPEECH_MODELS, usable
@@ -96,7 +86,7 @@ from sst.live.voice import DANNY
 from sst.pipeline.contracts import VoiceConfig
 from sst.pipeline.dictionary import speech_hints
 from sst.pipeline.formatting import Formatter
-from sst.scan import Computer, machine
+from sst.scan import MEMORY_GB, SYSTEM_GB, Computer, machine
 from sst.settings import (
     Profiles,
     Settings,
@@ -503,6 +493,104 @@ class SaveBar(QWidget):
         self.mark.setVisible(tone == "ok" and bool(message))
         if tone == "ok":
             self.mark.setPixmap(theme.icon_pixmap("check", tok("ok").name(), 14, self.devicePixelRatioF()))
+
+
+# ---------------------------------------------------------------- what a model costs (sst.costs), next to it
+
+COST_TONES = {costs.AMBER: "warn", costs.RED: "err"}  # the colour of a mid-priced and of an expensive model
+
+
+class _CostDelegate(QStyledItemDelegate):
+    """A model list's lines with each model's estimate on the right ("≈ $0.42/mo"), amber or red for the dear ones."""
+
+    def __init__(self, estimate, parent=None):
+        super().__init__(parent)
+        self.estimate = estimate  # model id -> costs.Estimate
+
+    def _words(self, index) -> tuple[str, str]:
+        model = str(index.data() or "").strip()
+        if not model:
+            return "", ""
+        estimate = self.estimate(model)
+        return estimate.short, COST_TONES.get(estimate.tier, "text3")
+
+    def paint(self, painter, option, index):
+        words, colour = self._words(index)
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        room = opt.fontMetrics.horizontalAdvance(words) + 20 if words else 0
+        opt.text = opt.fontMetrics.elidedText(opt.text, Qt.TextElideMode.ElideRight, max(40, opt.rect.width() - room - 16))
+        widget = opt.widget
+        (widget.style() if widget else QApplication.style()).drawControl(
+            QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+        if words:
+            painter.save()
+            painter.setPen(tok(colour))
+            painter.setFont(font(12, 500))
+            painter.drawText(opt.rect.adjusted(0, 0, -12, 0), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                             words)
+            painter.restore()
+
+    def sizeHint(self, option, index):
+        hint = super().sizeHint(option, index)
+        words, _ = self._words(index)
+        return QSize(hint.width() + (QFontMetrics(font(12, 500)).horizontalAdvance(words) + 28 if words else 0),
+                     hint.height())
+
+
+def cost_list(box: QComboBox, estimate) -> QComboBox:
+    """Show each model's estimate in a model list (and in what an editable one finds while typing)."""
+    box.setItemDelegate(_CostDelegate(estimate, box))
+    box.view().setMinimumWidth(340)  # the model's name and its estimate side by side
+    if box.completer() is not None:
+        box.completer().popup().setItemDelegate(_CostDelegate(estimate, box))
+    return box
+
+
+class CostLine(QWidget):
+    """Under a model: what it costs a month for typical use; amber or red with a lamp and why, for the dear ones."""
+
+    def __init__(self):
+        super().__init__()
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self.lamp = Lamp("warn")
+        self.words = caption("", "3")
+        lamp = QVBoxLayout()  # the lamp on the first line of the words
+        lamp.setContentsMargins(0, 3, 0, 0)
+        lamp.addWidget(self.lamp)
+        lamp.addStretch()
+        layout.addLayout(lamp)
+        layout.addWidget(self.words, 1, Qt.AlignmentFlag.AlignTop)
+        self.estimate: costs.Estimate | None = None
+
+    def show_estimate(self, estimate: costs.Estimate | None) -> None:
+        """None: no model chosen (the line goes)."""
+        self.estimate = estimate
+        self.setVisible(estimate is not None)
+        if estimate is None:
+            return
+        tone = COST_TONES.get(estimate.tier)
+        if estimate.warning:
+            words = estimate.warning
+        elif estimate.tier == costs.FREE:
+            words = "Free: it runs on this PC."
+        elif estimate.monthly is None:
+            words = "Price unknown: Rflow has no price for this model."
+        else:
+            words = f"{estimate.words} for {costs.TYPICAL_WORDS}."
+        self.words.setText(words)
+        set_tone(self.words, tone or "3")
+        self.lamp.setVisible(bool(tone))
+        if tone:
+            self.lamp.set_state(tone)
+        self.lamp.setToolTip(f"Prices seen on the providers' pages on {costs.SEEN}.")
+
+
+def expensive(model: str, estimate: costs.Estimate) -> str:
+    """What a question says before an expensive (red) model is saved: "" for the others."""
+    return f"{model} is an expensive model. {estimate.warning}" if estimate.tier == costs.RED else ""
 
 
 def open_folder(path: Path) -> None:
@@ -2100,10 +2188,13 @@ class _CloudCard:
         self.model_box.addItems(provider.models)
         self.model_box.setCurrentText(self._saved_model())
         self.model_box.lineEdit().setPlaceholderText("Type to search, or any model name the provider knows")
+        cost_list(self.model_box, lambda m: costs.speech_cost(model.key, m))  # each model's cost a month, in the list
         self.test = button("Test", self._test, size="sm")
         model_row = row(self.model_box, self.test)
         model_row.setStretch(0, 1)
         form.addRow(caption("Model", "2", wrap=False), model_row)
+        self.cost = CostLine()
+        form.addRow("", self.cost)
         layout.addLayout(form)
         self.result = caption("", "2")
         self.result.hide()  # until there is something to say: an empty line would leave a gap
@@ -2147,6 +2238,8 @@ class _CloudCard:
         chosen, edited = self.model.key == self.app.settings.speech_model, self.edited()
         self.choose.setText("Save" if chosen else "Use this model")
         self.bar.show_state(edited, (edited or not chosen) and not self.app.loading_speech)
+        model = self.model_box.currentText().strip()
+        self.cost.show_estimate(costs.speech_cost(self.model.key, model) if model else None)
 
     def _say(self, message: str) -> None:
         self.result.setText(message)
@@ -2157,9 +2250,14 @@ class _CloudCard:
         if not api_key:
             self._say(f"Enter your {name} API key first (Get a key).")
             return
-        if self.model.key != self.app.settings.speech_model and not self.page.confirm(
-                f"Use {name} for speech recognition?\n\nEach time you dictate, the recording of your voice is sent to "
-                f"{name}, which turns it into text. " + _parakeet_takes_over(name)):
+        new = self.model.key != self.app.settings.speech_model
+        # Asked once: before the voice first goes to the provider, and before an expensive model is first saved
+        dear = expensive(model, costs.speech_cost(self.model.key, model)) if new or model != self._saved_model() else ""
+        question = (f"Use {name} for speech recognition?\n\nEach time you dictate, the recording of your voice is sent "
+                    f"to {name}, which turns it into text. " + _parakeet_takes_over(name)) if new else ""
+        if dear:
+            question = f"{question}\n\n{dear}" if question else f"{dear}\n\nUse it anyway?"
+        if question and not self.page.confirm(question):
             return
         self.app.use_cloud_speech(self.model.key, api_key, model)
         self.key.show_saved(api_key)
@@ -2702,8 +2800,12 @@ class CleanupPage(Page):
         model_row = row(self.model, self.test_button)
         model_row.setStretch(0, 1)
         self.form.addRow(caption("Model", "2", wrap=False), model_row)
+        self.cost = CostLine()  # what the model costs a month: amber or red, and why, for the dear ones
+        self.form.addRow("", self.cost)
         self.fallback = _model_box("optional: used if the model fails")
         self.form.addRow(caption("Backup model", "2", wrap=False), self.fallback)
+        for box in (self.model, self.fallback):  # each model's cost a month, in the lists
+            cost_list(box, lambda m: costs.cleanup_cost(self._provider, m))
         layout.addLayout(self.form)
         self.test_result = caption("", "2")
         layout.addWidget(self.test_result)
@@ -2767,6 +2869,8 @@ class CleanupPage(Page):
 
     def _show_state(self) -> None:
         self.bar.show_state(self.unsaved())
+        model = self.model.currentText().strip()
+        self.cost.show_estimate(costs.cleanup_cost(self._provider, model) if model else None)
 
     def _show_provider(self) -> None:
         """What the chosen provider needs: a key (cloud), an address (own server), or both."""
@@ -2800,6 +2904,9 @@ class CleanupPage(Page):
     def _open_key_page(self) -> None:
         QDesktopServices.openUrl(QUrl(PROVIDERS[self._provider].key_page))
 
+    def confirm(self, question: str) -> bool:
+        return QMessageBox.question(self, APP_NAME, question) == QMessageBox.StandardButton.Yes
+
     def refresh(self) -> None:
         clean = not self.unsaved()
         if clean and (self.app.settings.cleanup != self.cleanup_on.isChecked()
@@ -2830,6 +2937,11 @@ class CleanupPage(Page):
             self.test_result.setText(f"Choose a {provider_name(self._provider)} model first (Load models), or Cancel "
                                      f"to keep {provider_name(chosen)}. To only add a key, use Your API keys on AI & "
                                      "models: the cleanup stays as it is.")
+            return
+        # An expensive model asks once: when it's first saved, not again with every change after
+        dear = expensive(model, costs.cleanup_cost(self._provider, model)) if model and (
+            model, self._provider) != (self.app.settings.cleanup_model, chosen) else ""
+        if dear and not self.confirm(f"{dear}\n\nUse it anyway?"):
             return
         self.app.save_cleanup(on, model, fallback, gateway)
         self.api_key.show_saved(gateway.api_key)
@@ -3150,25 +3262,526 @@ class _KeysCard:
                 row_.close_editor()
 
 
+# ---------------------------------------------------------------- Setups (the top of AI & models, and the first run)
+
+SETUP_ICONS = {"recommended": "check", "fastest": "arrow-right", "multilingual": "words", "local": "laptop",
+               "custom": "settings"}
+SETUP_COLUMNS_WIDTH = 740  # a page narrower than this shows the setups two by two
+KEY_NAMES = {"gemini": "Gemini", "groq": "Groq"}
+LOCAL_CHOICES = [("parakeet", "Parakeet · English"), ("whisper-turbo", "Whisper · 99 languages")]
+
+
+def _key_name(provider: str) -> str:
+    return KEY_NAMES.get(provider, provider_name(provider))
+
+
+def _speech_words(key: str, model: str = "") -> str:
+    """A speech model in a few words: "Parakeet, on this PC", "Whisper large-v3 turbo, on Groq"."""
+    speech = SPEECH_MODELS.get(key)
+    if speech is None:
+        return "No speech model yet"
+    if speech.where == "local":
+        return f"{speech.name.removeprefix('NVIDIA ').removeprefix('OpenAI ')}, on this PC"
+    if speech.where == "server":
+        return f"{model or 'A model'}, on your own server"
+    return f"{setups.model_name(model or CLOUD[key].models[0])}, on {CLOUD[key].name.removeprefix('Google ')}"
+
+
+def setup_uses(app, setup: setups.Setup, local: str = "parakeet") -> tuple[str, str]:
+    """What a setup uses, in two short lines: (speech, AI). Custom: what is chosen now."""
+    s = app.settings
+    if setup.key == "custom":
+        model = s.speech_cloud_models.get(s.speech_model, "") if s.speech_model in CLOUD else s.speech_server_model
+        chosen = app.gateway.chosen
+        ai = (f"{setups.model_name(s.cleanup_model)}, on {provider_name(chosen).removeprefix('Google ')}"
+              if s.cleanup and s.cleanup_model and chosen else "No AI cleanup")
+        return _speech_words(s.speech_model, model), ai
+    if setup.key == "local":
+        return "Parakeet or Whisper, on this PC", "AI on this PC: coming soon"
+    return (_speech_words(setup.speech, setups.speech_model_for(setup, s.speech_language)),
+            f"{setups.model_name(setup.model)}, on {provider_name(setup.provider).removeprefix('Google ')}")
+
+
+def setup_cost(app, setup: setups.Setup, local: str = "parakeet") -> costs.Estimate:
+    if setup.key == "custom":
+        return costs.total(*setups.in_use_cost(app.settings, app.gateway))
+    return setups.cost(setup, app.settings.speech_language, local)
+
+
+def _icon(name: str, tone: str = "text3", size: int = 14) -> QLabel:
+    picture = QLabel()
+    picture.setFixedSize(size, size)
+    picture.setPixmap(theme.icon_pixmap(name, tok(tone).name(), size, 1.0))
+    return picture
+
+
+class _SetupTile(Card):
+    """A setup as a tile: its name and whether it's in use, what it uses, the key it needs, and what it costs a month.
+    A click, Space or Enter opens it under the tiles: pressed in with an Iris edge while open."""
+
+    clicked = Signal()
+
+    def __init__(self, setup: setups.Setup):
+        super().__init__("tile")
+        self.key, self.chosen = setup.key, False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(setup.name)
+        self.setMinimumWidth(150)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(5)
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        self.icon = QLabel()
+        self.icon.setFixedSize(16, 16)
+        self.icon_name = SETUP_ICONS[setup.key]
+        self.title = ElidedText(setup.name, "rowtitle", None)
+        self.state_row, self.lamp, self.state = lamp_row("ok", "", stretch=False)
+        top.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        top.addWidget(self.title, 1)
+        top.addWidget(self.state_row, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(top)
+        layout.addSpacing(2)
+        self.speech, self.ai, self.needs = (ElidedText("", "caption", "2"), ElidedText("", "caption", "2"),
+                                            ElidedText("", "caption", "3"))
+        for icon, words in (("mic", self.speech), ("tools", self.ai), ("key", self.needs)):
+            line = QHBoxLayout()
+            line.setSpacing(8)
+            line.addWidget(_icon(icon), 0, Qt.AlignmentFlag.AlignVCenter)
+            line.addWidget(words, 1)
+            layout.addLayout(line)
+        cost = QHBoxLayout()
+        cost.setSpacing(8)
+        self.cost_lamp = Lamp("warn")
+        self.cost = ElidedText("", "caption", "2")
+        cost.addWidget(self.cost_lamp, 0, Qt.AlignmentFlag.AlignVCenter)
+        cost.addWidget(self.cost, 1)
+        layout.addSpacing(2)
+        layout.addLayout(cost)
+        layout.addStretch()
+        self._show_icon()
+
+    def set_chosen(self, chosen: bool) -> None:
+        self.chosen = chosen
+        self.set_kind("chosen" if chosen else "tile")
+        self._show_icon()
+
+    def show_setup(self, uses: tuple[str, str], needs: str, estimate: costs.Estimate | None, state: str = "",
+                   lamp: str = "ok") -> None:
+        """`estimate` None: Custom while another setup is in use (its cost shows once its parts are chosen)."""
+        self.speech.setText(uses[0])
+        self.ai.setText(uses[1])
+        self.needs.setText(needs)
+        self.cost.setText("Its cost shows as you choose" if estimate is None else estimate.words)
+        tone = COST_TONES.get(estimate.tier) if estimate is not None else None
+        set_tone(self.cost, tone or "2")
+        self.cost_lamp.setVisible(bool(tone))
+        if tone:
+            self.cost_lamp.set_state(tone)
+        self.state.setText(state)
+        self.state_row.setVisible(bool(state))
+        self.lamp.set_state(lamp)
+        self._show_icon()
+
+    def _show_icon(self) -> None:
+        self.icon.setPixmap(theme.icon_pixmap(self.icon_name, tok("iris" if self.chosen else "text2").name(), 16,
+                                              self.devicePixelRatioF()))
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.clicked.emit()
+            return
+        super().keyPressEvent(event)
+
+
+def _fact(icon: str) -> tuple[QWidget, QLabel, QLabel]:
+    """A line of a setup's details: an icon and words."""
+    widget = QWidget()
+    line = QHBoxLayout(widget)
+    line.setContentsMargins(0, 0, 0, 0)
+    line.setSpacing(10)
+    picture = _icon(icon, "text2", 16)
+    words = label("", tone="2")
+    line.addWidget(picture, 0, Qt.AlignmentFlag.AlignTop)
+    line.addWidget(words, 1)
+    return widget, picture, words
+
+
+class _SetupsCard:
+    """Setups, first on AI & models: ready-made pairs of a speech model and an AI, each the cheapest that does the job
+    well (sst.setups), with what they use, the key they need and what they cost a month; the one in use is marked
+    (Custom when the settings match none). A tile opens its details under the tiles, with Use: a missing key is asked
+    for there and saved in Your API keys (nothing else changes until Use); a model not on this PC is downloaded first."""
+
+    def __init__(self, page, app):
+        self.page, self.app = page, app
+        self.frame = QWidget()  # not a host: the page paints the tiles' and the card's soft depth, past this edge
+        layout = QVBoxLayout(self.frame)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        layout.addWidget(label("Setups", "heading", wrap=False))
+        layout.addWidget(caption("Not sure which models to use? Each setup pairs a speech model with an AI, the cheapest "
+                                 f"that does the job well. Costs are for {costs.TYPICAL_WORDS}.", "2"))
+        layout.addSpacing(2)
+        self.grid = QGridLayout()
+        self.grid.setSpacing(12)
+        self.tiles: dict[str, _SetupTile] = {}
+        for key in setups.ORDER:
+            self.tiles[key] = _SetupTile(setups.SETUPS[key])
+            self.tiles[key].clicked.connect(lambda k=key: self.select(k))
+        layout.addLayout(self.grid)
+        self.columns = 0
+        self.set_columns(3)
+        self.hint = caption("Choose one to see what it uses and to use it. Any part can be changed later, below.", "3")
+        layout.addWidget(self.hint)
+
+        self.panel, column = card(12, (20, 18, 20, 20))
+        self.panel_title = ElidedText("", "heading", None)
+        self.panel_status, self.panel_lamp, self.panel_state = lamp_row("ok", "", stretch=False)
+        column.addLayout(_heading(self.panel_title, self.panel_status))
+        self.blurb = label("", tone="2")
+        column.addWidget(self.blurb)
+        self.speech_fact, _, self.speech_words = _fact("mic")
+        self.ai_fact, _, self.ai_words = _fact("tools")
+        column.addWidget(self.speech_fact)
+        self.local = Segmented(LOCAL_CHOICES)  # Local: Parakeet or Whisper
+        self.local.changed.connect(self._local_chosen)
+        self.local_choice = "parakeet"
+        column.addWidget(self.local, 0, Qt.AlignmentFlag.AlignLeft)
+        self.check_row = QWidget()
+        check = QHBoxLayout(self.check_row)
+        check.setContentsMargins(0, 0, 0, 0)
+        check.setSpacing(10)
+        self.check_lamp = Lamp("ok")
+        self.check_words = caption("", "2")
+        self.scan = button("Check this PC", lambda _=False: app.scan_computer(), size="sm")
+        check.addWidget(self.check_lamp, 0, Qt.AlignmentFlag.AlignVCenter)
+        check.addWidget(self.check_words, 1)
+        check.addWidget(self.scan, 0, Qt.AlignmentFlag.AlignVCenter)
+        column.addWidget(self.check_row)
+        column.addWidget(self.ai_fact)
+        self.links = QWidget()  # Custom: each part, one level down
+        links = QHBoxLayout(self.links)
+        links.setContentsMargins(0, 0, 0, 0)
+        links.setSpacing(16)
+        for title, page_key in (("Choose the speech model", "speech"), ("Choose the AI", "cleanup")):
+            links.addWidget(button(title, lambda _=False, p=page_key: page.go_to(p), link=True, size="sm",
+                                   icon="chevron-right", icon_after=True))
+        links.addStretch()
+        column.addWidget(self.links)
+        self.key_area = QWidget()  # a missing key, asked for here and kept in Your API keys
+        keys = QVBoxLayout(self.key_area)
+        keys.setContentsMargins(0, 4, 0, 0)
+        keys.setSpacing(8)
+        self.key_title = caption("", "2", wrap=False)
+        keys.addWidget(self.key_title)
+        self.key = KeyField("", "Paste your key")
+        self.get_key = button("Get a free key", self._open_key_page, link=True, size="sm", icon="external",
+                              icon_after=True)
+        key_line = row(self.key, self.get_key)
+        key_line.setStretch(0, 1)
+        keys.addLayout(key_line)
+        column.addWidget(self.key_area)
+        column.addWidget(divider())
+        self.cost_row = QWidget()
+        cost = QHBoxLayout(self.cost_row)
+        cost.setContentsMargins(0, 0, 0, 0)
+        cost.setSpacing(10)
+        self.cost_lamp = Lamp("warn")
+        self.cost_words = label("", tone="2")
+        cost.addWidget(self.cost_lamp, 0, Qt.AlignmentFlag.AlignTop)
+        cost.addWidget(self.cost_words, 1)
+        column.addWidget(self.cost_row)
+        self.warnings = caption("", "warn")
+        column.addWidget(self.warnings)
+        self.free_note = caption("", "3")
+        column.addWidget(self.free_note)
+        self.actions = QWidget()  # Use, and what it did
+        actions = QHBoxLayout(self.actions)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(12)
+        self.use = button("Use", lambda _=False: self._use(), primary=True, size="sm")
+        self.result = caption("", "2")
+        actions.addWidget(self.use, 0, Qt.AlignmentFlag.AlignVCenter)
+        actions.addWidget(self.result, 1)
+        column.addWidget(self.actions)
+        layout.addWidget(self.panel)
+        self.panel.hide()
+        self.selected = ""  # the tile whose details are open ("" = none)
+        self.key.textChanged.connect(lambda _="": self._show_use())
+
+    # -- the tiles
+
+    def set_columns(self, columns: int) -> None:
+        """Three tiles a row (Custom two wide under them), or two on a narrow page."""
+        if columns == self.columns:
+            return
+        self.columns = columns
+        for tile in self.tiles.values():
+            self.grid.removeWidget(tile)
+        places = {"recommended": (0, 0, 1), "fastest": (0, 1, 1), "multilingual": (0, 2, 1), "local": (1, 0, 1),
+                  "custom": (1, 1, 2)} if columns == 3 else \
+            {"recommended": (0, 0, 1), "fastest": (0, 1, 1), "multilingual": (1, 0, 1), "local": (1, 1, 1),
+             "custom": (2, 0, 2)}
+        for key, (line, column, span) in places.items():
+            self.grid.addWidget(self.tiles[key], line, column, 1, span)
+        for column in range(3):
+            self.grid.setColumnStretch(column, 1 if column < columns else 0)
+
+    def current(self) -> str:
+        app = self.app
+        pending = app.downloading[0] if app.downloading else ""
+        return setups.current(app.settings, app.gateway, pending)
+
+    def refresh(self) -> None:
+        app, current = self.app, self.current()
+        if self.selected != "local" and app.settings.speech_model in setups.LOCAL_MODELS:
+            self.local_choice = app.settings.speech_model  # Local opens on the model on this PC in use
+        for key, tile in self.tiles.items():
+            setup = setups.SETUPS[key]
+            local = self.local_choice if key == "local" else "parakeet"
+            if setup.needs:
+                needs = f"{_key_name(setup.needs)} key" + (": saved" if app.gateway.key_for(setup.needs) else
+                                                           ", free to start")
+            else:
+                needs = "No key" if key == "local" else "Keys from Your API keys"
+            state, lamp = "", "ok"
+            if key == current:
+                downloading = app.downloading
+                if downloading and downloading[0] in SPEECH_MODELS:
+                    done, total = downloading[1], downloading[2] or 1
+                    state, lamp = f"Downloading {done * 100 // total}%", "warn"
+                else:
+                    state = "In use"
+            if key == "custom" and current != "custom":  # what another setup uses isn't Custom's
+                uses, estimate = ("Any speech model you choose", "Any AI you choose"), None
+            else:
+                uses, estimate = setup_uses(app, setup, local), setup_cost(app, setup, local)
+            tile.show_setup(uses, needs, estimate, state, lamp)
+        if self.selected:
+            self._show_panel()
+
+    def select(self, key: str) -> None:
+        if key != self.selected:
+            self.key.show_saved("")
+            self.result.setText("")
+        self.selected = key
+        for name, tile in self.tiles.items():
+            tile.set_chosen(name == key)
+        self.hint.hide()
+        self._show_panel()
+        self.panel.show()
+        QTimer.singleShot(0, lambda: self.page.ensureWidgetVisible(self.panel, 0, 24))
+
+    def _local_chosen(self, key: str) -> None:
+        self.local_choice = key
+        self.refresh()
+
+    # -- the details of the open one
+
+    def _show_panel(self) -> None:
+        app, setup, key = self.app, setups.SETUPS[self.selected], self.selected
+        current = self.current() == key
+        self.panel_title.setText(setup.name)
+        self.panel_state.setText("In use" if current else "")
+        self.panel_status.setVisible(current)
+        self.blurb.setText(setup.blurb)
+        local = key == "local"
+        self.local.setVisible(local)
+        self.local.set_current(self.local_choice)
+        self.check_row.setVisible(local)
+        self.links.setVisible(key == "custom")
+        self.speech_fact.setVisible(not local)
+        if local:
+            self._show_check()
+            self.ai_words.setText("AI cleanup on this PC is coming soon. Until then it's off: Rflow types what it hears, "
+                                  "and Text Transform and Translate wait for an AI.")
+        else:
+            self.speech_words.setText(self._speech_fact(setup))
+            self.ai_words.setText(self._ai_fact(setup))
+        missing = setups.key_missing(setup, app.gateway)
+        self.key_area.setVisible(bool(missing))
+        if missing:
+            self.key_title.setText(f"{setup.name} needs your {provider_name(missing)} key. It's kept in Your API "
+                                   "keys, encrypted on this PC; nothing else changes until you press Use.")
+            self.get_key.setText("Get a free key")
+        self._show_cost(setup)
+        self.free_note.setText(setup.free_key)
+        self.free_note.setVisible(bool(setup.free_key))
+        self.use.setText(f"Use {setup.name}")
+        self.use.setVisible(key != "custom" and not current)
+        self._show_use()
+        self.actions.setVisible(not self.use.isHidden() or bool(self.result.text()))
+
+    def _speech_fact(self, setup: setups.Setup) -> str:
+        s = self.app.settings
+        if setup.key == "custom":
+            speech = SPEECH_MODELS.get(s.speech_model)
+            if speech is None:
+                return "Speech: no model yet."
+            if speech.where == "cloud":
+                model = s.speech_cloud_models.get(speech.key) or CLOUD[speech.key].models[0]
+                return f"Speech: {model}, at {speech.name}. Your voice goes there each time you dictate."
+            if speech.where == "server":
+                return f"Speech: {s.speech_server_model or 'a model'}, on your own server."
+            return f"Speech: {speech.name}, on this PC. Your voice stays here."
+        speech = SPEECH_MODELS[setup.speech]
+        if speech.where == "local":
+            return f"Speech: {speech.name}, on this PC. Your voice stays here. {speech.languages}."
+        name, model = CLOUD[setup.speech].name, setups.speech_model_for(setup, s.speech_language)
+        words = f"Speech: {setups.model_name(model)}, at {name}. Your voice goes to {name} each time you dictate."
+        if setup.key == "multilingual":
+            words += (" Tamil goes to Gemini 3.5 Flash-Lite: Transcribe has no Tamil." if model != setup.speech_model
+                      else " For Tamil, Rflow uses Gemini 3.5 Flash-Lite (Transcribe has no Tamil).")
+        return words
+
+    def _ai_fact(self, setup: setups.Setup) -> str:
+        s, gateway = self.app.settings, self.app.gateway
+        if setup.key == "custom":
+            if not (s.cleanup and s.cleanup_model and gateway.chosen):
+                return "AI cleanup: off."
+            return f"AI cleanup: {s.cleanup_model}, at {provider_name(gateway.chosen)}. Only the text is sent."
+        return (f"AI cleanup, Text Transform and Translate: {setups.model_name(setup.model)}, at "
+                f"{provider_name(setup.provider)}. Only the text is sent, never your voice.")
+
+    def _show_check(self) -> None:
+        """Local: whether this PC can run the model chosen, from Scan this PC (sst.scan), in plain words."""
+        app, key = self.app, self.local_choice
+        level, words = setups.pc_check(app.last_scan, key)
+        speech = SPEECH_MODELS[key]
+        if app.scanning:
+            state, words = "warn", f"Checking this PC: {app.scanning}"
+        elif not level:
+            state, words = "off", (f"Check this PC first: {speech.name} needs about {scan_memory(key)} of memory and "
+                                   f"{speech.size.split(',')[0]} of disk.")
+        else:
+            state = {"recommended": "ok", "fast": "ok", "usable": "off", "slow": "warn", "no": "err"}[level]
+        self.check_lamp.set_state(state)
+        self.check_words.setText(words)
+        self.scan.setText("Check again" if app.last_scan else "Check this PC")
+        self.scan.setEnabled(not app.scanning)
+
+    def _show_cost(self, setup: setups.Setup) -> None:
+        app = self.app
+        if setup.key == "custom":
+            speech, ai = setups.in_use_cost(app.settings, app.gateway)
+            total = costs.total(speech, ai)
+            parts = f"speech {_part(speech)}, AI {_part(ai)}"
+            warnings = [f"{what}: {part.warning}" for what, part in (("Speech", speech), ("AI", ai)) if part.warning]
+        else:
+            local = self.local_choice
+            speech, ai = setups.speech_cost(setup, app.settings.speech_language, local), setups.cleanup_cost(setup)
+            total = setups.cost(setup, app.settings.speech_language, local)
+            parts = f"speech {_part(speech)}, AI {_part(ai)}"
+            warnings = []
+        if total.tier == costs.FREE:
+            words = "Free: nothing is sent anywhere." if setup.key == "local" else "Free: everything runs on this PC."
+        elif total.monthly is None:
+            words = f"Price unknown: {parts}."
+        else:
+            words = f"{total.words} for {costs.TYPICAL_WORDS} ({parts})."
+        tone = COST_TONES.get(total.tier)
+        self.cost_words.setText(words)
+        set_tone(self.cost_words, tone or "2")
+        self.cost_lamp.setVisible(bool(tone))
+        if tone:
+            self.cost_lamp.set_state(tone)
+        self.warnings.setText("\n".join(warnings))
+        self.warnings.setVisible(bool(warnings))
+        set_tone(self.warnings, "err" if any(p.tier == costs.RED for p in (speech, ai)) else "warn")
+
+    def _show_use(self) -> None:
+        if not self.selected:
+            return
+        setup = setups.SETUPS[self.selected]
+        if setup.key == "local":  # after the check, and only if this PC can run the model
+            level = setups.pc_check(self.app.last_scan, self.local_choice)[0]
+            self.use.setEnabled(level not in ("", "no") and not self.app.loading_speech)
+        else:
+            self.use.setEnabled(not self.app.loading_speech)
+
+    def _open_key_page(self) -> None:
+        missing = setups.SETUPS[self.selected].needs if self.selected else ""
+        if missing:
+            QDesktopServices.openUrl(QUrl(PROVIDERS[missing].key_page))
+
+    def _say(self, message: str, tone: str | None = "2") -> None:
+        self.result.setText(message)
+        set_tone(self.result, tone)
+        self.actions.setVisible(not self.use.isHidden() or bool(message))
+
+    def _use(self) -> None:
+        """Use the open setup: its key first if it's missing (saved, nothing else changed), then its two parts."""
+        app, setup = self.app, setups.SETUPS[self.selected]
+        missing = setups.key_missing(setup, app.gateway)
+        typed = self.key.text().strip()
+        if missing and not typed:
+            self._say(f"Paste your {provider_name(missing)} key first (Get a free key).", "warn")
+            return
+        speech = self.local_choice if setup.key == "local" else setup.speech
+        model = SPEECH_MODELS[speech]
+        if model.where == "cloud" and app.settings.speech_model != speech:
+            name = CLOUD[speech].name
+            if not self.page.confirm(f"Use {setup.name}?\n\nEach time you dictate, the recording of your voice is sent "
+                                     f"to {name}, which turns it into text. " + _parakeet_takes_over(name)):
+                return
+        if missing:
+            app.save_key(missing, typed)  # Your API keys: changes nothing else
+        downloading = setups.apply(app, setup.key, self.local_choice)
+        self.key.show_saved("")
+        self.page.refresh()
+        if downloading:
+            fetched = SPEECH_MODELS[downloading]
+            self._say(f"{setup.name} is set. {fetched.name} is downloading ({_size(fetched.download.size)}); it takes "
+                      "over when it's here.", "ok")
+        else:
+            self._say(f"{setup.name} is in use from the next dictation.", "ok")
+
+    def unsaved(self) -> bool:
+        return bool(self.selected) and not self.key_area.isHidden() and bool(self.key.text().strip())
+
+    def discard(self) -> None:
+        self.key.show_saved("")
+
+
+def _part(estimate: costs.Estimate) -> str:
+    """A part of a setup's cost: "free", "$1.05", "price unknown"."""
+    if estimate.tier == costs.FREE:
+        return "free"
+    return costs.money(estimate.monthly) if estimate.monthly is not None else "price unknown"
+
+
+def scan_memory(key: str) -> str:
+    """The memory a model on this PC needs in all (sst.scan: its own and Windows' with the other programs)."""
+    return f"{MEMORY_GB.get(key, 1.0) + SYSTEM_GB:.1f} GB"
+
+
 # ---------------------------------------------------------------- AI & models (the overview)
 
 PAIR_WIDTH = 760  # a page narrower than this shows How Rflow hears you above the AI connection, not beside it
 
 
 class ModelsPage(Page):
-    """AI & models: Setups (to come), Your API keys, How Rflow hears you and the AI connection side by side, the
-    microphone, and the cleanup switch. Change leads one level down (SpeechPage, CleanupPage)."""
+    """AI & models: Setups, Your API keys, How Rflow hears you and the AI connection side by side, the microphone, and
+    the cleanup switch. Change leads one level down (SpeechPage, CleanupPage)."""
 
     def __init__(self, app, go_to):
         super().__init__("AI & models", "How Rflow hears you, the AI that polishes what you say, and the keys they use.")
         self.app, self.go_to = app, go_to
         # Setups, first on the page: ready-made pairs of a speech model and an AI (Recommended, Fastest, Multilingual,
-        # Local, Custom) go into self.setups_layout. A later step adds them; until then it takes no room.
+        # Local, Custom), with what they cost
         self.setups = QWidget()
         self.setups_layout = QVBoxLayout(self.setups)
         self.setups_layout.setContentsMargins(0, 0, 0, 0)
         self.setups_layout.setSpacing(16)
-        self.setups.hide()
+        self.setup_card = _SetupsCard(self, app)
+        self.setups_layout.addWidget(self.setup_card.frame)
         self.add(self.setups)
 
         self.keys = _KeysCard(self, app)
@@ -3282,6 +3895,7 @@ class ModelsPage(Page):
         if self.pair.direction() != direction:
             self.pair.setDirection(direction)
             self.pair.setSpacing(24 if side_by_side else self.body.spacing())
+        self.setup_card.set_columns(3 if self.viewport().width() >= SETUP_COLUMNS_WIDTH else 2)
 
     def _toggle_advanced(self) -> None:
         open_ = self.advanced_card.isHidden()
@@ -3303,14 +3917,17 @@ class ModelsPage(Page):
 
     def add_key(self, provider: str) -> None:
         """Open Your API keys at a provider's key, e.g. for live translation's "Add a Gemini key"."""
-        self.keys.rows[provider].open()
-        self.ensureWidgetVisible(self.keys.rows[provider])
+        line = self.keys.rows[provider]
+        line.open()
+        self.ensureWidgetVisible(line)
+        QTimer.singleShot(0, lambda: self.ensureWidgetVisible(line, 0, 48))  # again once the page is laid out
 
     def unsaved(self) -> bool:
-        return self.keys.unsaved()
+        return self.keys.unsaved() or self.setup_card.unsaved()
 
     def discard_changes(self) -> None:
         self.keys.discard()
+        self.setup_card.discard()
 
     def confirm(self, question: str) -> bool:
         return QMessageBox.question(self, APP_NAME, question) == QMessageBox.StandardButton.Yes
@@ -3318,6 +3935,7 @@ class ModelsPage(Page):
     def refresh(self) -> None:
         app = self.app
         s = app.settings
+        self.setup_card.refresh()
         self.keys.refresh()
         model = SPEECH_MODELS.get(app.speech_in_use())
         loading, downloading = app.loading_speech, app.downloading
