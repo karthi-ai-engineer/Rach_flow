@@ -2815,8 +2815,9 @@ class CleanupPage(Page):
         tools = QHBoxLayout()
         tools.setSpacing(8)
         tools.addWidget(ElidedText("This connection also powers Text Transform and Translate.", "caption", "2"), 1)
-        tools.addWidget(button("Tools", lambda: go_to("tools"), link=True, size="sm", icon="chevron-right",
-                               icon_after=True))
+        for title, key in (("Text Transform", "transform"), ("Translate", "translate")):
+            tools.addWidget(button(title, lambda _=False, k=key: go_to(k), link=True, size="sm", icon="chevron-right",
+                                   icon_after=True))
         self.add(tools)
         self.body.addStretch()
         self.discard_changes()  # the fields as saved
@@ -3856,8 +3857,9 @@ class ModelsPage(Page):
         self.sparkle = QLabel()
         powers.addWidget(self.sparkle)
         powers.addWidget(caption("This connection also powers Text Transform and Translate.", "2"), 1)
-        powers.addWidget(button("Tools", lambda: go_to("tools"), link=True, size="sm", icon="chevron-right",
-                                icon_after=True))
+        for title, key in (("Text Transform", "transform"), ("Translate", "translate")):
+            powers.addWidget(button(title, lambda _=False, k=key: go_to(k), link=True, size="sm", icon="chevron-right",
+                                    icon_after=True))
         column.addLayout(powers)
         self.add(self.cleanup_card)
 
@@ -6750,7 +6752,7 @@ class PreviewApp:
 
     def ai_models(self, gateway: GatewayConfig) -> list[str]:
         self.calls.append(("ai_models", gateway.service.key))
-        return {"gemini": ["gemini-2.0-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-pro", "text-embedding-004"],
+        return {"gemini": ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "text-embedding-004"],
                 "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-mini"]}.get(gateway.service.key, ["model-a"])
 
     def check_ai(self, gateway: GatewayConfig, model: str) -> str:

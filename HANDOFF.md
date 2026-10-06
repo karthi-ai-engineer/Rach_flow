@@ -11,6 +11,11 @@ _Last updated: 2026-10-06_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-06):**
+- **Rflow 2.3.0** (2026-10-06, the owner's "release the version on the site"): open source (MIT), live translation
+  spoken aloud (phase 29), never lose work (phase 30) and **phase 31, the owner's UI review** (issue #81, built by
+  five agents in parallel and merged part by part: #82-#88): ten sections, a big Start/Stop for live translation, all
+  API keys in one place, the speech model in two groups, ready-made setups with what each costs a month, Start over,
+  and fixes for retired or failing AI models. See **Clearer sections, setups and costs**.
 - **Open source first, a closed layer later** (the owner's decision of 2026-10-06): the desktop app, everything it
   does today, is free and open source under the **MIT License** (the owner's choice; issue #79, branch
   `chore/open-source`): `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, a feature-request
@@ -18,19 +23,19 @@ _Last updated: 2026-10-06_
   Settings → Advanced. The Rflow name and logo stay outside the licence. Accounts, sign-in with Google, sync, the web
   and mobile come later as a **closed-source** layer in a separate private repository; their plan stays under
   discussion (`reports/Rflow accounts and device sync.md`, not in git: Supabase, encrypted sync, users not in Japan
-  so no Japan hosting). Before the public announcement: phases 31 (privacy), 32 (first run) and 34 (updates and
-  code signing; open-source projects can be signed free by the SignPath Foundation) are recommended; the owner
-  hasn't decided. Checked: no key or private address in any of the 248 commits (tests use the placeholder
+  so no Japan hosting). Before the public announcement (as 3.0.0): phases 32 (privacy), 33 (first run) and 35
+  (updates and code signing; open-source projects can be signed free by the SignPath Foundation) are recommended;
+  the owner hasn't decided. Checked: no key or private address in any of the 248 commits (tests use the placeholder
   10.0.0.5). **sherpa-onnx's library has espeak-ng's code (GPL-3.0) compiled in**, so the installer already ships
   GPL code: fine for the open app, but the closed version must not bundle it as is.
 - **The user testing of 2026-10-06** (a testing agent, as a user, isolated from the owner's data): 75 flaws (2 blockers,
   22 major, 39 minor, 12 polish) and the capabilities a complete app lacks, in `reports/Rflow user testing
   2026-10-06.md` (not in git; its scripts, to re-run, in `reports/user-testing-2026-10-06/scripts/`). The owner chose
-  to fix them in phases: 30 never lose work, 31 privacy and data, 32 first run and shortcuts, 33 layout,
-  accessibility and speed, 34 updates, install and trust, 35 networks and moving PCs.
-- **Never lose work** (phase 30, PR #78) is merged into `main`, not released (the owner: "update the git; not
-  release"). See **Never lose work**.
-- **Live translation spoken aloud** (phase 29, PR #76, merged into `main`, not released): the owner's
+  to fix them in phases: 30 never lose work, then (after the owner's own UI review came first, as 31) 32 privacy
+  and data, 33 first run and shortcuts, 34 layout, accessibility and speed, 35 updates, install and trust, 36
+  networks and moving PCs. The owner's defaults for 32: recordings kept 30 days, live transcripts on with a switch.
+- **Never lose work** (phase 30, PR #78), released in 2.3.0. See **Never lose work**.
+- **Live translation spoken aloud** (phase 29, PR #76, released in 2.3.0): the owner's
   chosen voice, Piper's Danny (English), reads each sentence of the translation out on the laptop, never heard and
   translated again. See **Live translation spoken aloud**.
 - **Rflow 2.2.0** (2026-10-05, the owner's "release it"): live translation, a section of its own (phase 28, PR #74):
@@ -166,13 +171,14 @@ _Last updated: 2026-10-06_
 | 20 | **Text Transform** (the owner's idea): say "make it concise" (or double-tap Ctrl for a menu) and the selected text or the last dictation becomes Concise, Professional, Bullet points or Action items, checked, with undo; the text is found again if focus moved | done, on `main` (PR #50, with #48), released **v1.7.0** |
 | 19 | **The voice pipeline** (the owner's plan): always-on mic, chunks while speaking, parallel ASR, merge, dictionary, formatting, guarded LLM | done, on `main` (PR #46), released **v1.6.0** |
 | 26 | **Microphones that follow you**: Windows' own device list, open microphones reopened when devices change, silent recordings caught | done, on `main` (PR #70), released **v2.0.2** |
-| 30 | **Never lose work** (the user testing's blockers): a key brushed while dictating keeps the dictation; a damaged dictionary or settings file never stops Rflow (moved aside, restored from a copy); crash reports; a failed start says why; a failed paste keeps the text; updates wait for idle; the keyboard hook is renewed | done, on `main` (PR #78), not released |
-| 29 | **Live translation spoken aloud** (the owner's request): Piper's Danny on the laptop (sherpa-onnx, no new dependency), each sentence spoken as soon as it's whole, faster when behind; process loopback leaves Rflow's own voice out of what's captured; the microphone pauses while it plays through speakers | done, on `main` (PR #76), not released |
-| open source | **MIT License** and the files contributors need: CONTRIBUTING, SECURITY, code of conduct, a feature template, complete notices, a "Source code" row | in review (issue #79) |
+| 30 | **Never lose work** (the user testing's blockers): a key brushed while dictating keeps the dictation; a damaged dictionary or settings file never stops Rflow (moved aside, restored from a copy); crash reports; a failed start says why; a failed paste keeps the text; updates wait for idle; the keyboard hook is renewed | done, on `main` (PR #78), released **v2.3.0** |
+| 29 | **Live translation spoken aloud** (the owner's request): Piper's Danny on the laptop (sherpa-onnx, no new dependency), each sentence spoken as soon as it's whole, faster when behind; process loopback leaves Rflow's own voice out of what's captured; the microphone pauses while it plays through speakers | done, on `main` (PR #76), released **v2.3.0** |
+| open source | **MIT License** and the files contributors need: CONTRIBUTING, SECURITY, code of conduct, a feature template, complete notices, a "Source code" row | done, on `main` (PR #80), released **v2.3.0** |
+| 31 | **Clearer sections, setups and costs** (the owner's UI review): ten sections, Live's big Start/Stop, Your API keys, the speech model in two groups, setups with monthly costs, Start over, retired models fixed | done, on `main` (issues #82-#88), released **v2.3.0** |
 | 28 | **Live translation, a section of its own** (the owner's redesign): a sidebar section, Ctrl+Alt+L, a movable, resizable, scrollable bar with ✕, and the source: Computer, Microphone or Both (your words marked "You") | done, on `main` (PR #74), released **v2.2.0** |
 | 27 | **Live captions, part 1** (the owner's idea): what the laptop plays → WASAPI loopback → Gemini 3.5 Live Translate → a caption bar left out of screen shares, and a transcript; a separate pipeline (`sst/live/`) | done, on `main` (PR #72), released **v2.1.0** |
 
-Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0, v1.10.1, v2.0.0, v2.0.1, v2.0.2, v2.1.0 and v2.2.0 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
+Released: v1.0.0, v1.0.1, v1.1.0, v1.3.0, v1.4.0, v1.5.0, v1.6.0, v1.7.0, v1.8.0, v1.9.0, v1.10.0, v1.10.1, v2.0.0, v2.0.1, v2.0.2, v2.1.0, v2.2.0 and v2.3.0 (GitHub Releases; there is no 1.2.0; the updater compares versions as numbers, so 1.10.0 is newer than 1.9.0). Website: https://rachflow.vercel.app (Vercel project `rach_darling_flow-site`, team karthi-labs; the address was
 added on 2026-10-01, and the old https://rachdarlingflow-site.vercel.app stays assigned: installed apps up to 1.6.0
 link there, so never remove it;
 `site/`). The in-app update path is verified end to end: the owner's installed 1.0.0 showed the banner and updated
@@ -1618,6 +1624,32 @@ no native ARM64 build for now, and the Mac later.
 | **The owner's report, 2026-10-06:** "make it concise" after a dictation said "Select some text first" | The log showed why: the last dictation was found but the app had changed it a little ("11 expected, 9 copied"), and the exact match failed. `textaccess.select_last` now returns the text it selected: exact first; else it looks `LOOK_FURTHER` (12) more steps back, finds the closest text ending at the caret (`CLOSE_ENOUGH` 0.85, difflib, never starting on a space) and selects exactly that. The message now tells "couldn't find your last dictation here" apart from "nothing to rewrite", and the log names the window class |
 | crash.log written while nothing crashed | On Windows faulthandler also writes exceptions Windows raises and handles itself (`0x8001010d`, COM, seen on the owner's laptop): `crashed()` counts only real ones (access violation, stack overflow, a fatal Python error) |
 
+## Clearer sections, setups and costs (phase 31, the owner's UI review of 2026-10-06)
+
+The owner went through every page and asked for it before the remaining bugs. Built by five agents in parallel, each
+in its own worktree with a strict scope, then merged one pull request per part (the owner's rule 8 in CLAUDE.md):
+
+| Part | Issue | What |
+|---|---|---|
+| Live translation | #82 | A big green Start (`ui.PowerButton`); while running a red Stop, a blinking "Live" light (`BlinkLamp`, only while shown) and what it translates into what (`TrayApp.live_languages`); Speak the translation right under it |
+| AI & models | #83 | Your API keys at the top (`TrayApp.save_key` / `save_server` never change the cleanup or speech model: M-04); the speech model in two groups (On this PC, Cloud tiles: OpenAI, Groq, Gemini, Your own server); long microphone names elided (M-03) |
+| Sections | #84 | Home, Live translation, Words, Snippets, Text Transform, Translate, Formatting, AI & models, Settings, Report a problem; Tools removed (`go_to("tools")` opens Text Transform); before/after examples checked by the real `TransformGuard`; Formatting's examples run through the real formatter; Start over (`TrayApp.start_over`, `erase_data`: only folders named `sst`; Rflow restarts with `--after=<pid>`) |
+| Models | #85 | From the price research: Groq's `llama-3.1-8b-instant` is gone (`openai/gpt-oss-20b`, reasoning low); Claude 4.7+ get no temperature; gpt-6 is a reasoning model; Gemini 3 Flash thinks at minimal/low; `gpt-transcribe` added (the old OpenAI speech models shut down 2027-02-26, `cloud.retirement`); a cut-off answer is an error, never typed with a hole (`sst/modelrules.py`) |
+| Setups | #86 | `sst/setups.py` and `sst/costs.py`: Recommended (Parakeet + `gemini-3.5-flash-lite`, about $1.05 a month), Fastest (Groq, $0.70), Multilingual (Gemini Transcribe, $3.58), Local (free; AI on the PC "coming soon"), Custom; the first run starts with them; every model list shows its monthly cost, amber $2-5, red over $5 or 10x the cheapest |
+| Tests | #87 | The `tray_app` fixture no longer touches the real log folder (it removed a running Rflow's crash marker) or the real data folders |
+| Docs, site | #88 | README's ten sections, the website (open source, setups with prices, live translation, new screenshots), version 2.3.0 |
+
+**Still to check with real keys** (the code follows the providers' pages; tests use fakes): Groq gpt-oss-20b with
+`reasoning_effort: low` and `include_reasoning: false`; Gemini's `reasoning_effort` minimal/low through the
+OpenAI-compatible endpoint and `thinkingConfig.thinkingLevel` for Flash speech; OpenAI `reasoning_effort` none on
+gpt-6 and `languages[]` on gpt-transcribe (Tamil, Japanese); Claude Sonnet/Opus 5.5 with no temperature. The cost
+estimates assume 20 minutes of dictation a day (150 dictations), 22 days a month.
+
+**Decisions made for the owner** (to confirm): Start over keeps the downloaded models by default; the setups sit at
+the top of AI & models (not a sidebar entry); Formatting is a section of its own; Your own server's address shows in
+plain text in Your API keys (only keys are masked). **Open:** the owner said "the sound is gone" about Settings:
+ask whether the start/stop beep stopped. Not done: Home's own long microphone label (the other half of M-03).
+
 ## Known limitations
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.
 - Ctrl+Win isn't sent through the real hook in automated tests (Wispr Flow on the dev laptop would react). The hook
@@ -1634,10 +1666,12 @@ no native ARM64 build for now, and the Mac later.
 
 ## Next steps
 
-1. **Open source first** (the owner's plan of 2026-10-06): merge issue #79's PR; then, with the owner's OK, the
-   repository's description and topics, private vulnerability reporting (SECURITY.md points to it) and Discussions.
-   Then the user testing's phases 31-35, release, and announce Rflow as open source. The accounts layer (closed
-   source) after that.
+1. **Owner: update to 2.3.0 and try phase 31**: the first run's setups (on another Windows account, or after Start
+   over), AI & models (Your API keys, a setup, a model with its cost), Live translation's Start/Stop, the new
+   sections. Then the real-key checks listed in **Clearer sections, setups and costs**.
+2. **Then the user testing's phases 32-36** (privacy first), and announce Rflow as open source as 3.0.0. With the
+   owner's OK: the repository's description and topics, private vulnerability reporting (SECURITY.md points to it)
+   and Discussions. The accounts layer (closed source) after that.
 1. **Owner: update to 2.0.0 from the banner and look around** (both themes: Windows Settings → Personalization →
    Colors):
    - Home: dictate, then search a word with Ctrl+K; hover a dictation: Correct and Copy
