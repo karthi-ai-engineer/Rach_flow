@@ -16,6 +16,7 @@ import faulthandler
 import logging
 import math
 import os
+import re
 import shutil
 import sys
 import threading
@@ -101,7 +102,7 @@ def install_crash_handlers(log_dir: Path) -> str:
         exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
     crash, running, left = log_dir / CRASH_FILE, log_dir / RUNNING_FILE, ""
     try:
-        if running.exists() and crash.exists() and crash.stat().st_size:  # it never quit, and wrote a crash
+        if running.exists() and crash.exists() and crashed(crash.read_text(encoding="utf-8", errors="replace")):
             kept = log_dir / f"crash-{time.strftime('%Y%m%d-%H%M%S')}.log"
             crash.replace(kept)
             left = kept.name
@@ -111,6 +112,16 @@ def install_crash_handlers(log_dir: Path) -> str:
     except OSError as e:
         log.warning("Couldn't set up the crash report: %s", e)
     return left
+
+
+def crashed(report: str) -> bool:
+    """What faulthandler wrote shows a real crash. On Windows it also writes exceptions that are raised and handled
+    inside Windows (COM's 0x8001xxxx, e.g. 0x8001010d seen on the owner's laptop while the hook thread waits): those
+    are no crash, and alone they don't make one."""
+    if "Fatal Python error" in report:
+        return True
+    return any(not re.fullmatch(r"code 0x8001[0-9a-f]{4}", line.split(": ", 1)[1].strip(), re.IGNORECASE)
+               for line in report.splitlines() if line.startswith("Windows fatal exception: "))
 
 
 def mark_clean_exit(log_dir: Path) -> None:

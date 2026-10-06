@@ -1602,6 +1602,8 @@ no native ARM64 build for now, and the Mac later.
 | **M-22** Win+Ctrl+V instead of a paste | `paste._wait_until_keys_released`: waits while the keys are held (also for the next dictation, up to `HELD_WAIT`), and never presses Ctrl+V with them held |
 | **M-15** "Update now" cut dictations and live translation | `TrayApp.busy()`; a ready update waits ("it installs when this dictation is done / live translation stops") and installs when idle |
 | **M-21** (suspected) Windows dropping a slow hook | `HotkeyListener` puts in a fresh hook every `REHOOK_SECONDS` (30 s) while no key is held, the new one before the old one goes |
+| **The owner's report, 2026-10-06:** "make it concise" after a dictation said "Select some text first" | The log showed why: the last dictation was found but the app had changed it a little ("11 expected, 9 copied"), and the exact match failed. `textaccess.select_last` now returns the text it selected: exact first; else it looks `LOOK_FURTHER` (12) more steps back, finds the closest text ending at the caret (`CLOSE_ENOUGH` 0.85, difflib, never starting on a space) and selects exactly that. The message now tells "couldn't find your last dictation here" apart from "nothing to rewrite", and the log names the window class |
+| crash.log written while nothing crashed | On Windows faulthandler also writes exceptions Windows raises and handles itself (`0x8001010d`, COM, seen on the owner's laptop): `crashed()` counts only real ones (access violation, stack overflow, a fatal Python error) |
 
 ## Known limitations
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.

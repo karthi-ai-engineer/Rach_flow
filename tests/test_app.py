@@ -793,3 +793,11 @@ def test_a_history_that_cant_be_written_never_fails_a_dictation(tray_app, monkey
     app._on_result("hello", "Hello.", 1.2)
     app._on_result("again", "Again.", 1.0)
     assert len(told) == 1 and told[0].startswith("Rflow couldn't save your dictations to the history")
+
+
+def test_only_a_real_crash_counts_not_an_exception_windows_handles_itself():
+    seen_here = "Windows fatal exception: code 0x8001010d\n\nThread 0x00004804 (most recent call first):\n  File ..."
+    assert not sst_app.crashed(seen_here)  # the owner's laptop, 2026-10-06, while Rflow ran on normally
+    assert sst_app.crashed(seen_here + "\nWindows fatal exception: access violation\n\nCurrent thread ...")
+    assert sst_app.crashed("Fatal Python error: Segmentation fault\n")
+    assert sst_app.crashed("Windows fatal exception: code 0xc0000409\n") and not sst_app.crashed("")
