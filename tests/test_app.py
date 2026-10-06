@@ -668,3 +668,128 @@ def test_the_voices_download_shows_its_progress_and_speaks_when_done(tray_app, m
     assert app.voice_downloading is None and notes[-1] == "" and speak == [True]
     app._on_voice_done("the model server answered 503")
     assert app.live_voice_state()[2] == "the model server answered 503"
+
+
+# ---- never lose work (phase 30)
+
+def test_crashes_leave_a_report_and_the_next_start_finds_it(tmp_path, monkeypatch, caplog):
+    import sys
+    import threading
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)  # put back after the test
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    enabled = []
+    monkeypatch.setattr(sst_app.faulthandler, "enable", enabled.append)  # not the real one: pytest has its own
+    assert sst_app.install_crash_handlers(tmp_path) == ""  # a first start: nothing left behind
+    assert (tmp_path / "running").exists() and enabled
+    sys.excepthook(ValueError, ValueError("a slot failed"), None)
+    assert "Unexpected error" in caplog.text and "a slot failed" in caplog.text
+    enabled[0].write("Windows fatal exception: access violation\n")  # what faulthandler writes as Rflow dies
+    enabled[0].close()
+    left = sst_app.install_crash_handlers(tmp_path)  # the next start: "running" is still there
+    sst_app._crash_file.close()
+    assert left.startswith("crash-") and "access violation" in (tmp_path / left).read_text(encoding="utf-8")
+    sst_app.mark_clean_exit(tmp_path)
+    assert not (tmp_path / "running").exists()
+
+
+def test_quitting_or_signing_out_is_not_a_crash(tmp_path, monkeypatch):
+    import sys
+    import threading
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    files = []
+    monkeypatch.setattr(sst_app.faulthandler, "enable", files.append)
+    sst_app.install_crash_handlers(tmp_path)
+    files[0].write("a first-chance exception a library caught\n")
+    files[0].close()
+    sst_app.mark_clean_exit(tmp_path)  # Rflow quit normally afterwards
+    assert sst_app.install_crash_handlers(tmp_path) == ""
+    sst_app._crash_file.close()
+
+
+def test_a_start_that_fails_says_why_instead_of_vanishing(tmp_path, monkeypatch):
+    shown = []
+    monkeypatch.setattr(sst_app.QMessageBox, "critical", lambda *args: shown.append(args[2]))
+    (tmp_path / "running").write_text("1", encoding="utf-8")
+
+    def broken():
+        raise PermissionError("C:\\Users\\x\\AppData\\Roaming\\sst is not writable")
+    assert sst_app.start(broken, tmp_path) is None
+    assert shown[0].startswith("Rflow couldn't start: C:\\Users\\x") and str(tmp_path) in shown[0]
+    assert not (tmp_path / "running").exists()  # it said why: not a crash
+
+
+def test_the_crash_left_behind_is_mentioned_once_rflow_is_up(tmp_path):
+    told = []
+
+    class App:
+        def _notify(self, title, message, icon):
+            told.append(message)
+    assert isinstance(sst_app.start(App, tmp_path, left="crash-20261006-101500.log"), App)
+    assert told == ["Rflow closed unexpectedly last time. A crash report is in its logs folder "
+                    "(crash-20261006-101500.log)."]
+
+
+def test_a_damaged_dictionary_doesnt_stop_rflow_and_the_user_is_told(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    told = []
+    monkeypatch.setattr(app, "_notify", lambda title, message, icon=None: told.append(message))
+    path = app.profile.folder() / "dictionary.db"
+    app.dictionary.close()
+    for side in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+        if side.exists():
+            side.unlink()
+    path.write_bytes(b"not a database" * 50)
+    app._load_profile()
+    assert told and told[0].startswith("Your dictionary file was damaged")
+    app.dictionary.add_term("Kubernetes")  # and it works
+
+
+def test_settings_that_cant_be_saved_are_said_once_and_still_used(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    told = []
+    monkeypatch.setattr(app, "_notify", lambda title, message, icon=None: told.append(message))
+
+    def full_disk(self, path=None):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(Settings, "save", full_disk)
+    app.apply_settings(dataclasses.replace(app.settings, sounds=False))
+    app.apply_settings(dataclasses.replace(app.settings, sounds=True))
+    assert len(told) == 1 and told[0].startswith("Rflow couldn't save your settings") and app.settings.sounds
+
+
+def test_an_update_never_cuts_a_dictation_or_live_translation(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    installed, quit_ = [], []
+    monkeypatch.setattr(sst_app.updates, "install", installed.append)
+    monkeypatch.setattr(sst_app, "release_running_mutex", lambda: None)
+    monkeypatch.setattr(app, "quit", lambda: quit_.append(True))
+    doing = ["this dictation"]
+    monkeypatch.setattr(app, "busy", lambda: doing[0])
+    app._on_update_ready("Rflow-Setup.exe")
+    assert installed == [] and app._update_timer.isActive() and app._update_waiting == "Rflow-Setup.exe"
+    app._install_when_idle()  # still dictating
+    assert installed == []
+    doing[0] = ""
+    app._install_when_idle()  # done: now it installs
+    assert [str(p) for p in installed] == ["Rflow-Setup.exe"] and quit_ and not app._update_timer.isActive()
+
+
+def test_busy_names_what_an_update_waits_for(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    assert app.busy() == ""
+    monkeypatch.setattr(type(app.live), "running", property(lambda self: True))
+    assert app.busy() == "live translation stops"
+
+
+def test_a_history_that_cant_be_written_never_fails_a_dictation(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    told = []
+    monkeypatch.setattr(app, "_notify", lambda title, message, icon=None: told.append(message))
+
+    def unwritable(text, heard=None, path=None):
+        raise PermissionError(13, "Access is denied")
+    monkeypatch.setattr(sst_app, "add_to_history", unwritable)
+    app._on_result("hello", "Hello.", 1.2)
+    app._on_result("again", "Again.", 1.0)
+    assert len(told) == 1 and told[0].startswith("Rflow couldn't save your dictations to the history")

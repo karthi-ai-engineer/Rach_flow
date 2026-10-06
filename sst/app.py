@@ -9,8 +9,10 @@ you dictate, a small "pill" near the bottom of the screen shows the recording le
   Rflow.exe --startup                   at sign-in: only the tray icon
   Rflow.exe --self-test                 build check: builds every window off-screen and transcribes once
 """
+import contextlib
 import ctypes
 import dataclasses
+import faulthandler
 import logging
 import math
 import os
@@ -19,6 +21,7 @@ import sys
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -53,7 +56,7 @@ from sst.pipeline.guard import Guard
 from sst.pipeline.learning import CorrectionEvent, Learner
 from sst.pipeline.polish import GatewayLLM
 from sst.pipeline.session import LazyBackend, Stages, VoicePipeline
-from sst.settings import Profiles, Settings, Stats, add_to_history, read_history
+from sst.settings import LOAD_PROBLEMS, Profiles, Settings, Stats, add_to_history, read_history
 from sst.snippets import Snippet
 from sst.snippets import load as load_snippets
 from sst.transform import Transformer
@@ -81,6 +84,39 @@ def setup_logging() -> Path:
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
     return LOG_DIR
+
+
+CRASH_FILE, RUNNING_FILE = "crash.log", "running"
+_crash_file = None  # kept open for the whole run: faulthandler writes a native crash's traceback into it
+
+
+def install_crash_handlers(log_dir: Path) -> str:
+    """Errors nobody catches (in Qt slots, in threads) go to the log instead of nowhere: Rflow.exe has no console. A
+    native crash (in onnxruntime, Qt...) leaves its traceback in crash.log, and a marker says Rflow is running until it
+    quits. Returns the name the last run's crash report was kept under, if that run ended in a crash, else ""."""
+    global _crash_file
+    sys.excepthook = lambda kind, value, tb: log.critical("Unexpected error", exc_info=(kind, value, tb))
+    threading.excepthook = lambda args: log.critical(
+        "Unexpected error in %s", getattr(args.thread, "name", "a thread"),
+        exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+    crash, running, left = log_dir / CRASH_FILE, log_dir / RUNNING_FILE, ""
+    try:
+        if running.exists() and crash.exists() and crash.stat().st_size:  # it never quit, and wrote a crash
+            kept = log_dir / f"crash-{time.strftime('%Y%m%d-%H%M%S')}.log"
+            crash.replace(kept)
+            left = kept.name
+        running.write_text(str(os.getpid()), encoding="utf-8")
+        _crash_file = crash.open("w", encoding="utf-8")
+        faulthandler.enable(_crash_file)
+    except OSError as e:
+        log.warning("Couldn't set up the crash report: %s", e)
+    return left
+
+
+def mark_clean_exit(log_dir: Path) -> None:
+    """Rflow quit on purpose, or Windows ended the session: there's no crash to report at the next start."""
+    with contextlib.suppress(OSError):
+        (log_dir / RUNNING_FILE).unlink()
 
 
 # ---------------------------------------------------------------- the recording pill
@@ -303,6 +339,9 @@ class TrayApp:
     """Owns the settings and the dictation; the window (sst/window.py) shows them and asks this class for changes."""
 
     def __init__(self, quiet_start: bool = False):
+        self._told_later: list[str] = []  # warnings from before the tray icon is there (sst.app._tell)
+        self._settings_unsaved = False  # told once that the settings couldn't be saved
+        self._history_unsaved = False  # told once that the history couldn't be saved
         self.profiles = Profiles.load()
         self._load_profile()
         self.recorder = self.new_recorder()
@@ -393,6 +432,11 @@ class TrayApp:
         self.tray.messageClicked.connect(lambda: self.window.open())  # e.g. "Rflow 1.2.0 is available"
         self.tray.setToolTip(f"{APP_NAME}: loading...")
         self.tray.show()
+        if self._told_later:  # what went wrong while starting: a damaged settings file or dictionary
+            self._notify(APP_NAME, "\n".join(self._told_later), QSystemTrayIcon.MessageIcon.Warning)
+            self._told_later.clear()
+        self._update_waiting = ""  # a downloaded update, waiting for Rflow to be idle
+        self._update_timer = QTimer(interval=2000, timeout=self._install_when_idle)
         self._set_status("Loading the speech model...")
 
         self.server = QLocalServer()
@@ -635,7 +679,7 @@ class TrayApp:
 
     def _on_result(self, heard: str, typed: str, seconds: float) -> None:
         self.transforms.note_typed(typed + " ")  # as Dictation pasted it: with nothing selected, the shortcut takes it
-        add_to_history(typed, heard, path=self.profile.history_file)
+        self._add_history(typed, heard)
         self.stats.add(typed, seconds, date.today())
         try:
             self.stats.save(self.profile.stats_file)
@@ -723,7 +767,13 @@ class TrayApp:
     def apply_settings(self, new: Settings) -> None:
         """Save the settings and use them at once (the Settings page and the welcome change them one by one)."""
         old, self.settings = self.settings, new
-        new.save(self.profile.settings_file)
+        try:
+            new.save(self.profile.settings_file)
+        except OSError as e:  # a full disk, a folder that can't be written: the change works until Rflow closes
+            log.warning("Couldn't save the settings: %s", e)
+            if not self._settings_unsaved:
+                self._settings_unsaved = True
+                self._tell(f"Rflow couldn't save your settings ({e}): your changes work until Rflow closes.")
         self._configure_dictation_mic()
         if new.vocabulary != old.vocabulary:
             self.dictionary.sync_vocabulary(new.vocabulary)
@@ -1067,9 +1117,19 @@ class TrayApp:
 
     def remember(self, text: str, original: str) -> None:
         """A transform in Home's history, with the text it came from (its tooltip)."""
-        add_to_history(text, original, path=self.profile.history_file)
+        self._add_history(text, original)
         if self.window.isVisible():
             self.window.refresh()
+
+    def _add_history(self, text: str, heard: str | None) -> None:
+        """Into Home's history. A folder that can't be written is said once; it never fails the dictation (typed)."""
+        try:
+            add_to_history(text, heard, path=self.profile.history_file)
+        except OSError as e:
+            log.warning("Couldn't save to the history: %s", e)
+            if not self._history_unsaved:
+                self._history_unsaved = True
+                self._tell(f"Rflow couldn't save your dictations to the history ({e}). They're still typed.")
 
     def dictionary_terms(self) -> list:
         return self.dictionary.terms(enabled_only=False)
@@ -1302,11 +1362,15 @@ class TrayApp:
     def _load_profile(self) -> None:
         self.profile = self.profiles.current
         self.settings = Settings.load(self.profile.settings_file)
+        while LOAD_PROBLEMS:
+            self._tell(LOAD_PROBLEMS.pop(0))
         self.gateway = GatewayConfig.load(self.profile.gateway_file)
         self.stats = Stats.load(self.profile.stats_file, history=self.profile.history_file)
         old = getattr(self, "dictionary", None)
         # Each person's dictionary (terms, sound-alikes, learned corrections), with "Your words" mirrored into it.
-        self.dictionary = DictionaryStore(self.profile.folder() / "dictionary.db")
+        self.dictionary, problem = DictionaryStore.open(self.profile.folder() / "dictionary.db")
+        if problem:
+            self._tell(problem)
         self.dictionary.sync_vocabulary(self.settings.vocabulary)
         self.learner = Learner(self.dictionary)  # corrections made twice become suggestions, never rules by themselves
         if old is not None:
@@ -1436,7 +1500,28 @@ class TrayApp:
             self.signals.update_ready.emit(str(path))
         threading.Thread(target=work, name="update-download", daemon=True).start()
 
+    def busy(self) -> str:
+        """What Rflow is in the middle of that an update mustn't cut ("" when nothing)."""
+        if self.dictation is not None and self.dictation.busy:
+            return "this dictation"
+        if self.live.running:
+            return "live translation stops"
+        return ""
+
+    def _install_when_idle(self) -> None:
+        if self._update_waiting and not self.busy():
+            self._on_update_ready(self._update_waiting)
+
     def _on_update_ready(self, path: str) -> None:
+        if doing := self.busy():  # never cut a dictation or a live translation: install once it's over
+            self._update_waiting = path
+            version = self.update.version if self.update else "The update"
+            self.window.show_update(f"Rflow {version} is ready: it installs when {doing} is done.", busy=True)
+            self._update_timer.start()
+            log.info("The update waits: %s", doing)
+            return
+        self._update_timer.stop()
+        self._update_waiting = ""
         log.info("Installing %s; Rflow restarts when it's done", path)
         self.window.show_update("Installing... Rflow restarts by itself when it's done.", busy=True)
         release_running_mutex()  # otherwise the installer stops to ask for Rflow to be closed
@@ -1474,6 +1559,7 @@ class TrayApp:
             self.dictation.close()
         self.server.close()
         self.tray.hide()
+        mark_clean_exit(LOG_DIR)
         QApplication.quit()
 
     def _set_status(self, message: str, ready: bool = False) -> None:
@@ -1484,6 +1570,14 @@ class TrayApp:
 
     def _notify(self, title: str, message: str, icon=QSystemTrayIcon.MessageIcon.Information) -> None:
         self.tray.showMessage(title, message, icon, 5000)
+
+    def _tell(self, message: str) -> None:
+        """A warning the user must see: a notification now, or once the tray icon is there (while starting)."""
+        log.warning(message)
+        if getattr(self, "tray", None) is not None:
+            self._notify(APP_NAME, message, QSystemTrayIcon.MessageIcon.Warning)
+        else:
+            self._told_later.append(message)
 
 
 def _sample_sentence():
@@ -1572,9 +1666,31 @@ def main(argv: list[str] | None = None) -> int:
     if not QSystemTrayIcon.isSystemTrayAvailable():
         QMessageBox.critical(None, APP_NAME, "Windows has no notification area (system tray) available.")
         return 1
-    tray_app = TrayApp(quiet_start="--startup" in argv)  # noqa: F841 (kept alive for the app's lifetime)
+    left = install_crash_handlers(log_dir)  # only now: a second copy that just hands over mustn't touch them
+    app.aboutToQuit.connect(lambda: mark_clean_exit(log_dir))
+    app.commitDataRequest.connect(lambda manager: mark_clean_exit(log_dir))  # Windows signs out or shuts down
+    tray_app = start(lambda: TrayApp(quiet_start="--startup" in argv), log_dir, left)
+    if tray_app is None:
+        return 1
     try:
         return app.exec()
     except Exception:
         log.exception("Crashed; logs in %s", log_dir)
         raise
+
+
+def start(make: Callable[[], "TrayApp"], log_dir: Path, left: str = "") -> "TrayApp | None":
+    """The app, or None after saying why it couldn't start (instead of vanishing). `left`: the crash report the last
+    run left behind, mentioned once the app is up."""
+    try:
+        tray_app = make()
+    except Exception as e:
+        log.exception("Rflow couldn't start")
+        mark_clean_exit(log_dir)  # it didn't crash: it said why
+        QMessageBox.critical(None, APP_NAME, f"{APP_NAME} couldn't start: {e}\n\nThe details are in the log, in "
+                                             f"{log_dir}. Your settings and words are kept.")
+        return None
+    if left:
+        tray_app._notify(APP_NAME, f"{APP_NAME} closed unexpectedly last time. A crash report is in its logs folder "
+                                   f"({left}).", QSystemTrayIcon.MessageIcon.Warning)
+    return tray_app
