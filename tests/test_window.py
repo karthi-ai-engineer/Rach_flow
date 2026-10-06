@@ -1,4 +1,5 @@
 """The Rflow window, built off-screen with PreviewApp in place of the tray app (no model, no microphone, no hook)."""
+import dataclasses
 import os
 import time
 
@@ -18,6 +19,7 @@ from sst.commands import DEFAULT_PHRASES  # noqa: E402
 from sst.gateway import GatewayConfig  # noqa: E402
 from sst.settings import Settings, Stats  # noqa: E402
 from sst.snippets import load  # noqa: E402
+from sst.transform import TRANSFORMS, TransformGuard  # noqa: E402
 from sst.ui import KeyCap  # noqa: E402
 
 
@@ -28,6 +30,16 @@ def qt():
 
 def _labels(widget) -> str:
     return " | ".join(label.text() for label in widget.findChildren(QLabel))
+
+
+def _shown(widget) -> str:
+    """The labels shown, not those of a list just filled again (hidden until Qt deletes them)."""
+    return " | ".join(label.text() for label in widget.findChildren(QLabel) if label.isVisibleTo(widget))
+
+
+def _keys(widget) -> list[str]:
+    """The keys drawn as keys, as shown."""
+    return [cap.key_text for cap in widget.findChildren(KeyCap) if cap.isVisibleTo(widget)]
 
 
 def _button(widget, caption: str) -> QPushButton:
@@ -1162,31 +1174,77 @@ def test_ai_and_models_without_a_connection_offers_one():
     assert window.current_page() == "cleanup"
 
 
-def test_tools_switch_text_transform_and_translate_and_try_them():
+def test_text_transform_and_translate_are_sections_with_the_tools_switches():
     window, app = _window(gateway=GatewayConfig(provider="openai", api_key="sk"),
                           settings=Settings(welcomed=True, cleanup_model="gpt-4o-mini"))
-    window.show_page("tools")
-    page = window.pages["tools"]
-    assert page.transform_on.isChecked() and page.translate_on.isChecked() and page.connect_card.isHidden()
+    assert "tools" not in window.pages and "tools" not in dict(w.NAV)
+    window.nav["translate"].click()
+    page = window.pages["translate"]
+    assert window.current_page() == "translate" and page.translate_on.isChecked() and page.setup.isHidden()
     page.translate_on.setChecked(False)
-    assert app.settings.translate_shortcut == ""
+    assert app.settings.translate_shortcut == "" and page.steps.isHidden() and "Off" in page.switch_words.text()
     page.translate_on.setChecked(True)
-    assert app.settings.translate_shortcut == "ctrl+c+c"
+    assert app.settings.translate_shortcut == "ctrl+c+c" and not page.steps.isHidden()
+    window.nav["transform"].click()
+    page = window.pages["transform"]
+    assert window.current_page() == "transform" and page.transform_on.isChecked()
     page.transform_on.setChecked(False)
-    assert app.settings.transform_shortcut == "" and not app.settings.voice_commands
-    page.target.setCurrentText("Japanese")
-    assert app.settings.translate_to == "Japanese"
-    page.trial_tabs.buttons["concise"].click()
-    assert _wait_until(lambda: "database migration" in page.result.toPlainText())
-    page.trial_tabs.buttons["translate"].click()
-    assert _wait_until(lambda: "informe" in page.result.toPlainText())
+    assert app.settings.transform_shortcut == "" and not app.settings.voice_commands and page.steps.isHidden()
+    page.transform_on.setChecked(True)
+    assert (app.settings.transform_shortcut, app.settings.voice_commands) == ("double ctrl", True)
+    window.show_page("tools")  # a link to the old Tools section (another page, the tray menu) opens Text Transform
+    assert window.current_page() == "transform" and window.nav["transform"].isChecked()
 
 
-def test_tools_without_an_ai_connection_say_so():
-    window, _ = _window()
-    page = window.pages["tools"]
+def test_text_transform_says_how_to_use_it_with_the_users_own_keys_and_phrases():
+    window, app = _window(settings=Settings(welcomed=True, hotkey="menu", command_phrases={"concise": "trim it"},
+                                            transforms=["bullets", "concise"]))
+    window.show_page("transform")
+    page = window.pages["transform"]
+    steps = _shown(page.steps)
+    assert "and say “trim it”" in steps and "Or double-tap" in steps and "Bullet points" in steps
+    assert _keys(page.steps) == ["Menu", "Ctrl", "1", "2"]  # the menu: as it is numbered
+    app.apply_settings(dataclasses.replace(app.settings, voice_commands=False))
     page.refresh()
-    assert not page.connect_card.isHidden() and not page.trial_tabs.buttons["concise"].isEnabled()
+    assert "trim it" not in _shown(page.steps) and "Then double-tap" in _shown(page.steps)
+
+
+def test_text_transform_shows_examples_of_each_transform():
+    window, _ = _window()
+    page = window.pages["transform"]
+    page.refresh()
+    for key, transform in TRANSFORMS.items():
+        page.example_tabs.buttons[key].click()
+        shown = page.findChildren(w.Example)
+        assert len([e for e in shown if e.isVisibleTo(page)]) == len(w.TRANSFORM_EXAMPLES[key]) >= 2
+        assert page.example_words.text() == transform.description
+
+
+@pytest.mark.parametrize("key, before, after", [(key, before, after) for key, pairs in w.TRANSFORM_EXAMPLES.items()
+                                                for before, after in pairs])
+def test_every_text_transform_example_is_one_rflow_would_accept(key, before, after):
+    got = TransformGuard().validate(before, after, key)  # the real check: nothing invented, nothing lost
+    assert got.accepted, got.reasons
+
+
+def test_translate_says_how_to_use_it_and_shows_examples():
+    window, app = _window(settings=Settings(welcomed=True, translate_to="German", translate_second="English"))
+    window.show_page("translate")
+    page = window.pages["translate"]
+    steps = _shown(page.steps)
+    assert "shows it in German" in steps and "already in German goes into English" in steps
+    assert _keys(page.steps) == ["Ctrl", "C", "C", "C", "↵"]
+    assert len([e for e in page.findChildren(w.Example) if e.isVisibleTo(page)]) == len(w.TRANSLATE_EXAMPLES)
+    page.shortcut.setCurrentIndex(page.shortcut.findData("ctrl+alt+l"))
+    assert app.settings.translate_shortcut == "ctrl+alt+l" and "to translate it." in _shown(page.steps)
+
+
+def test_text_transform_and_translate_without_an_ai_connection_say_so():
+    window, _ = _window()
+    for key in ("transform", "translate"):
+        page = window.pages[key]
+        page.refresh()
+        assert not page.setup.isHidden() and "needs an AI connection" in page.model.text()
 
 
 def test_the_smallest_window_folds_the_sidebar_into_a_rail():
@@ -1242,7 +1300,7 @@ def _live_window(**settings):
 
 def test_live_translation_is_a_section_of_its_own_and_starts_and_stops_there():
     window, app = _live_window()
-    assert ("live", "Live translation") in w.NAV and not hasattr(window.pages["tools"], "live_card")
+    assert ("live", "Live translation") in w.NAV and "tools" not in window.pages
     window.show_page("live")
     page = window.pages["live"]
     assert page.state.text() == "Off" and page.start_button.text() == "Start" and page.connect_card.isHidden()
