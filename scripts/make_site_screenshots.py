@@ -132,7 +132,8 @@ def main() -> None:
     shot("app.png", "home")
     shot("app-light.png", "home", "light")
     shot("models.png", "models")
-    shot("tools.png", "tools")
+    shot("live.png", "live")
+    shot("transform.png", "transform")
     shot("words.png", "dictionary")
     app = preview()
     app.settings.welcomed = False
