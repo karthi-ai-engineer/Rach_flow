@@ -148,6 +148,10 @@ def tray_app(monkeypatch, tmp_path):
     saved, files = {}, {}  # files: each profile's settings by path, as if on disk
     monkeypatch.setattr(settings_module, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(sst_app.bench, "BENCH_DIR", tmp_path / "bench")
+    # quit() marks a clean exit in the log folder: never the real one, where a running Rflow keeps its marker
+    monkeypatch.setattr(sst_app, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(sst_app, "DEBUG_DIR", tmp_path / "debug")
+    monkeypatch.setattr(sst_app, "DATA_DIRS", (tmp_path / "roaming" / "sst", tmp_path / "local" / "sst"))  # Start over
     monkeypatch.setattr(Settings, "load", classmethod(lambda cls, path=None: files.get(path) or Settings(
         welcomed=path == tmp_path / "settings.json")))  # the first profile is set up already, a new one isn't
 
