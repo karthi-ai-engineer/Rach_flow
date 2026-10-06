@@ -67,7 +67,7 @@ from sst.commands import DEFAULT_PHRASES, UNDO, normalize, parse_phrases, phrase
 from sst.engines import DEFAULT_MODEL, SPEECH_MODELS, WHERE, usable
 from sst.engines.cloud import CLOUD, SPEECH
 from sst.engines.whisper import LANGUAGES
-from sst.gateway import PROVIDERS, GatewayConfig, Polisher
+from sst.gateway import PROVIDERS, SPEECH_SERVER, GatewayConfig, Polisher
 from sst.hotkey import parse_hotkey
 from sst.live.contracts import LANGUAGES as LIVE_LANGUAGES
 from sst.live.contracts import LiveConfig, language_name
@@ -1998,6 +1998,15 @@ def _set_status(lamp: Lamp, words: QLabel, message: str, state: str = "") -> Non
         lamp.set_state(state)
 
 
+def _heading(title: QWidget, status: QWidget) -> QHBoxLayout:
+    """A card's heading on the left (cut with … if it must be), its state on the right."""
+    line = QHBoxLayout()
+    line.setSpacing(12)
+    line.addWidget(title, 1)
+    line.addWidget(status, 0, Qt.AlignmentFlag.AlignVCenter)
+    return line
+
+
 class _ModelCard:
     """One speech model on this computer: what it is, its state, and the buttons that change it."""
 
@@ -2051,6 +2060,15 @@ class _ModelCard:
         self.choose.setEnabled(not loading)
         # Only a download can be removed (not Parakeet next to an older Rflow's program).
         self.remove.setVisible(bool(model.download) and model.download.installed() and key not in (chosen, in_use))
+
+
+def _form() -> QFormLayout:
+    form = QFormLayout()
+    form.setHorizontalSpacing(16)
+    form.setVerticalSpacing(10)
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    return form
 
 
 class _CloudCard:
@@ -2513,20 +2531,20 @@ class SpeechPage(Page):
 # ---------------------------------------------------------------- AI connection (the provider, key and models)
 
 def _model_box(hint: str) -> Choice:
-    box = Choice(editable=True)  # pick from the loaded list (typing filters it), or type any model name
+    box = fit_to_width(Choice(editable=True))  # pick from the loaded list (typing filters it), or type any model name
     box.lineEdit().setPlaceholderText(hint)
     return box
 
 
 class CleanupPage(Page):
-    """The AI connection: the provider, its key, the model and a backup model. The AI cleanup uses it, and so do Text
-    Transform and Translate."""
+    """The AI connection: the provider, its key (the one in Your API keys), the model and a backup model. The AI cleanup
+    uses it, and so do Text Transform and Translate."""
 
     def __init__(self, app, go_to=None):
         go_to = go_to or (lambda page: None)
         super().__init__("AI connection", "An AI model adds punctuation, removes filler words and spells your words "
-                                          "right. Your voice stays on this PC; only the finished text goes to the "
-                                          "provider.", back=back_button("AI & models", go_to, "models"))
+                                          "right. Only the finished text goes to the provider.",
+                         back=back_button("AI & models", go_to, "models"))
         self.app = app
         frame, layout = card(14, (20, 18, 20, 20))
         self.cleanup_on = Toggle("Clean up dictation")
@@ -2537,11 +2555,9 @@ class CleanupPage(Page):
         switch.layout().setContentsMargins(0, 0, 0, 4)
         layout.addWidget(switch)
         layout.addWidget(divider())
-        self.form = QFormLayout()
-        self.form.setHorizontalSpacing(16)
+        self.form = _form()
         self.form.setVerticalSpacing(12)
-        self.form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.provider = Choice()
+        self.provider = fit_to_width(Choice(), 16)
         for provider in PROVIDERS.values():
             self.provider.addItem(provider.name, provider.key)
         self.form.addRow(caption("Provider", "2", wrap=False), self.provider)
@@ -2554,8 +2570,11 @@ class CleanupPage(Page):
         key_row.setStretch(0, 1)
         self.form.addRow(caption("API key", "2", wrap=False), key_row)
         self.key_link = button("Get a key", self._open_key_page, link=True, size="sm", icon="external", icon_after=True)
-        self.key_note = caption("", "3", wrap=False)
-        self.key_row = row(self.key_link, self.key_note, stretch_at=2)
+        self.key_note = ElidedText("", "caption", "3")
+        self.key_row = QHBoxLayout()
+        self.key_row.setSpacing(8)
+        self.key_row.addWidget(self.key_link)
+        self.key_row.addWidget(self.key_note, 1)
         self.form.addRow("", self.key_row)
         self.model = _model_box("")
         self.test_button = button("Test", self._test, size="sm")
@@ -2570,9 +2589,12 @@ class CleanupPage(Page):
         self.bar = SaveBar(self._save, self.discard_changes)
         layout.addWidget(self.bar)
         self.add(frame)
-        self.add(row(label("This connection also powers Text Transform and Translate.", tone="2", wrap=False),
-                     button("Tools", lambda: go_to("tools"), link=True, size="sm", icon="chevron-right", icon_after=True),
-                     stretch_at=2))
+        tools = QHBoxLayout()
+        tools.setSpacing(8)
+        tools.addWidget(ElidedText("This connection also powers Text Transform and Translate.", "caption", "2"), 1)
+        tools.addWidget(button("Tools", lambda: go_to("tools"), link=True, size="sm", icon="chevron-right",
+                               icon_after=True))
+        self.add(tools)
         self.body.addStretch()
         self.discard_changes()  # the fields as saved
         self.provider.currentIndexChanged.connect(self._provider_changed)
@@ -2584,17 +2606,17 @@ class CleanupPage(Page):
         """The fields as saved: when the page is built, and Cancel."""
         settings, gateway = self.app.settings, self.app.gateway
         # The (address, key, model, backup model) of each provider left on this page, so switching back loses nothing.
-        # The others come from app.gateway, where the speech page may also have saved a key.
+        # The others come from app.gateway, where Your API keys and the speech page may also have saved a key.
         self._memory: dict[str, tuple[str, str, str, str]] = {}
         # Nothing chosen yet: start with the first provider in the list rather than an empty custom server.
-        self._provider = gateway.service.key if gateway.provider or gateway.base_url else next(iter(PROVIDERS))
+        self._provider = gateway.chosen or next(iter(PROVIDERS))
         self.provider.blockSignals(True)
         self.provider.setCurrentIndex(self.provider.findData(self._provider))
         self.provider.blockSignals(False)
         self.cleanup_on.blockSignals(True)
         self.cleanup_on.setChecked(settings.cleanup)
         self.cleanup_on.blockSignals(False)
-        self.gateway_url.setText(gateway.base_url)
+        self.gateway_url.setText(gateway.base_url if gateway.chosen else self._fresh(self._provider)[0])
         self.api_key.show_saved(gateway.key_for(self._provider))
         for box, value in ((self.model, settings.cleanup_model), (self.fallback, settings.cleanup_fallback)):
             box.clear()
@@ -2630,11 +2652,10 @@ class CleanupPage(Page):
         p = PROVIDERS[self._provider]
         self.form.setRowVisible(self.gateway_url, p.own_server)
         self.gateway_url.setPlaceholderText(p.url or "e.g. http://localhost:8000/v1, or your company's AI gateway")
-        self.api_key.setPlaceholderText("Encrypted on this computer" if p.needs_key
-                                        else "Only if your server needs one (encrypted on this computer)")
+        self.api_key.setPlaceholderText("Paste your key" if p.needs_key else "Only if your server needs one")
         self.form.setRowVisible(self.key_row, bool(p.key_page))
         self.key_link.setVisible(bool(p.key_page))
-        self.key_note.setText(f"from {p.name}" if p.key_page else "")
+        self.key_note.setText(f"from {p.name}, kept in Your API keys" if p.key_page else "")
         self.model.lineEdit().setPlaceholderText(p.hint or "choose after Load models, or type a model name")
 
     def _provider_changed(self) -> None:
@@ -2666,7 +2687,7 @@ class CleanupPage(Page):
             return
         saved = self.app.gateway.key_for(self._provider)
         if not self.api_key.edited() and saved != self.api_key.saved:
-            self.api_key.show_saved(saved)  # changed on the speech page; a key being typed is left alone
+            self.api_key.show_saved(saved)  # changed in Your API keys or on the speech page; a key being typed stays
         if clean:
             self._saved = self._fields()  # a key saved elsewhere isn't a change made here
         self._show_state()
@@ -2682,6 +2703,13 @@ class CleanupPage(Page):
 
     def _save(self) -> None:
         on, model, fallback, gateway = self.result()
+        chosen = self.app.gateway.chosen
+        if not model and chosen and self._provider != chosen and self.app.settings.cleanup_model:
+            # The user testing's M-04: switching the provider only to save its key left the cleanup with no model.
+            self.test_result.setText(f"Choose a {provider_name(self._provider)} model first (Load models), or Cancel "
+                                     f"to keep {provider_name(chosen)}. To only add a key, use Your API keys on AI & "
+                                     "models: the cleanup stays as it is.")
+            return
         self.app.save_cleanup(on, model, fallback, gateway)
         self.api_key.show_saved(gateway.api_key)
         self._saved = self._fields()
@@ -2731,38 +2759,341 @@ class CleanupPage(Page):
         run_in_background(self, lambda: Polisher(gateway, model, words).check(), done)
 
 
-# ---------------------------------------------------------------- AI & models (the overview)
+# ---------------------------------------------------------------- Your API keys (the top of AI & models)
 
 def provider_name(key: str) -> str:
     return PROVIDERS[key].name.split(" (")[0] if key in PROVIDERS else key
 
 
+KEY_PROVIDERS = [key for key, p in PROVIDERS.items() if p.needs_key]  # a key each: OpenAI, Anthropic, Gemini, Groq
+SERVERS = ("vllm", SPEECH_SERVER)  # your own server: AI cleanup's and the speech model's (mostly the same one)
+
+
+def _uses(app, name: str) -> list[str]:
+    """What uses a provider's key (or a server) now: AI cleanup, speech, live translation."""
+    s = app.settings
+    uses = []
+    if name == app.gateway.chosen and s.cleanup_model:  # "vllm": AI cleanup's own server
+        uses.append("AI cleanup")
+    if s.speech_model == ("server" if name == SPEECH_SERVER else name):
+        uses.append("speech")
+    if name == "gemini":
+        uses.append("live translation")  # Gemini Live Translate, whenever it's started
+    return uses
+
+
+def _and(words: list[str]) -> str:
+    return ", ".join(words[:-1]) + " and " + words[-1] if len(words) > 1 else "".join(words)
+
+
+class _KeyRow(QWidget):
+    """One line of Your API keys: the provider, what uses its key, the key masked (your own server: its address), and
+    Edit. Edit opens the key (Show, Paste), Get a key, Save, Cancel and Remove beneath it."""
+
+    def __init__(self, keys, name: str):
+        super().__init__()
+        self.keys, self.app, self.name = keys, keys.app, name
+        self.server = name in SERVERS
+        self.names: tuple[str, ...] = (name,)  # what Save changes: your own server may be AI cleanup's and speech's
+        self.saved = ("", "")  # (address, key) as saved
+        self.used: list[str] = []
+        p = PROVIDERS.get(name)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 10, 0, 10)
+        layout.setSpacing(10)
+        line = QHBoxLayout()
+        line.setSpacing(16)
+        words = QVBoxLayout()
+        words.setSpacing(2)
+        self.title = ElidedText("Your own server" if self.server else provider_name(name), "rowtitle", None)
+        self.uses = ElidedText("", "caption", "3")
+        words.addWidget(self.title)
+        words.addWidget(self.uses)
+        line.addLayout(words, 3)
+        self.value = ElidedText("", None, "2")
+        self.value.setFont(font(13, 500, mono=True))
+        line.addWidget(self.value, 2)
+        self.edit = button("Edit", lambda _=False: self.open(), size="sm", icon="edit")
+        self.edit.setAccessibleName(f"Edit {self.title.text()}")
+        line.addWidget(self.edit, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(line)
+
+        self.editor = QWidget()
+        form = QVBoxLayout(self.editor)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(8)
+        self.address = QLineEdit()
+        self.address.setPlaceholderText("Your server's address, e.g. http://localhost:8000/v1")
+        field(self.address)
+        self.address.setVisible(self.server)
+        form.addWidget(self.address)
+        self.key = KeyField("", "Your server's key, only if it needs one" if self.server else "Paste your key")
+        self.get_key = button("Get a free key" if name == "gemini" else "Get a key",
+                              lambda _=False: QDesktopServices.openUrl(QUrl(p.key_page)), link=True, size="sm",
+                              icon="external", icon_after=True)
+        self.get_key.setVisible(bool(p and p.key_page) and not self.server)
+        key_line = row(self.key, self.get_key)
+        key_line.setStretch(0, 1)
+        form.addLayout(key_line)
+        self.note = caption("", "3")
+        form.addWidget(self.note)
+        self.bar = SaveBar(self.save, self.close_editor)
+        self.remove = button("Remove", lambda _=False: self.remove_key(), kind="danger", size="sm", icon="trash")
+        self.bar.layout().addWidget(self.remove)
+        form.addWidget(self.bar)
+        layout.addWidget(self.editor)
+        self.editor.hide()
+        for changed in (self.address.textChanged, self.key.textChanged):
+            changed.connect(lambda *_: self._show_state())
+
+    @property
+    def editing(self) -> bool:
+        return not self.editor.isHidden()
+
+    def label(self) -> str:
+        return "your own server" if self.server else f"your {provider_name(self.name)} key"
+
+    def fields(self) -> tuple[str, str]:
+        return (self.address.text().strip() if self.server else ""), self.key.text().strip()
+
+    def edited(self) -> bool:
+        return self.editing and self.fields() != self.saved
+
+    def show_saved(self, saved: tuple[str, str], names: tuple[str, ...], used: list[str], title: str) -> None:
+        """What is saved now (it may have changed on another page); a line being edited keeps what is typed."""
+        self.names, self.used = names, used
+        self.title.setText(title)
+        self.uses.setText(f"Used for {_and(used)}" if used else "Not used yet")
+        address, key = saved
+        self.value.setText(" · ".join(x for x in (address, _masked(key)) if x))
+        if not self.editing:
+            self.saved = saved
+        self.setVisible(any(saved) or self.editing)
+
+    def open(self) -> None:
+        """Edit (or Add a key): the key field, Get a key, Save, Cancel, and Remove when there is one to remove."""
+        if not self.editing:
+            self.address.setText(self.saved[0])
+            self.key.show_saved(self.saved[1])
+        self.editor.show()
+        self.edit.hide()
+        self.remove.setVisible(any(self.saved))
+        self.note.setText(self.keys.stays(self))
+        self.show()
+        if self.server and not self.saved[0]:
+            self.address.setFocus()
+        else:
+            self.key.start_editing()
+            self.key.field.setFocus()
+        self._show_state()
+        self.keys.changed()
+
+    def close_editor(self) -> None:
+        """Cancel, or after Save: back to the line as saved."""
+        self.editor.hide()
+        self.edit.show()
+        self.key.show_saved(self.saved[1])
+        self.address.setText(self.saved[0])
+        self.bar.show_state(False)
+        self.setVisible(any(self.saved))
+        self.keys.changed()
+
+    def _show_state(self) -> None:
+        edited = self.edited()
+        self.bar.show_state(edited, edited and bool(self.fields()[0] if self.server else self.fields()[1]))
+        self.bar.cancel.setVisible(self.editing)  # also with nothing typed: a line opened by mistake closes again
+
+    def save(self) -> None:
+        address, key = self.fields()
+        if self.server:
+            self.app.save_server(address, key, self.names)
+        else:
+            self.app.save_key(self.name, key)
+        added = not any(self.saved)
+        self.saved = (address, key)
+        self.close_editor()
+        what = self.label()
+        self.keys.saved(f"{what[0].upper()}{what[1:]}: {'added' if added else 'saved'}. {self.keys.stays(self)}")
+
+    def remove_key(self) -> None:
+        what = self.label()
+        question = f"Remove {what}?"
+        if self.used:
+            after = {"AI cleanup": "AI cleanup stops until it has one again",
+                     "speech": "speech goes back to Parakeet on this PC",
+                     "live translation": "live translation can't start without it"}
+            question += f"\n\nIt's used for {_and(self.used)}: " + _and([after[use] for use in self.used]) + "."
+        if not self.keys.page.confirm(question):
+            return
+        if self.server:
+            self.app.save_server("", "", self.names)
+        else:
+            self.app.save_key(self.name, "")
+        self.saved = ("", "")
+        self.close_editor()
+        self.keys.saved(f"{what[0].upper()}{what[1:]}: removed.")
+
+
+class _KeysCard:
+    """Your API keys, at the top of AI & models: a line for each provider that has a key (OpenAI, Anthropic, Google
+    Gemini, Groq) and for your own server, masked, each with Edit; "Add a key" for the others. Speech, AI cleanup and
+    live translation all read their keys from here, and saving one never changes which provider or model they use (the
+    user testing's M-04: a Gemini key added for live translation switched the cleanup to Gemini, with no model)."""
+
+    def __init__(self, page, app):
+        self.page, self.app = page, app
+        self.frame, layout = card(4, (20, 18, 20, 16))
+        layout.addWidget(label("Your API keys", "heading", wrap=False))
+        layout.addWidget(caption("Encrypted on this PC. Speech, AI cleanup and live translation use them; adding or "
+                                 "changing a key changes nothing else.", "2"))
+        layout.addSpacing(4)
+        self.rows: dict[str, _KeyRow] = {}
+        for name in (*KEY_PROVIDERS, *SERVERS):
+            self.rows[name] = _KeyRow(self, name)
+            layout.addWidget(self.rows[name])
+        self.empty = caption("No keys yet. A provider's key lets Rflow use its models: for AI cleanup, speech in the "
+                             "cloud, or live translation.", "3")
+        layout.addWidget(self.empty)
+        self.adding = QWidget()
+        flow = FlowLayout(8)
+        self.adding.setLayout(flow)
+        add_label = caption("Add a key", "2", wrap=False)
+        add_label.setFixedHeight(28)
+        flow.addWidget(add_label)
+        self.add_buttons: dict[str, Button] = {}
+        for name in (*KEY_PROVIDERS, SERVERS[0]):
+            title = "Your own server" if name in SERVERS else provider_name(name)
+            self.add_buttons[name] = button(title, lambda _=False, n=name: self.rows[n].open(), kind="chip", size="sm",
+                                            icon="plus")
+            self.add_buttons[name].setAccessibleName(f"Add {title}")
+            flow.addWidget(self.add_buttons[name])
+        layout.addSpacing(6)
+        layout.addWidget(self.adding)
+        self.state = caption("", "ok")
+        self.state.hide()  # after a save: what was saved, and what stayed as it was
+        layout.addWidget(self.state)
+        self.refresh()
+
+    def refresh(self) -> None:
+        app = self.app
+        gateway = app.gateway
+        for name in KEY_PROVIDERS:
+            self.rows[name].show_saved(("", gateway.key_for(name)), (name,), _uses(app, name), provider_name(name))
+        cleanup, speech = gateway.entries().get(SERVERS[0], ("", "")), gateway.speech_server()
+        both = any(cleanup) and any(speech) and cleanup != speech  # two servers: a line each, named by what it's for
+        if any(cleanup) and cleanup == speech:  # one server for both: one line, and Save changes both
+            names, used = SERVERS, _uses(app, SERVERS[0]) + _uses(app, SERVERS[1])
+            self.rows[SERVERS[0]].show_saved(cleanup, names, used, "Your own server")
+            self.rows[SERVERS[1]].show_saved(("", ""), (SERVERS[1],), [], "Your own server")
+        else:
+            self.rows[SERVERS[0]].show_saved(cleanup, (SERVERS[0],), _uses(app, SERVERS[0]),
+                                             "Your server for AI cleanup" if both else "Your own server")
+            self.rows[SERVERS[1]].show_saved(speech, (SERVERS[1],), _uses(app, SERVERS[1]),
+                                             "Your server for speech" if both else "Your own server")
+        self.changed()
+
+    def changed(self) -> None:
+        """Which lines and "Add a key" buttons show."""
+        for name, add in self.add_buttons.items():
+            shown = self.rows[name].isVisibleTo(self.frame) or (name in SERVERS and any(
+                self.rows[server].isVisibleTo(self.frame) for server in SERVERS))
+            add.setVisible(not shown)
+        self.empty.setVisible(not any(row_.isVisibleTo(self.frame) for row_ in self.rows.values()))
+        self.adding.setVisible(any(not add.isHidden() for add in self.add_buttons.values()))
+        self.adding.updateGeometry()
+
+    def stays(self, row_: _KeyRow) -> str:
+        """What a key saved on this line leaves as it is: the cleanup's provider, and the speech model."""
+        s, gateway = self.app.settings, self.app.gateway
+        kept = []
+        if gateway.chosen and s.cleanup_model and gateway.chosen not in row_.names:
+            kept.append(f"AI cleanup keeps {provider_name(gateway.chosen)}")
+        speech = SPEECH_MODELS.get(self.app.speech_in_use())
+        if speech is not None and speech.key not in (*row_.names, "server" if SPEECH_SERVER in row_.names else ""):
+            kept.append(f"speech keeps {speech.name}")
+        if row_.used:
+            return f"Used for {_and(row_.used)} from now on" + (f"; {_and(kept)}." if kept else ".")
+        return f"Nothing else changes: {_and(kept)}." if kept else "Nothing else changes."
+
+    def saved(self, message: str) -> None:
+        self.page.refresh()
+        self.state.setText(message)
+        self.state.show()
+
+    def unsaved(self) -> bool:
+        return any(row_.edited() for row_ in self.rows.values())
+
+    def discard(self) -> None:
+        for row_ in self.rows.values():
+            if row_.editing:
+                row_.close_editor()
+
+
+# ---------------------------------------------------------------- AI & models (the overview)
+
+PAIR_WIDTH = 760  # a page narrower than this shows How Rflow hears you above the AI connection, not beside it
+
+
 class ModelsPage(Page):
-    """How Rflow hears you and the AI connection side by side, the microphone, and the cleanup switch. Change leads
-    one level down (SpeechPage, CleanupPage)."""
+    """AI & models: Setups (to come), Your API keys, How Rflow hears you and the AI connection side by side, the
+    microphone, and the cleanup switch. Change leads one level down (SpeechPage, CleanupPage)."""
 
     def __init__(self, app, go_to):
-        super().__init__("AI & models", "How Rflow hears you, and the AI that polishes what you say.")
+        super().__init__("AI & models", "How Rflow hears you, the AI that polishes what you say, and the keys they use.")
         self.app, self.go_to = app, go_to
-        pair = QHBoxLayout()
-        pair.setSpacing(24)
+        # Setups, first on the page: ready-made pairs of a speech model and an AI (Recommended, Fastest, Multilingual,
+        # Local, Custom) go into self.setups_layout. A later step adds them; until then it takes no room.
+        self.setups = QWidget()
+        self.setups_layout = QVBoxLayout(self.setups)
+        self.setups_layout.setContentsMargins(0, 0, 0, 0)
+        self.setups_layout.setSpacing(16)
+        self.setups.hide()
+        self.add(self.setups)
 
+        self.keys = _KeysCard(self, app)
+        self.add(self.keys.frame)
+
+        self.pair = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.pair.setSpacing(24)
         self.speech_card, column = card(14, (20, 20, 20, 20))
         self.speech_status, self.speech_lamp, self.speech_state = lamp_row("ok", "In use", stretch=False)
-        head = QHBoxLayout()
-        head.addWidget(label("How Rflow hears you", "heading", wrap=False))
-        head.addStretch()
-        head.addWidget(self.speech_status)
-        column.addLayout(head)
-        self.speech_name = label("", "rowtitle", wrap=False)
-        self.speech_detail = caption("", "2", wrap=False)
-        names = QVBoxLayout()
-        names.setSpacing(2)
-        names.addWidget(self.speech_name)
-        names.addWidget(self.speech_detail)
-        column.addLayout(row(names, button("Change", lambda: go_to("speech"), size="sm"), stretch_at=1, spacing=12))
-        column.addWidget(divider())
-        column.addWidget(caption("Microphone", "2", wrap=False))
+        column.addLayout(_heading(ElidedText("How Rflow hears you", "heading", None), self.speech_status))
+        self.speech_name = ElidedText("", "rowtitle", None)
+        self.speech_detail = ElidedText("", "caption", "2")
+        self.speech_change = button("Change", lambda: go_to("speech"), size="sm")
+        column.addLayout(self._named(self.speech_name, self.speech_detail, self.speech_change))
+        column.addStretch()
+        self.pair.addWidget(self.speech_card, 1)
+
+        self.ai_card, column = card(14, (20, 20, 20, 20))
+        self.ai_status, self.ai_lamp, self.ai_state = lamp_row("ok", "Connected", stretch=False)
+        column.addLayout(_heading(ElidedText("AI connection", "heading", None), self.ai_status))
+        self.ai_name = ElidedText("", "rowtitle", None)
+        self.ai_model = ElidedText("", None, "2")
+        self.ai_change = button("Change", lambda: go_to("cleanup"), size="sm")
+        column.addLayout(self._named(self.ai_name, self.ai_model, self.ai_change))
+        self.ai_divider = divider()
+        column.addWidget(self.ai_divider)
+        self.key_line = ElidedText("", "caption", "2")
+        self.test_button = button("Test", self._test, size="sm")
+        self.test_row = QWidget()
+        test_line = QHBoxLayout(self.test_row)
+        test_line.setContentsMargins(0, 0, 0, 0)
+        test_line.setSpacing(12)
+        test_line.addWidget(self.key_line, 1)
+        test_line.addWidget(self.test_button)
+        column.addWidget(self.test_row)
+        self.test_note = caption("", "3")
+        self.test_note.hide()
+        column.addWidget(self.test_note)
+        column.addStretch()
+        self.pair.addWidget(self.ai_card, 1)
+        self.add(self.pair)
+
+        self.mic_card, column = card(10, (20, 18, 20, 20))
+        column.addWidget(label("Microphone", "heading", wrap=False))
+        column.addWidget(caption("The microphone Rflow listens to. Say something: the bars beside it light up.", "2"))
+        column.addSpacing(2)
         self.microphone = MicrophoneBox(app.settings.microphone, app.microphones(), app.default_microphone(),
                                         source=lambda: (app.microphones(), app.default_microphone()))
         self.microphone.changed.connect(self._microphone_chosen)
@@ -2772,46 +3103,7 @@ class ModelsPage(Page):
                                     "phone), so Rflow gets more words wrong, and the headset plays sound in call "
                                     "quality while it's open. The laptop's own microphone is usually clearer.", "warn")
         column.addWidget(self.call_warning)
-        column.addStretch()
-        pair.addWidget(self.speech_card, 1)
-
-        self.ai_card, column = card(14, (20, 20, 20, 20))
-        self.ai_status, self.ai_lamp, self.ai_state = lamp_row("ok", "Connected", stretch=False)
-        head = QHBoxLayout()
-        head.addWidget(label("AI connection", "heading", wrap=False))
-        head.addStretch()
-        head.addWidget(self.ai_status)
-        column.addLayout(head)
-        self.ai_name = label("", "rowtitle", wrap=False)
-        self.ai_model = QLabel()
-        self.ai_model.setFont(font(12, 500, mono=True))
-        self.ai_model.setProperty("tone", "2")
-        names = QVBoxLayout()
-        names.setSpacing(2)
-        names.addWidget(self.ai_name)
-        names.addWidget(self.ai_model)
-        self.ai_change = button("Change", lambda: go_to("cleanup"), size="sm")
-        column.addLayout(row(names, self.ai_change, stretch_at=1, spacing=12))
-        column.addWidget(divider())
-        self.key_caption = caption("API key", "2", wrap=False)
-        column.addWidget(self.key_caption)
-        self.key_view = bare(QLineEdit())
-        self.key_view.setReadOnly(True)
-        self.key_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.key_view.setFont(font(13, 500, mono=True, spacing=0.06))
-        self.key_box = Card("field", 14)
-        box = QHBoxLayout(self.key_box)
-        box.setContentsMargins(12, 0, 12, 0)
-        box.addWidget(self.key_view)
-        self.key_box.setFixedHeight(40)
-        self.test_button = button("Test", self._test, size="sm")
-        column.addLayout(row(self.key_box, self.test_button, spacing=12))
-        self.test_note = caption("", "3")
-        self.test_note.hide()
-        column.addWidget(self.test_note)
-        column.addStretch()
-        pair.addWidget(self.ai_card, 1)
-        self.add(pair)
+        self.add(self.mic_card)
 
         self.cleanup_card, column = card(0, (20, 4, 20, 4))
         self.cleanup = Toggle("Clean up dictation")
@@ -2824,17 +3116,16 @@ class ModelsPage(Page):
         powers = QHBoxLayout()
         powers.setContentsMargins(0, 12, 0, 12)
         powers.setSpacing(12)
-        sparkle = QLabel()
-        sparkle.setPixmap(theme.icon_pixmap("tools", tok("violet").name(), 16, 1.0))
-        powers.addWidget(sparkle)
+        self.sparkle = QLabel()
+        powers.addWidget(self.sparkle)
         powers.addWidget(caption("This connection also powers Text Transform and Translate.", "2"), 1)
         powers.addWidget(button("Tools", lambda: go_to("tools"), link=True, size="sm", icon="chevron-right",
                                 icon_after=True))
         column.addLayout(powers)
         self.add(self.cleanup_card)
 
-        self.advanced = advanced_row("Advanced", "Every speech model, your own server, Scan this PC, the backup AI "
-                                                 "model, the Reading test", self._toggle_advanced)
+        self.advanced = advanced_row("Advanced", "Every speech model, the backup AI model, the Reading test",
+                                     self._toggle_advanced)
         self.add(self.advanced)
         self.advanced_card, column = card(0, (20, 4, 20, 4))
         for i, (title, words, page) in enumerate([
@@ -2849,6 +3140,27 @@ class ModelsPage(Page):
         self.add(self.advanced_card)
         self.body.addStretch()
         self._show_call_warning()
+
+    @staticmethod
+    def _named(name: QLabel, detail: QLabel, change: QPushButton) -> QHBoxLayout:
+        """A card's name and what it is, cut with … when narrow, and its Change button."""
+        words = QVBoxLayout()
+        words.setSpacing(2)
+        words.addWidget(name)
+        words.addWidget(detail)
+        line = QHBoxLayout()
+        line.setSpacing(12)
+        line.addLayout(words, 1)
+        line.addWidget(change, 0, Qt.AlignmentFlag.AlignVCenter)
+        return line
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        side_by_side = self.viewport().width() >= PAIR_WIDTH
+        direction = QBoxLayout.Direction.LeftToRight if side_by_side else QBoxLayout.Direction.TopToBottom
+        if self.pair.direction() != direction:
+            self.pair.setDirection(direction)
+            self.pair.setSpacing(24 if side_by_side else self.body.spacing())
 
     def _toggle_advanced(self) -> None:
         open_ = self.advanced_card.isHidden()
@@ -2868,9 +3180,24 @@ class ModelsPage(Page):
         if on != s.cleanup:
             self.app.save_cleanup(on, s.cleanup_model, s.cleanup_fallback, self.app.gateway)
 
+    def add_key(self, provider: str) -> None:
+        """Open Your API keys at a provider's key, e.g. for live translation's "Add a Gemini key"."""
+        self.keys.rows[provider].open()
+        self.ensureWidgetVisible(self.keys.rows[provider])
+
+    def unsaved(self) -> bool:
+        return self.keys.unsaved()
+
+    def discard_changes(self) -> None:
+        self.keys.discard()
+
+    def confirm(self, question: str) -> bool:
+        return QMessageBox.question(self, APP_NAME, question) == QMessageBox.StandardButton.Yes
+
     def refresh(self) -> None:
         app = self.app
         s = app.settings
+        self.keys.refresh()
         model = SPEECH_MODELS.get(app.speech_in_use())
         loading, downloading = app.loading_speech, app.downloading
         fetching = bool(downloading) and downloading[0] == DEFAULT_MODEL and model is None
@@ -2906,9 +3233,10 @@ class ModelsPage(Page):
         gateway = app.gateway
         connected = bool(gateway.address and s.cleanup_model)
         key = gateway.service.key
+        p = PROVIDERS[key]
         self.ai_name.setText(provider_name(key) if connected or gateway.provider else "Not connected")
-        self.ai_model.setText(s.cleanup_model if connected else "Add punctuation and drop filler words")
         self.ai_model.setFont(font(12, 500, mono=connected))
+        self.ai_model.setText(s.cleanup_model if connected else "Add punctuation and drop filler words")
         self.ai_change.setText("Change" if connected else "Connect")
         self.ai_change.set_kind("key" if connected else "primary")
         if connected:
@@ -2917,11 +3245,14 @@ class ModelsPage(Page):
         else:
             self.ai_lamp.set_state("off")
             self.ai_state.setText("Not connected")
-        secret = gateway.key_for(key)
-        self.key_view.setText(_masked(secret) if secret else ("No key needed" if not PROVIDERS[key].needs_key
-                                                               else "No key yet"))
-        for widget in (self.key_caption, self.key_box, self.test_button):
-            widget.setVisible(connected or bool(secret))
+        if p.own_server:
+            self.key_line.setText(f"At {gateway.address}")
+        elif gateway.key_for(key):
+            self.key_line.setText(f"With your {provider_name(key)} key, from Your API keys")
+        else:
+            self.key_line.setText(f"No {provider_name(key)} key yet: add one in Your API keys")
+        for widget in (self.ai_divider, self.test_row):
+            widget.setVisible(connected)
         self.test_button.setEnabled(connected)
         self.cleanup.blockSignals(True)
         self.cleanup.setChecked(s.cleanup and connected)
@@ -2929,6 +3260,7 @@ class ModelsPage(Page):
         self.cleanup.setEnabled(connected)
         self.cleanup_caption.setText("Punctuation, no filler words, your names spelled right. Only text is sent, never "
                                      "your voice." if connected else "Connect an AI first (AI connection).")
+        self.sparkle.setPixmap(theme.icon_pixmap("tools", tok("violet").name(), 16, self.devicePixelRatioF()))
 
     def _verdict(self, key: str) -> str:
         scan = self.app.last_scan
@@ -4859,6 +5191,15 @@ class PreviewApp:
     def server_models(self, address: str, api_key: str) -> list[str]:
         self.calls.append(("server_models", address))
         return ["whisper-1", "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8"]
+
+    def save_key(self, provider: str, key: str) -> None:
+        self.gateway = self.gateway.with_key(provider, key)
+        self.calls.append(("save_key", provider))  # never the key itself
+
+    def save_server(self, address: str, key: str, names: tuple[str, ...] = ("vllm",)) -> None:
+        for name in names:
+            self.gateway = self.gateway.with_entry(name, address, key)
+        self.calls.append(("save_server", address, names))
 
     def ai_models(self, gateway: GatewayConfig) -> list[str]:
         self.calls.append(("ai_models", gateway.service.key))

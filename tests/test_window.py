@@ -1135,13 +1135,103 @@ def test_ai_and_models_shows_both_halves_and_switches_the_cleanup():
     page = window.pages["models"]
     page.refresh()
     assert page.speech_name.text() == "NVIDIA Parakeet" and page.ai_name.text() == "Google Gemini"
-    assert page.ai_model.text() == "gemini-3.5-flash-lite" and page.key_view.text().endswith("9f3c")
+    assert page.ai_model.text() == "gemini-3.5-flash-lite" and "Google Gemini key" in page.key_line.text()
+    assert page.keys.rows["gemini"].value.text().endswith("9f3c")  # the key itself is in Your API keys, masked
     assert page.cleanup.isChecked() and page.ai_state.text() == "Connected"
     page.cleanup.setChecked(False)
     assert app.calls[-1][:2] == ("save_cleanup", False) and not app.settings.cleanup
     page.test_button.click()
     assert _wait_until(lambda: page.ai_state.text().startswith("Connected ·"))
     assert ("check_ai", "gemini", "gemini-3.5-flash-lite") in app.calls
+
+
+def test_a_key_added_on_ai_and_models_changes_nothing_else():
+    # The user testing's M-04: a Gemini key added for live translation switched AI cleanup to Gemini, with no model.
+    window, app = _window(gateway=GatewayConfig("", "sk-openai-key-0000", "openai"),
+                          settings=Settings(welcomed=True, cleanup=True, cleanup_model="gpt-4o-mini"))
+    window.show_page("models")
+    page = window.pages["models"]
+    keys = page.keys
+    openai, gemini = keys.rows["openai"], keys.rows["gemini"]
+    assert not openai.isHidden() and openai.value.text().endswith("0000") and "sk-openai" not in openai.value.text()
+    assert openai.uses.text() == "Used for AI cleanup" and keys.add_buttons["openai"].isHidden()
+    assert gemini.isHidden() and not keys.add_buttons["gemini"].isHidden() and app.live_problem()
+    keys.add_buttons["gemini"].click()
+    assert gemini.editing and not gemini.isHidden() and not gemini.bar.save.isEnabled()  # nothing typed yet
+    assert "AI cleanup keeps OpenAI" in gemini.note.text() and gemini.remove.isHidden()
+    gemini.key.setText("AIza-test-key-41ab")
+    assert gemini.bar.save.isEnabled() and page.unsaved()
+    gemini.bar.save.click()
+    assert ("save_key", "gemini") in app.calls and app.gateway.key_for("gemini") == "AIza-test-key-41ab"
+    assert (app.gateway.chosen, app.gateway.api_key, app.settings.cleanup_model) == ("openai", "sk-openai-key-0000",
+                                                                                     "gpt-4o-mini")
+    assert not gemini.editing and gemini.value.text().endswith("41ab") and keys.add_buttons["gemini"].isHidden()
+    assert gemini.uses.text() == "Used for live translation" and "AI cleanup keeps OpenAI" in keys.state.text()
+    assert not app.live_problem() and not page.unsaved()
+
+
+def test_a_key_is_changed_or_removed_in_your_api_keys():
+    window, app = _window(gateway=GatewayConfig("", "sk-openai-key-0000", "openai"),
+                          settings=Settings(welcomed=True, cleanup=True, cleanup_model="gpt-4o-mini"))
+    window.show_page("models")
+    page = window.pages["models"]
+    openai = page.keys.rows["openai"]
+    openai.edit.click()
+    assert openai.editing and openai.key.editing and not openai.remove.isHidden() and not openai.bar.save.isEnabled()
+    openai.key.setText("sk-typo")
+    asked = []
+    window.leave_unsaved = lambda title: asked.append(title) or False  # Stay
+    window.nav["home"].click()
+    assert asked == ["AI & models"] and window.current_page() == "models"
+    openai.bar.cancel.click()
+    assert not openai.editing and app.gateway.api_key == "sk-openai-key-0000" and not page.unsaved()
+    openai.edit.click()
+    openai.key.setText("sk-new-key-1111")
+    openai.bar.save.click()
+    assert app.gateway.api_key == "sk-new-key-1111" and openai.value.text().endswith("1111")
+    questions = []
+    page.confirm = lambda question: questions.append(question) or True
+    openai.edit.click()
+    openai.remove.click()
+    assert "AI cleanup stops" in questions[0] and app.gateway.key_for("openai") == ""
+    assert app.gateway.chosen == "openai" and openai.isHidden() and not page.keys.add_buttons["openai"].isHidden()
+    assert not page.keys.empty.isHidden()  # no keys at all now
+    page.add_key("anthropic")  # e.g. from live translation's "Add a Gemini key"
+    assert page.keys.rows["anthropic"].editing and not page.keys.rows["anthropic"].isHidden()
+
+
+def test_your_own_server_is_one_line_for_ai_cleanup_and_speech():
+    from sst.gateway import SPEECH_SERVER
+    gateway = GatewayConfig("http://gateway.example/v1", "gw-key", "vllm").with_entry(
+        SPEECH_SERVER, "http://gateway.example/v1", "gw-key")
+    window, app = _window(gateway=gateway, settings=Settings(welcomed=True, cleanup_model="m", speech_model="server",
+                                                             speech_server_model="whisper-1"))
+    page = window.pages["models"]
+    page.refresh()
+    server = page.keys.rows["vllm"]
+    assert not server.isHidden() and page.keys.rows[SPEECH_SERVER].isHidden() and page.keys.add_buttons["vllm"].isHidden()
+    assert server.value.text().startswith("http://gateway.example/v1") and "gw-key" not in server.value.text()
+    assert server.uses.text() == "Used for AI cleanup and speech"
+    server.edit.click()
+    server.address.setText("http://localhost:8000/v1")
+    server.bar.save.click()
+    assert ("save_server", "http://localhost:8000/v1", ("vllm", SPEECH_SERVER)) in app.calls
+    assert app.gateway.base_url == app.gateway.speech_server()[0] == "http://localhost:8000/v1"
+
+
+def test_switching_the_cleanup_s_provider_needs_a_model_first():
+    # M-04 on the AI connection page: choosing Gemini there only to save its key must not leave the cleanup without a model.
+    window, app = _window(gateway=GatewayConfig("", "sk-openai", "openai"),
+                          settings=Settings(welcomed=True, cleanup=True, cleanup_model="gpt-4o-mini"))
+    page = window.pages["cleanup"]
+    page.provider.setCurrentIndex(page.provider.findData("gemini"))
+    page.api_key.setText("AIza-live")
+    page.bar.save.click()
+    assert not any(call[0] == "save_cleanup" for call in app.calls) and "Your API keys" in page.test_result.text()
+    assert (app.gateway.chosen, app.settings.cleanup_model) == ("openai", "gpt-4o-mini")
+    page.model.setCurrentText("gemini-3.5-flash-lite")
+    page.bar.save.click()
+    assert app.gateway.chosen == "gemini" and app.settings.cleanup_model == "gemini-3.5-flash-lite"
 
 
 def test_a_long_microphone_name_is_cut_short_and_whole_in_its_tooltip():
@@ -1151,6 +1241,21 @@ def test_a_long_microphone_name_is_cut_short_and_whole_in_its_tooltip():
     assert box.minimumSizeHint().width() < 300 and box.combo.sizeHint().width() < 300  # not the name's width
     assert box.combo.currentText() == long and box.combo.toolTip() == long  # cut with … in the box, whole in its tooltip
     assert box.combo.itemData(box.combo.findData(long), Qt.ItemDataRole.ToolTipRole) == long
+
+
+def test_a_long_microphone_name_never_makes_ai_and_models_wider_than_the_window():
+    # The user testing's M-03: the owner's own laptop microphone made the page 1418 px wide in a 696 px view.
+    long = "Microphone Array (Intel® Smart Sound Technology for Digital Microphones)"
+    window, _ = _window(microphones=[long, "Headset (Buds)"], settings=Settings(welcomed=True, microphone=long))
+    window.resize(780, 540)
+    window.show_page("models")
+    page = window.pages["models"]
+    window.grab()  # lays the page out
+    assert page.widget().width() <= page.viewport().width()
+    box = page.microphone.combo
+    assert box.currentText() == long and box.toolTip() == long  # cut with … in the box, whole in its tooltip
+    assert box.itemData(box.findData(long), Qt.ItemDataRole.ToolTipRole) == long
+    assert page.pair.direction() == w.QBoxLayout.Direction.TopToBottom  # too narrow for the two cards side by side
 
 
 def test_ai_and_models_without_a_connection_offers_one():
