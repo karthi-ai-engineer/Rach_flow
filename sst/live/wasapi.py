@@ -1,7 +1,8 @@
 """Sound in and out for live translation, through Core Audio (WASAPI, ctypes).
 
 In: what the laptop plays, or what its microphone hears, as the live models want it: 16 kHz mono 16-bit frames of
-100 ms.
+100 ms. What the laptop plays is captured as 32-bit float and brought up to a level the model hears (sst.live.level)
+before the 16-bit frames are made: turned far down, it would otherwise be lost in them.
 
     Capture.speakers()    everything the laptop plays except Rflow's own sound: Windows' process loopback, leaving out
                           this process, so the spoken translation isn't heard and translated again. Windows without it
@@ -9,15 +10,18 @@ In: what the laptop plays, or what its microphone hears, as the live models want
                           Rflow's voice is in it
     Capture.microphone()  the default communications microphone (the one Teams and Zoom use unless told otherwise)
     -> IAudioClient -> its format (usually 48 kHz float; process loopback is asked for 16 kHz mono and converts) ->
-    mono -> 16 kHz (a box filter, then interpolation; state kept across packets) -> 100 ms frames
+    mono -> 16 kHz (a box filter, then interpolation; state kept across packets) -> (the computer's sound: its level)
+    -> 100 ms frames
 
 Out: Player, the spoken translation through Windows' default output (16-bit mono at the voice's rate: Windows converts
 it). It also says whether that output is private (headphones, a headset), which a microphone can't hear.
 
 Windows sends no loopback packets at all while nothing plays, so silence is filled in to keep the stream's clock going
-(the model hears a pause, not a jump). When the default device changes (headphones plugged in) or goes away, capture and
-player open the new one. Its own small COM helpers, on purpose: live translation shares no code with dictation's
-microphone (sst.audio, sst.devices); shared mode lets both have it open.
+(the model hears a pause, not a jump); and when nothing at all has come for a while and Windows' output is muted, the
+capture says so (on PCs where Windows applies its volume before the loopback, muted means nothing reaches Rflow). When
+the default device changes (headphones plugged in) or goes away, capture and player open the new one. Its own small
+COM helpers, on purpose: live translation shares no code with dictation's microphone (sst.audio, sst.devices); shared
+mode lets both have it open.
 """
 import ctypes
 import logging
@@ -31,10 +35,14 @@ from ctypes import POINTER, Structure, byref, c_int, c_long, c_ulong, c_ushort, 
 import numpy as np
 
 from sst.live.contracts import FRAME_MS, RATE
+from sst.live.level import Leveler
 
 FRAME = RATE * FRAME_MS // 1000  # 1,600 samples
 SILENCE_AFTER = 0.15  # seconds without a packet: nothing is playing, so silence is added
 CHECK_DEVICE_EVERY = 2.0  # seconds between looks at which device is the default
+MUTED_AFTER = 3.0  # seconds without any sound from the computer before Windows' mute is looked at
+SOUND = 1e-7  # a sample above this (-140 dBFS) is sound, however quiet: float keeps it
+MUTED = "Windows' sound is muted, so live translation hears nothing. Unmute it: a low volume is fine."
 _BUFFER = 2_000_000  # 200 ms, in 100 ns units: WASAPI's buffer, read every 10 ms
 
 log = logging.getLogger(__name__)
@@ -134,6 +142,11 @@ class _WAVEFORMATEX(Structure):
         """16-bit mono at `rate`."""
         return cls(1, 1, rate, rate * 2, 2, 16, 0)
 
+    @classmethod
+    def float32(cls, rate: int) -> "_WAVEFORMATEX":
+        """32-bit float mono at `rate` (WAVE_FORMAT_IEEE_FLOAT)."""
+        return cls(3, 1, rate, rate * 4, 4, 32, 0)
+
 
 class _WAVEFORMATEXTENSIBLE(Structure):
     _pack_ = 1
@@ -161,6 +174,7 @@ _IID_ENUMERATOR = _GUID.of("A95664D2-9614-4F35-A746-DE8DB63617E6")
 _IID_AUDIO_CLIENT = _GUID.of("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2")
 _IID_CAPTURE_CLIENT = _GUID.of("C8ADBD64-E71E-48A0-A4DE-185C395CD317")
 _IID_RENDER_CLIENT = _GUID.of("F294ACFC-3146-4483-A7BF-ADDCA7C260E2")
+_IID_ENDPOINT_VOLUME = _GUID.of("5CDF2C82-841E-4546-9722-0CF74078229A")
 _IID_UNKNOWN = bytes(_GUID.of("00000000-0000-0000-C000-000000000046"))
 _IID_COMPLETION = bytes(_GUID.of("41D949AB-9862-444A-80F6-C261334DA5EB"))  # IActivateAudioInterfaceCompletionHandler
 _IID_AGILE = bytes(_GUID.of("94EA2B94-E9CC-49E0-C0FF-EE64CA8F5B90"))  # IAgileObject: Windows calls it from any thread
@@ -226,6 +240,24 @@ def _activate(device) -> c_void_p:
     _method(device, 3, POINTER(_GUID), wintypes.DWORD, c_void_p, POINTER(c_void_p))(
         byref(_IID_AUDIO_CLIENT), _CLSCTX_ALL, None, byref(client))  # IMMDevice::Activate
     return client
+
+
+def _output_muted(enumerator) -> bool:
+    """Windows' default output is muted or at zero (only read, never changed)."""
+    device, volume = c_void_p(), c_void_p()
+    try:
+        device = _default_device(enumerator, E_RENDER, E_CONSOLE)
+        _method(device, 3, POINTER(_GUID), wintypes.DWORD, c_void_p, POINTER(c_void_p))(
+            byref(_IID_ENDPOINT_VOLUME), _CLSCTX_ALL, None, byref(volume))  # IMMDevice::Activate
+        mute, level = wintypes.BOOL(), ctypes.c_float()
+        _method(volume, 15, POINTER(wintypes.BOOL))(byref(mute))  # GetMute
+        _method(volume, 9, POINTER(ctypes.c_float))(byref(level))  # GetMasterVolumeLevelScalar
+        return bool(mute.value) or level.value <= 0.0
+    except OSError:
+        return False
+    finally:
+        _release(volume)
+        _release(device)
 
 
 def _initialize(client, flags: int, fmt) -> None:
@@ -338,6 +370,10 @@ class _Capturing:
         except OSError:  # no such device at all for a moment
             return True
 
+    def muted(self) -> bool:
+        """Windows' default output is muted (or at zero)."""
+        return _output_muted(self.enumerator)
+
     def read(self) -> list[np.ndarray]:
         """The packets waiting now, as mono float at the device's rate (silent packets as zeros)."""
         out, size = [], wintypes.UINT()
@@ -406,24 +442,39 @@ class _Stream(_Capturing):
 
 class _ProcessLoopback(_Capturing):
     """Everything the laptop plays except this process's own sound (the spoken translation), already as 16 kHz mono
-    16-bit: Windows converts. Measured on the owner's laptop: another program's tone came through, Rflow's didn't."""
+    32-bit float (16-bit where Windows won't): Windows converts. Measured on the owner's laptop: another program's tone
+    came through, Rflow's didn't; float was accepted."""
 
     def __init__(self, rate: int = RATE):
-        self.rate, self.channels, self.bits, self.block = rate, 1, 16, 2
+        self.rate, self.channels = rate, 1
         self._prepare()
         try:
             self.enumerator = _enumerator()
             self.device_id = _default_id(self.enumerator, E_RENDER, E_CONSOLE)  # followed like the other streams
-            self.client, self._handler = _process_loopback(os.getpid())
             kernel32 = ctypes.windll.kernel32
             kernel32.CreateEventW.restype = c_void_p
             self.event = kernel32.CreateEventW(None, False, False, None)
-            _initialize(self.client, _LOOPBACK | _EVENT_CALLBACK, byref(_WAVEFORMATEX.pcm16(rate)))
+            for fmt in (_WAVEFORMATEX.float32(rate), _WAVEFORMATEX.pcm16(rate)):
+                self.client, self._handler = _process_loopback(os.getpid())
+                try:
+                    _initialize(self.client, _LOOPBACK | _EVENT_CALLBACK, byref(fmt))
+                    break
+                except OSError:
+                    if fmt.wFormatTag != 3:
+                        raise
+                    _release(self.client)  # float refused: a new client for 16-bit (a client initializes once)
+                    self.client = c_void_p()
+            self.bits, self.block, self.is_float = fmt.wBitsPerSample, fmt.nBlockAlign, fmt.wFormatTag == 3
             _method(self.client, 13, c_void_p)(c_void_p(self.event))  # SetEventHandle: it runs event-driven; we poll
             self._start()
         except Exception:
             self.close()
             raise
+
+
+def _muted(stream) -> bool:
+    muted = getattr(stream, "muted", None)  # a stream that can't tell (a fake) isn't muted
+    return bool(muted is not None and muted())
 
 
 def _speakers():
@@ -437,19 +488,21 @@ def _speakers():
 
 class Capture:
     """start(on_frame) calls on_frame(bytes) with each 100 ms frame, from its own thread: of what the laptop plays
-    (speakers()) or of what its microphone hears (microphone()). `hears_self`: Rflow's own voice can be in it."""
+    (speakers()) or of what its microphone hears (microphone()). `hears_self`: Rflow's own voice can be in it. `level`:
+    quiet sound is raised (the computer's). `on_problem(message)`, if set, hears why nothing can be captured (muted)."""
 
     def __init__(self, opener: Callable = _Stream, clock: Callable[[], float] = time.monotonic,
-                 what: str = "output device"):
-        self._opener, self._clock, self.what = opener, clock, what
+                 what: str = "output device", level: bool = False):
+        self._opener, self._clock, self.what, self.level = opener, clock, what, level
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.device_rate = 0  # the device's own rate, once opened (for the log)
         self.hears_self = False
+        self.on_problem: Callable[[str], None] | None = None
 
     @classmethod
     def speakers(cls) -> "Capture":
-        return cls(lambda: _speakers(), what="output device")
+        return cls(lambda: _speakers(), what="output device", level=True)
 
     @classmethod
     def microphone(cls) -> "Capture":
@@ -491,7 +544,8 @@ class Capture:
                 if first:
                     first = False
                     opened.set()
-                log.info("Live translation hears the %s (%d Hz, %d channels%s)", self.what, stream.rate, stream.channels,
+                log.info("Live translation hears the %s (%d Hz, %d channels, %d-bit%s%s)", self.what, stream.rate,
+                         stream.channels, stream.bits, " float" if stream.is_float else "",
                          "" if self.hears_self or self.what != "output device" else ", without Rflow's own sound")
                 try:
                     self._pump(stream, on_frame)
@@ -503,15 +557,21 @@ class Capture:
             ctypes.WinDLL("ole32").CoUninitialize()
 
     def _pump(self, stream, on_frame) -> None:
-        resample, frame = Resampler(stream.rate), Framer()
-        last_packet = last_fill = last_check = self._clock()
+        resample, frame, level = Resampler(stream.rate), Framer(), Leveler() if self.level else None
+        last_packet = last_fill = last_check = sound_at = self._clock()
+        told = False  # that Windows' output is muted, until sound comes again
         while not self._stop.is_set():
             now = self._clock()
             packets = stream.read()
             if packets:
                 last_packet = last_fill = now
-                for samples in frame(resample(np.concatenate(packets))):
-                    on_frame(samples)
+                samples = resample(np.concatenate(packets))
+                if level is not None:
+                    if len(samples) and float(np.max(np.abs(samples))) > SOUND:
+                        sound_at, told = now, False
+                    samples = level(samples)
+                for pcm in frame(samples):
+                    on_frame(pcm)
             elif now - last_packet >= SILENCE_AFTER and now - last_fill >= FRAME_MS / 1000:
                 last_fill = now  # nothing plays: Windows sends nothing, so silence keeps the clock going
                 on_frame(bytes(FRAME * 2))
@@ -520,6 +580,11 @@ class Capture:
                 if stream.default_changed():
                     log.info("Live translation: a new default %s", self.what)
                     return
+                if level is not None and not told and now - sound_at >= MUTED_AFTER and _muted(stream):
+                    told = True
+                    log.info("Live translation: nothing heard, and Windows' output is muted")
+                    if self.on_problem is not None:
+                        self.on_problem(MUTED)
             self._stop.wait(0.01)
 
 

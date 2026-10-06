@@ -684,9 +684,20 @@ def test_speaking_needs_the_voice_downloaded_first_then_speaks(tray_app, monkeyp
     app.set_live_speak(True)
     assert app.settings.live_speak and started == [True]
     monkeypatch.setattr(sst_app.Voice, "ready", lambda self, root=None: True)
-    speaker = app._live_speaker(LiveConfig(target="en", speak=True, speak_speed=1.3))
+    speaker = app._live_speaker(LiveConfig(target="en", speak=True, speak_speed=1.3, duck=0.25))
     assert isinstance(speaker, Speaker) and speaker.lanes == {SYSTEM} and speaker.speed == 1.3
+    assert speaker.ducker.depth == 0.25  # like an interpreter: the other apps lowered while it speaks
     assert app.live_voice_state() == ("ready", 0, "")
+
+
+def test_how_low_the_other_apps_go_while_it_speaks_is_saved_and_used_at_once(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    depths = []
+    monkeypatch.setattr(app.live, "set_duck", depths.append)
+    assert app.settings.live_duck == 0.3 and app.live_config().duck == 0.3
+    app.set_live_duck(0.6)
+    assert app.settings.live_duck == 0.6 and app.live_config().duck == 0.6 and depths == [0.6]
+    assert sst_app.Settings.load(app.profile.settings_file).live_duck == 0.6
 
 
 def test_the_voices_download_shows_its_progress_and_speaks_when_done(tray_app, monkeypatch):

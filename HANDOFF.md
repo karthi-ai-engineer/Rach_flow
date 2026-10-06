@@ -11,7 +11,12 @@ _Last updated: 2026-10-06_
 
 ## Start here (a new session, or the owner's other laptop)
 
-**Where things stand (2026-10-06):**
+**Where things stand (2026-10-07):**
+- **Rflow 2.4.0** (2026-10-07): live translation at any volume, and the voice speaks like an interpreter (phase 37,
+  issue #108): the computer's sound captured as 32-bit float and brought up to a normal level, so turning the sound
+  down no longer stops the translation (measured: an app at 0.03 % volume, nothing heard before, every word after);
+  while the voice speaks the other apps are lowered (a slider, 30 % by default) and come back after each sentence;
+  muted Windows sound is named on the bar. See **Live translation at any volume**.
 - **Rflow 2.3.0** (2026-10-06, the owner's "release the version on the site"): open source (MIT), live translation
   spoken aloud (phase 29), never lose work (phase 30) and **phase 31, the owner's UI review** (issue #81, built by
   five agents in parallel and merged part by part: #82-#88): ten sections, a big Start/Stop for live translation, all
@@ -1651,6 +1656,44 @@ the top of AI & models (not a sidebar entry); Formatting is a section of its own
 plain text in Your API keys (only keys are masked). **Open:** the owner said "the sound is gone" about Settings:
 ask whether the start/stop beep stopped. Not done: Home's own long microphone label (the other half of M-03).
 
+## Live translation at any volume (phase 37, the owner's report of 2026-10-07)
+
+- **The owner's report:** with the voice on, "if I lower the system's audio nothing is able to hear"; asked, they said
+  the translation itself stops, and chose interpreter style for the voice: the original lowered while it speaks,
+  back between sentences, how low set by a slider (issue #108).
+- **Measured first** (scratch scripts, not in git):
+  - Gemini isn't the limit: the same English clip (Windows' Zira voice) sent at falling levels was translated in full
+    at -20, -40, -50, -60 and -70 dBFS (speech RMS), and not at all at -80.
+  - Rflow's capture was: process loopback was asked for 16-bit. The playing app's own volume (a player's slider, the
+    volume mixer) lowers what loopback hears on every PC (here: 50/25/10/5/2 % arrived 4/7/13/21/30 dB lower; this
+    Surface's audio effects compress it). Windows' own volume doesn't reach the loopback on this Surface (read only:
+    -21 dB set, the capture as loud as ever), but on PCs whose driver applies it first, a low volume does the same.
+    End to end, an app at 0.03 % (another process playing the clip): before, frames at -81 dBFS and Gemini heard
+    nothing; after, -20 dBFS and all 48 words translated (at 0.3 % both worked, but before misheard "Osaka").
+  - Process loopback gives 32-bit float (16 kHz mono) when asked. Lowering another process's session volume works
+    from Rflow, and Rflow's own voice stays out of it.
+- **The pieces** (`sst/live/`):
+  - `wasapi.py`: `_ProcessLoopback` asks for float first (16-bit where refused); `Capture.speakers()` has `level=True`:
+    each packet goes through a `Leveler` before the 16-bit frames are made. With nothing heard for 3 s and Windows'
+    output muted (read only, `IAudioEndpointVolume`), `on_problem` says "Windows' sound is muted…" (the session shows
+    it on the bar like an engine's problem). The log names the format ("32-bit float").
+  - `level.py`: `Leveler`: the loudest 20 ms of the last 3 s heard below -20 dBFS is raised to it (up to +60 dB); at a
+    normal volume the sound is left exactly as it is; down at once, up 20 dB a second at most, a soft limit above 0.9.
+  - `ducking.py`: `Ducker(depth)`, started and stopped by the `Speaker`, watches `Speaker.speaking` every 20 ms: the
+    other apps playing on every active output (session volumes, `IAudioSessionManager2` / `ISimpleAudioVolume`;
+    Rflow's own process and system sounds left out) go to their own volume x depth in 0.15 s, and back 0.2 s after
+    `speaking` ends (itself 0.4 s after the audio) over 0.6 s. An app that starts during a sentence is found within
+    0.5 s; an app whose volume the user changes meanwhile keeps the user's. Windows remembers mixer volumes, so what's
+    lowered is written to `%LOCALAPPDATA%\sst\lowered-apps.json` first and `put_back_left()` (at Rflow's start, and
+    when a Ducker starts) puts it back after a crash; apps not running then are kept 7 days. Tried on this laptop on
+    a test tone's own process: 1.0 -> 0.25 while "speaking", back after, the record gone.
+- **The app:** Live translation → Speak the translation → "Other sound while it speaks": a slider (`ui.Slider`, new:
+  the switch's inset track, Iris fill, round knob) from 10 % to 100 % ("Unchanged"), 30 % by default, saved when let
+  go (`live_duck`), applied at once while it speaks (`LiveCaptions.set_duck`). `sst live --speak` uses it too.
+- **Owner to try:** a video, Computer into English, speaking on: the video gets quieter while Danny speaks and comes
+  back after; turn the video's own volume (or Windows') right down: captions go on. Mute Windows' sound on the other
+  PC: the bar says so.
+
 ## Known limitations
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.
 - Ctrl+Win isn't sent through the real hook in automated tests (Wispr Flow on the dev laptop would react). The hook
@@ -1667,6 +1710,9 @@ ask whether the start/stop beep stopped. Not done: Home's own long microphone la
 
 ## Next steps
 
+1. **Owner: update to 2.4.0 and try phase 37** on the PC where the translation stopped: a video, speaking on; the
+   video should get quieter while Danny speaks and come back after; turn the video (or Windows) right down and the
+   captions should go on. If the original should go lower or stay louder, the slider is under Speed.
 1. **Owner: update to 2.3.0 and try phase 31**: the first run's setups (on another Windows account, or after Start
    over), AI & models (Your API keys, a setup, a model with its cost), Live translation's Start/Stop, the new
    sections. Then the real-key checks listed in **Clearer sections, setups and costs**.

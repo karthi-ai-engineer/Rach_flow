@@ -331,6 +331,16 @@ def test_speaking_starts_with_the_session_and_says_the_ways_into_the_voices_lang
     live.stop()
 
 
+def test_how_low_the_other_apps_go_is_changed_while_it_speaks():
+    live, made, speakers = speaking_captions()
+    live.set_duck(0.5)  # nothing running: for the next start
+    live.start(LiveConfig(speak=True, duck=0.5))
+    speakers[0].ducker = type("Ducker", (), {"set_depth": lambda self, depth: setattr(self, "depth", depth)})()
+    live.set_duck(0.2)
+    assert live.config.duck == 0.2 and speakers[0].ducker.depth == 0.2
+    live.stop()
+
+
 def test_the_speaker_button_asks_for_speaking_and_the_bar_follows_what_happened():
     live, made, speakers = speaking_captions(ready=False)
     asked = []
