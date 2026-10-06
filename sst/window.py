@@ -20,7 +20,9 @@ import html
 import logging
 import math
 import os
+import platform
 import re
+import sys
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -72,7 +74,7 @@ from sst.live.voice import DANNY
 from sst.pipeline.contracts import VoiceConfig
 from sst.pipeline.dictionary import speech_hints
 from sst.pipeline.formatting import Formatter
-from sst.scan import Computer
+from sst.scan import Computer, machine
 from sst.settings import (
     Profiles,
     Settings,
@@ -3837,6 +3839,94 @@ class FormattingPage(Page):
                                                                                     "said it.")
 
 
+# ---------------------------------------------------------------- Report a problem
+
+def version_info() -> str:
+    """What a bug report needs to know about this Rflow: its version, Windows' and the kind of computer (x64, or x64
+    emulated on ARM64). Nothing the user wrote, said or set."""
+    source = "" if getattr(sys, "frozen", False) else " (from the source code)"
+    try:
+        build = sys.getwindowsversion().build
+        windows = f"Windows {'11' if build >= 22000 else platform.release()} (build {build})"
+    except AttributeError:  # not Windows: the tests on another system
+        windows = platform.platform()
+    return f"{APP_NAME} {__version__}{source}\n{windows}\n{machine()}"
+
+
+def open_link(url: str) -> None:
+    QDesktopServices.openUrl(QUrl(url))
+
+
+def copy_text(value: str) -> None:
+    QGuiApplication.clipboard().setText(value)  # apart, so the tests never touch the clipboard
+
+
+class ReportPage(Page):
+    """Report a problem: a new issue on GitHub, the version information to paste into it, and the logs, with a plain
+    word on what they can hold."""
+
+    def __init__(self, app, go_to=None):
+        super().__init__("Report a problem", "Something doesn't work as it should? Tell us on GitHub: what you did, "
+                                             "what you expected, and what happened instead.")
+        self.app = app
+        issue, layout = card(8, (20, 18, 20, 20))
+        layout.addWidget(label("Open an issue on GitHub", "heading"))
+        layout.addWidget(caption("It needs a free GitHub account. Issues are public: anyone can read what you write, "
+                                 "so leave out anything private."))
+        layout.addSpacing(4)
+        self.issue_button = button("Open a GitHub issue", lambda: open_link(REPO + "/issues/new/choose"), primary=True,
+                                   icon="external", icon_after=True)
+        layout.addLayout(row(self.issue_button, stretch_at=1))
+        self.add(issue)
+
+        version, layout = card(10, (20, 18, 20, 20))
+        layout.addWidget(label("Version information", "heading"))
+        layout.addWidget(caption("Paste it into your report: it says which Rflow, which Windows and which kind of "
+                                 "computer. Nothing you dictated or set is in it."))
+        well, inner = card(0, (16, 12, 16, 12), kind="well")
+        self.version = label(version_info(), selectable=True)
+        self.version.setFont(font(13, 500, mono=True))
+        inner.addWidget(self.version)
+        layout.addWidget(well)
+        self.copy_button = button("Copy version info", self._copy, icon="copy")
+        layout.addLayout(row(self.copy_button, stretch_at=1))
+        self.add(version)
+
+        logs, layout = card(10, (20, 18, 20, 20))
+        layout.addWidget(label("Logs", "heading"))
+        layout.addWidget(caption("What Rflow did, and the errors it met, kept on this PC. They help find a problem, "
+                                 "and a crash leaves its report there too."))
+        warning, line = card(12, (16, 12, 16, 12), kind="well", horizontal=True)
+        self.warn_icon = QLabel()
+        line.addWidget(self.warn_icon, 0, Qt.AlignmentFlag.AlignTop)
+        self.privacy = label("The logs can contain text you dictated, your words and snippets, and the names of your "
+                             "microphones. Read a log before you share it, remove anything private, and never attach "
+                             "it to a public issue as it is.", tone="warn")
+        line.addWidget(self.privacy, 1)
+        layout.addWidget(warning)
+        self.logs_button = button("Open logs folder", lambda: open_folder(LOG_DIR), icon="folder")
+        layout.addLayout(row(self.logs_button, stretch_at=1))
+        self.add(logs)
+        self.body.addStretch()
+
+    def refresh(self) -> None:
+        self.version.setText(version_info())
+        self.warn_icon.setPixmap(theme.icon_pixmap("warning", tok("warn").name(), 16, self.devicePixelRatioF()))
+
+    def _copy(self) -> None:
+        copy_text(version_info())
+        self._show_copied(True)
+        QTimer.singleShot(1500, lambda: self._show_copied(False))
+
+    def _show_copied(self, copied: bool) -> None:
+        try:
+            self.copy_button.icon_name = "check" if copied else "copy"
+            self.copy_button.setText("Copied" if copied else "Copy version info")
+            self.copy_button.update()
+        except RuntimeError:  # the window was built again meanwhile (another profile)
+            pass
+
+
 # ---------------------------------------------------------------- Settings
 
 MIC_READY = [("While Rflow runs", "always"), ("5 minutes after dictating", "warm"), ("Only while dictating", "off")]
@@ -3943,8 +4033,7 @@ class SettingsPage(Page):
                 ("Profiles", "One setup per person sharing this PC", lambda: go_to("profiles")),
                 ("Logs", "Open the folder with Rflow's logs", lambda: open_folder(LOG_DIR)),
                 ("Website", WEBSITE.removeprefix("https://"), lambda: QDesktopServices.openUrl(QUrl(WEBSITE))),
-                ("Source code", "Free and open source, MIT License", lambda: QDesktopServices.openUrl(QUrl(REPO))),
-                ("Report a problem", "On GitHub", lambda: QDesktopServices.openUrl(QUrl(REPO + "/issues")))]:
+                ("Source code", "Free and open source, MIT License", lambda: QDesktopServices.openUrl(QUrl(REPO)))]:
             layout.addWidget(divider())
             layout.addWidget(link_row(title, words, lambda _=False, f=on_click: f()))
         self.advanced_card.hide()
@@ -4589,18 +4678,19 @@ class ProfilesPage(Page):
 
 NAV = [("home", "Home"), ("live", "Live translation"), ("words", "Words"), ("snippets", "Snippets"),
        ("transform", "Text Transform"), ("translate", "Translate"), ("formatting", "Formatting"), ("models", "AI & models"),
-       ("settings", "Settings")]
+       ("settings", "Settings"), ("report", "Report a problem")]
 NAV_ICONS = {"home": "home", "live": "live", "words": "words", "snippets": "snippets", "transform": "transform",
-             "translate": "translate", "formatting": "formatting", "models": "models", "settings": "settings"}
-RAIL_NAMES = {"live": "Live", "transform": "Transform", "formatting": "Format", "models": "AI"}  # under the rail's icons
+             "translate": "translate", "formatting": "formatting", "models": "models", "settings": "settings",
+             "report": "report"}
+RAIL_NAMES = {"live": "Live", "transform": "Transform", "formatting": "Format", "models": "AI", "report": "Report"}
 # The section each page belongs to (its sidebar button), and the page a section opens on. "tools" was the section of
 # Text Transform and Translate until phase 31: a link to it (from another page, an older build) opens Text Transform.
 SECTION = {"home": "home", "live": "live", "dictionary": "words", "snippets": "snippets", "transform": "transform",
            "translate": "translate", "formatting": "formatting", "models": "models", "speech": "models", "cleanup": "models",
-           "settings": "settings", "reading": "settings", "profiles": "settings"}
+           "settings": "settings", "reading": "settings", "profiles": "settings", "report": "report"}
 OPENS = {"words": "dictionary", "tools": "transform"}
 REFRESHED = ("home", "dictionary", "snippets", "profiles", "speech", "cleanup", "transform", "translate", "formatting",
-             "live", "models", "settings")
+             "live", "models", "settings", "report")
 
 
 class MainWindow(QWidget):
@@ -4687,7 +4777,7 @@ class MainWindow(QWidget):
                       "snippets": SnippetsPage(app, self.show_page),
                       "live": LivePage(app, self.show_page),
                       "transform": TransformPage(app, self.show_page), "translate": TranslatePage(app, self.show_page),
-                      "formatting": FormattingPage(app, self.show_page),
+                      "formatting": FormattingPage(app, self.show_page), "report": ReportPage(app, self.show_page),
                       "models": ModelsPage(app, self.show_page), "speech": SpeechPage(app, self.show_page),
                       "cleanup": CleanupPage(app, self.show_page), "settings": SettingsPage(app, self.show_page),
                       "reading": ReadingTestPage(app, self.show_page), "profiles": ProfilesPage(app, self.show_page),

@@ -1303,6 +1303,36 @@ def test_the_smallest_window_folds_the_sidebar_into_a_rail():
     assert window.nav["models"].text() == "AI & models"
 
 
+# ---- Report a problem
+
+def test_report_a_problem_opens_an_issue_and_copies_only_the_version_info(monkeypatch):
+    opened, copied, folders = [], [], []
+    monkeypatch.setattr(w, "open_link", opened.append)
+    monkeypatch.setattr(w, "copy_text", copied.append)
+    monkeypatch.setattr(w, "open_folder", folders.append)
+    window, app = _window(settings=Settings(welcomed=True, vocabulary=["Priya"],
+                                            snippets=[{"cue": "my email", "text": "alex@example.com"}]))
+    window.nav["report"].click()
+    page = window.pages["report"]
+    assert window.current_page() == "report" and page.title.text() == "Report a problem"
+    page.issue_button.click()
+    assert opened == [w.REPO + "/issues/new/choose"]
+    page.copy_button.click()
+    lines = copied[0].splitlines()
+    assert lines[0].startswith(f"Rflow {w.__version__}") and lines[1].startswith("Windows") and "x64" in lines[2]
+    assert "Priya" not in copied[0] and "alex@example.com" not in copied[0] and page.copy_button.text() == "Copied"
+    assert "can contain text you dictated" in page.privacy.text()
+    page.logs_button.click()
+    assert folders == [w.LOG_DIR]
+
+
+def test_report_a_problem_left_settings_advanced():
+    window, _ = _window()
+    advanced = window.pages["settings"].advanced_card
+    names = [b.accessibleName() for b in advanced.findChildren(QPushButton) if b.accessibleName()]
+    assert "Report a problem" not in names and "Source code" in names and "Profiles" in names
+
+
 # ---- the microphone list follows Windows (phase 26)
 
 def test_the_microphone_list_follows_windows_and_keeps_the_choice():
