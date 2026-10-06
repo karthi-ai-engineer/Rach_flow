@@ -5,7 +5,7 @@ anything else here: **it must never lose what someone said**, and **it must neve
 
 ## Reporting a bug or asking for a feature
 
-- **Bugs:** [open an issue](https://github.com/karthi-ai-engineer/Rach_flow/issues/new/choose) with the Rflow version
+- **Bugs:** [open an issue](https://github.com/karthi-ai-engineer/rflow-ai/issues/new/choose) with the Rflow version
   (Settings, at the bottom), your Windows version and what you did.
 - **Logs help, but read them first.** Rflow's log (Settings → Advanced → Logs) can contain text you dictated. Remove
   anything private before you attach it. Never attach recordings of other people.
@@ -19,8 +19,8 @@ You need Windows 10 or 11 (x64; on an ARM laptop, use x64 Python: Whisper's CTra
 [uv](https://docs.astral.sh/uv/).
 
 ```
-git clone https://github.com/karthi-ai-engineer/Rach_flow.git
-cd Rach_flow
+git clone https://github.com/karthi-ai-engineer/rflow-ai.git
+cd rflow-ai
 uv sync                                          # the app and the dev tools (pytest, ruff)
 uv run python scripts/download_model.py parakeet # the speech model (~630 MB) into models/
 uv run sst app                                   # the tray app; quit an installed Rflow first

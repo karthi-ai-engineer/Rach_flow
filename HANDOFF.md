@@ -1,10 +1,11 @@
 # Handoff
 
 Where the project stands, so work can continue on any device. Updated at the end of every phase.
-The product is **Rflow**. The repository is **Rach_flow** (renamed from Rach_Darling_Flow on 2026-10-01); the Python
-package keeps its name, `sst`. **Never create a repository named Rach_Darling_Flow again:** installed copies up to
-1.6.0 check for updates under the old name, which GitHub redirects only while that name stays free (checked after
-the rename: an installed 1.5.0 asking under the old name was offered 1.6.0).
+The product is **Rflow**. The repository is **rflow-ai** (renamed from Rach_flow on 2026-10-06, and from
+Rach_Darling_Flow on 2026-10-01); the Python package keeps its name, `sst`. **Never create a repository named
+Rach_flow or Rach_Darling_Flow:** installed copies up to 2.3.0 (and up to 1.6.0) check for updates under those names,
+which GitHub redirects only while they stay free (checked after each rename: the old API names answer 301 and
+reach the latest release). Locally: `git remote set-url origin https://github.com/karthi-ai-engineer/rflow-ai.git`.
 
 _Last updated: 2026-10-06_
 
@@ -187,8 +188,8 @@ itself to 1.0.1.
 ## Continue on another device
 
 ```
-git clone https://github.com/karthi-ai-engineer/Rach_flow.git
-cd Rach_flow
+git clone https://github.com/karthi-ai-engineer/rflow-ai.git
+cd rflow-ai
 git config user.name "Karthi27"
 git config user.email "karthi.ai.engineer@gmail.com"
 gh auth login                                     # as karthi-ai-engineer

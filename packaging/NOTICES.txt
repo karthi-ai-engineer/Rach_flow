@@ -2,7 +2,7 @@ Rflow - third-party notices
 ===========================
 
 Rflow itself is free and open-source software under the MIT License (LICENSE.txt, next to this file; the source is at
-https://github.com/karthi-ai-engineer/Rach_flow). The Rflow name and logo are not covered by that license.
+https://github.com/karthi-ai-engineer/rflow-ai). The Rflow name and logo are not covered by that license.
 
 Rflow includes, or downloads when the user chooses them, the following models and software. Each is
 the property of its owners and is distributed under its own license.

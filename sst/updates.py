@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 from sst import __version__
 
-REPO = "karthi-ai-engineer/Rach_flow"
+REPO = "karthi-ai-engineer/rflow-ai"
 LATEST_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 INSTALLER = "Rflow-Setup.exe"
 CHECKSUM = INSTALLER + ".sha256"

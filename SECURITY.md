@@ -6,7 +6,7 @@ updater, so a flaw can matter even in a small app. Thank you for reporting one p
 ## Reporting a flaw
 
 **Please don't open a public issue.** Use GitHub's private reporting instead:
-[Report a vulnerability](https://github.com/karthi-ai-engineer/Rach_flow/security/advisories/new) (the repository's
+[Report a vulnerability](https://github.com/karthi-ai-engineer/rflow-ai/security/advisories/new) (the repository's
 *Security* tab → *Report a vulnerability*). Only the maintainer sees it.
 
 Say what an attacker could do, how to reproduce it, and which Rflow version you tried. You'll get an answer as soon as
