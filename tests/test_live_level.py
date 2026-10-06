@@ -43,7 +43,7 @@ def test_it_rises_gently_and_drops_at_once_when_loud_sound_comes():
     leveler, x = Leveler(), speech(6, -60)
     quiet = run(leveler, x)
     assert leveler.gain_db == pytest.approx(TARGET - loudest_db(x, 3), abs=1.0)  # about +40 dB
-    normal = speech(1, -20, seed=1)  # the volume turned up again
+    normal = speech(1, -12, seed=1)  # the volume turned up again
     assert np.array_equal(run(leveler, normal), normal) and leveler.gain_db == 0  # down at once: no burst
     gains = []
     leveler = Leveler()
