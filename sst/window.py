@@ -82,7 +82,7 @@ from PySide6.QtWidgets import (
     QWidgetItem,
 )
 
-from sst import RECORDINGS_DIR, __version__, bench, theme
+from sst import RECORDINGS_DIR, __version__, bench, costs, theme
 from sst.audio import LevelMeter, Take, call_quality, save_wav
 from sst.commands import DEFAULT_PHRASES, UNDO, normalize, parse_phrases, phrases_for
 from sst.engines import DEFAULT_MODEL, SPEECH_MODELS, usable
@@ -4727,19 +4727,25 @@ class SettingsPage(Page):
 
 # ---------------------------------------------------------------- the first-run welcome
 
-PROVIDER_TILES = [("gemini", "Gemini", "Free key"), ("openai", "OpenAI", "Pay as you go"),
-                  ("anthropic", "Anthropic", "Pay as you go"), ("groq", "Groq", "Fastest answers"),
+PROVIDER_TILES = [("gemini", "Gemini", "Free key"), ("groq", "Groq", "Free key, fastest"),
+                  ("openai", "OpenAI", "Pay as you go"), ("anthropic", "Anthropic", "Pay as you go"),
                   ("ollama", "Ollama", "Runs on this PC")]
-# The fast model the welcome picks for each provider, from the provider's own list (newest first).
-FAST_MODELS = {"gemini": [r"flash-lite", r"flash"], "openai": [r"gpt-4\.1-mini", r"gpt-4o-mini", r"mini"],
-               "anthropic": [r"haiku"], "groq": [r"llama-3\.1-8b-instant", r"instant", r"llama"], "ollama": [r"."]}
-_NOT_CHAT = re.compile(r"embed|tts|audio|image|vision|live|transcribe|whisper|guard|moderation|search|realtime|preview|exp",
-                       re.IGNORECASE)
+# The model the welcome picks for each provider from its own list, as the research notes of 2026-10-06 say (the newest
+# match of the first pattern that finds one): the pinned id first. Groq's llama-3.1-8b-instant was shut down on
+# 2026-08-16; gpt-oss-20b replaces it. OpenAI's "any mini" could pick a pricier or retiring one (o4-mini).
+FAST_MODELS = {"gemini": [r"^gemini-3\.5-flash-lite$", r"flash-lite"], "openai": [r"^gpt-4\.1-mini$", r"^gpt-4o-mini$"],
+               "anthropic": [r"^claude-haiku-4-5", r"haiku"], "groq": [r"^openai/gpt-oss-20b$", r"gpt-oss-20b"],
+               "ollama": [r"."]}
+# Not chat models: speech, text-to-speech (Groq's Orpheus), images, classifiers (prompt guards, safeguards), previews
+_NOT_CHAT = re.compile(r"embed|tts|orpheus|audio|speech|image|vision|live|transcri|whisper|guard|moderation|search|"
+                       r"realtime|preview|exp", re.IGNORECASE)
 
 
 def fast_model(provider: str, models: list[str]) -> str:
-    """The provider's fast chat model for cleanup (a Flash-Lite, a mini, a Haiku...), the newest version first."""
-    chat = [m for m in models if not _NOT_CHAT.search(m)] or list(models)
+    """The provider's fast chat model for cleanup (a Flash-Lite, a mini, a Haiku, gpt-oss...), the newest version first;
+    else its cheapest chat model with a known price; else, only on a server of the user's own, its first chat model.
+    Never a speech, text-to-speech or classifier model: "" when there is no chat model to pick."""
+    chat = [m for m in models if not _NOT_CHAT.search(m)]
 
     def version(name: str) -> tuple:
         return tuple(int(n) for n in re.findall(r"\d+", name)[:3])
@@ -4747,7 +4753,11 @@ def fast_model(provider: str, models: list[str]) -> str:
         found = sorted((m for m in chat if re.search(pattern, m, re.IGNORECASE)), key=version, reverse=True)
         if found:
             return found[0]
-    return chat[0] if chat else ""
+    cheapest = costs.cheapest_known(provider, chat)
+    if cheapest:
+        return cheapest
+    own = provider in PROVIDERS and PROVIDERS[provider].own_server
+    return chat[0] if chat and own else ""
 
 
 class OptionCard(Card):
@@ -5173,7 +5183,8 @@ class WelcomePage(QWidget):
             models = self.app.ai_models(gateway)
             model = fast_model(p.key, models)
             if not model:
-                raise RuntimeError("the provider lists no models")
+                raise RuntimeError(f"{provider_name(p.key)} lists none of its usual fast models: choose one on AI "
+                                   "connection later" if models else "the provider lists no models")
             self.app.check_ai(gateway, model)
             return model
 

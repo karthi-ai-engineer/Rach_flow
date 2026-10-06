@@ -555,9 +555,22 @@ def test_the_fast_model_of_each_provider():
     assert w.fast_model("gemini", ["gemini-2.0-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-pro",
                                    "gemini-3.5-flash-lite-preview", "text-embedding-004"]) == "gemini-3.5-flash-lite"
     assert w.fast_model("openai", ["gpt-4o", "gpt-4o-mini", "gpt-4o-mini-tts", "gpt-4.1-mini"]) == "gpt-4.1-mini"
+    assert w.fast_model("openai", ["gpt-4o", "o4-mini", "gpt-5.4-mini", "gpt-4o-mini"]) == "gpt-4o-mini"  # not "any mini"
     assert w.fast_model("anthropic", ["claude-sonnet-5-5", "claude-haiku-4-5"]) == "claude-haiku-4-5"
-    assert w.fast_model("groq", ["whisper-large-v3", "llama-3.1-8b-instant"]) == "llama-3.1-8b-instant"
     assert w.fast_model("ollama", ["llama3.2"]) == "llama3.2" and w.fast_model("ollama", []) == ""
+
+
+def test_the_fast_model_on_groq_is_gpt_oss_and_never_a_speech_model():
+    # The research notes of 2026-10-06: llama-3.1-8b-instant was shut down, and the old fallback (the first model in
+    # the list) would have picked a text-to-speech model.
+    groq = ["canopylabs/orpheus-arabic-saudi", "canopylabs/orpheus-v1-english", "llama-prompt-guard-2-22m",
+            "openai/gpt-oss-120b", "openai/gpt-oss-20b", "openai/gpt-oss-safeguard-20b", "whisper-large-v3",
+            "whisper-large-v3-turbo"]
+    assert w.fast_model("groq", groq) == "openai/gpt-oss-20b"
+    assert w.fast_model("groq", [m for m in groq if m != "openai/gpt-oss-20b"]) == "openai/gpt-oss-120b"  # priced
+    assert w.fast_model("groq", ["canopylabs/orpheus-v1-english", "whisper-large-v3-turbo", "playai-tts"]) == ""
+    assert w.fast_model("gemini", ["gemini-3.8-flash", "gemini-3.6-flash"]) == "gemini-3.6-flash"  # the cheapest priced
+    assert [key for key, _, _ in w.PROVIDER_TILES][:2] == ["gemini", "groq"]  # the two with a free key first
 
 
 # ---- capture settings
