@@ -44,6 +44,7 @@ from sst.gateway import PROVIDERS, SPEECH_SERVER, GatewayConfig, Polisher
 from sst.hotkey import HotkeyListener, parse_hotkey
 from sst.live.captions import LiveCaptions
 from sst.live.contracts import MIC, Kind, LiveConfig, LiveEvent
+from sst.live.ducking import Ducker, put_back_left
 from sst.live.gemini import GeminiLiveTranslate
 from sst.live.session import LiveSession
 from sst.live.speaker import Speaker
@@ -982,7 +983,8 @@ class TrayApp:
     def live_config(self) -> LiveConfig:
         s = self.settings
         return LiveConfig(target=s.live_target, mic_target=s.live_mic_target, source=s.live_source,
-                          hide_from_capture=s.live_hide_from_share, speak=s.live_speak, speak_speed=s.live_speak_speed)
+                          hide_from_capture=s.live_hide_from_share, speak=s.live_speak, speak_speed=s.live_speak_speed,
+                          duck=s.live_duck)
 
     # -- the spoken translation (sst.live.voice, sst.live.speaker)
 
@@ -1002,7 +1004,7 @@ class TrayApp:
             return None
         return Speaker(lambda: PiperVoice(voice), Player(), config.spoken_lanes(voice.language), voice.language,
                        config.speak_speed, on_problem=lambda message: self.live.event.emit(
-                           LiveEvent(Kind.ERROR, message, lane="voice")))
+                           LiveEvent(Kind.ERROR, message, lane="voice")), ducker=Ducker(config.duck))
 
     def set_live_speak(self, on: bool) -> None:
         """The translation spoken aloud, or not: saved, at once while it runs; the voice is downloaded the first time
@@ -1017,6 +1019,11 @@ class TrayApp:
     def set_live_speak_speed(self, speed: float) -> None:
         self.apply_settings(dataclasses.replace(self.settings, live_speak_speed=speed))
         self.live.set_speak_speed(speed)
+
+    def set_live_duck(self, depth: float) -> None:
+        """How loud the other apps stay while the voice speaks (1.0: as they are): saved, and at once."""
+        self.apply_settings(dataclasses.replace(self.settings, live_duck=depth))
+        self.live.set_duck(depth)
 
     def download_live_voice(self) -> None:
         """Download and prepare the voice in the background (once; the progress shows on the bar and the page)."""
@@ -1811,6 +1818,7 @@ def main(argv: list[str] | None = None) -> int:
         QMessageBox.critical(None, APP_NAME, "Windows has no notification area (system tray) available.")
         return 1
     left = install_crash_handlers(log_dir)  # only now: a second copy that just hands over mustn't touch them
+    put_back_left()  # apps a crash left lowered while the voice spoke: back to their own volume
     app.aboutToQuit.connect(lambda: mark_clean_exit(log_dir))
     app.commitDataRequest.connect(lambda manager: mark_clean_exit(log_dir))  # Windows signs out or shuts down
     tray_app = start(lambda: TrayApp(quiet_start="--startup" in argv), log_dir, left)

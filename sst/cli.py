@@ -145,6 +145,7 @@ def cmd_live(args) -> None:
         capture = Capture.microphone() if lane == MIC else Capture.speakers()
         session.add(lane, capture, lambda emit, lane=lane: GeminiLiveTranslate(key, config.for_lane(lane), emit, lane=lane))
     if args.speak:
+        from sst.live.ducking import Ducker
         from sst.live.speaker import Speaker
         from sst.live.voice import DANNY, VOICES, PiperVoice, install
         from sst.live.wasapi import Player
@@ -157,7 +158,8 @@ def cmd_live(args) -> None:
         if not lanes:
             print(f"  (The voice speaks {language_name(voice.language)}: nothing here is translated into it.)")
         session.set_speaker(Speaker(lambda: PiperVoice(voice), Player(), lanes, voice.language, settings.live_speak_speed,
-                                    on_problem=lambda message: print(f"\n  ! {message}", flush=True)))
+                                    on_problem=lambda message: print(f"\n  ! {message}", flush=True),
+                                    ducker=Ducker(settings.live_duck)))
     try:
         stopped.wait(args.seconds or None)
     finally:
