@@ -81,7 +81,7 @@ def place(access, text: str, hwnd: int) -> bool:
             log.info("Other text is selected now (%d characters)", len(copied))
         return same_text(copied, text)
     log.info("The text isn't selected any more; looking for it before the caret")
-    return access.select_last(text)
+    return access.select_last(text) is not None
 
 
 class TransformMenu(QWidget):
@@ -337,10 +337,12 @@ class TransformController(QObject):
         last = self.last_typed
         if not last or last[2] != hwnd or time.monotonic() - last[1] >= LAST_TEXT_SECONDS:
             log.info("Text Transform: nothing selected in %s, and no recent dictation there", cls)
-        elif self.access.select_last(last[0]):
-            log.info("Text Transform: the last dictation (%d characters) selected again in %s", len(last[0]), cls)
-            return Target(last[0], "last", hwnd)
-        return "Select some text first, then try again."
+            return "Select some text first, then try again."
+        if found := self.access.select_last(last[0]):  # as it is there now: the app may have changed it a little
+            log.info("Text Transform: the last dictation (%d characters) selected again in %s", len(found), cls)
+            return Target(found, "last", hwnd)
+        log.info("Text Transform: the last dictation couldn't be found again in %s", cls)
+        return "Rflow couldn't find your last dictation here to rewrite it. Select the text, then say it again."
 
     # -- the menu
 

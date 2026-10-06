@@ -42,7 +42,13 @@ user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WP
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 
-WH_KEYBOARD_LL, HC_ACTION, WM_QUIT = 13, 0, 0x0012
+WH_KEYBOARD_LL, HC_ACTION, WM_QUIT, WM_TIMER = 13, 0, 0x0012, 0x0113
+# Windows silently drops a keyboard hook that answers too slowly (Python busy loading a model), and nothing says so:
+# a fresh one is put in this often while no key is held, so the hotkey can't stay dead until Rflow restarts.
+REHOOK_SECONDS = 30
+user32.SetTimer.argtypes = [wintypes.HWND, ctypes.c_size_t, wintypes.UINT, ctypes.c_void_p]
+user32.SetTimer.restype = ctypes.c_size_t
+user32.KillTimer.argtypes = [wintypes.HWND, ctypes.c_size_t]
 WM_KEYDOWN, WM_SYSKEYDOWN = 0x0100, 0x0104
 VK_ESCAPE, VK_SPACE, VK_MASK = 0x1B, 0x20, 0xE8  # 0xE8 is unassigned: pressing it tells Windows "Win was used with another key"
 OUR_INPUT = 0x53535431  # dwExtraInfo on keys we send ourselves, so the hook lets them through untouched
@@ -233,7 +239,8 @@ class Matcher:
                 self._blocked.add(vk)
                 return True, "handsfree"
             if self._active and MODIFIER_OF.get(vk) not in wanted:
-                self._active = False  # another key joined: it's a shortcut like Ctrl+Win+D, not dictation
+                # Another key joined: a Windows shortcut (Ctrl+Win+D) when it comes at once, else a key brushed while
+                # speaking. The dictation tells them apart by the time; the hotkey stays held, so its release comes.
                 return False, "interrupt"
             if not self._active and self._held_modifiers() == wanted and all(k in MODIFIER_OF for k in self._down):
                 self._active = True
@@ -298,6 +305,11 @@ class Matcher:
     def _held_modifiers(self) -> frozenset[str]:
         return frozenset(MODIFIER_OF[vk] for vk in self._down if vk in MODIFIER_OF)
 
+    @property
+    def idle(self) -> bool:
+        """No key held and no hotkey under way: a moment to put in a fresh hook."""
+        return not self._down and not self._active
+
     def _hotkey_held(self) -> bool:
         return self.hotkey.modifiers <= self._held_modifiers()
 
@@ -342,18 +354,26 @@ class HotkeyListener:
 
     def _run(self) -> None:
         self._thread_id = kernel32.GetCurrentThreadId()
-        hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, kernel32.GetModuleHandleW(None), 0)
+        hook = self._hook()
         if not hook:
             self._error = f"could not install the keyboard hook (Windows error {ctypes.get_last_error()})"
         self._ready.set()
         if not hook:
             return
+        timer = user32.SetTimer(None, 0, REHOOK_SECONDS * 1000, None)
         msg = wintypes.MSG()
         try:
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:  # Windows calls the hook from in here
-                pass
+                if msg.message == WM_TIMER and self._matcher.idle and (fresh := self._hook()):
+                    user32.UnhookWindowsHookEx(hook)  # the new one is in first: there's never a moment with none
+                    hook = fresh
         finally:
+            if timer:
+                user32.KillTimer(None, timer)
             user32.UnhookWindowsHookEx(hook)
+
+    def _hook(self):
+        return user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, kernel32.GetModuleHandleW(None), 0)
 
     def _on_key(self, code: int, wparam: int, lparam: int) -> int:
         try:

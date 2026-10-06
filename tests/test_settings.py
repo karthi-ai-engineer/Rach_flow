@@ -199,3 +199,38 @@ def test_cloud_speech_models_are_kept_and_bad_ones_ignored(tmp_path):
     assert loaded.speech_model == "groq" and loaded.speech_cloud_models == {"groq": "whisper-large-v3"}
     path.write_text('{"speech_cloud_models": {"groq": 3}}', encoding="utf-8")
     assert Settings.load(path).speech_cloud_models == {}
+
+
+@pytest.fixture(autouse=True)
+def no_problems_left():
+    yield
+    settings.LOAD_PROBLEMS.clear()
+
+
+def test_a_damaged_settings_file_comes_back_from_the_last_good_copy(tmp_path):
+    path = tmp_path / "settings.json"
+    Settings(vocabulary=["Rflow"], snippets=[{"cue": "my email", "text": "a@b.c", "anywhere": False}]).save(path)
+    Settings(vocabulary=["Rflow", "Karthi"], welcomed=True).save(path)  # the first one is the copy now
+    path.write_text("{ garbage", encoding="utf-8")  # a full disk, a sync conflict
+    restored = Settings.load(path)
+    assert restored.vocabulary == ["Rflow"] and restored.snippets[0]["cue"] == "my email"
+    assert settings.LOAD_PROBLEMS == ["Your settings file was damaged, so Rflow went back to the copy from before your "
+                                      "last change."]
+    assert not path.exists() and len(list(tmp_path.glob("settings.json.damaged-*"))) == 1  # kept aside for a look
+
+
+def test_a_damaged_settings_file_with_no_copy_gives_the_defaults_and_says_so(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("not json", encoding="utf-8")
+    assert Settings.load(path) == Settings()
+    assert settings.LOAD_PROBLEMS[0].startswith("Your settings file was damaged and there was no good copy")
+    assert "settings.json.damaged-" in settings.LOAD_PROBLEMS[0]
+
+
+def test_trimming_the_history_leaves_no_half_written_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "HISTORY_KEEP", 3)
+    path = tmp_path / "history.jsonl"
+    for i in range(10):
+        add_to_history(f"dictation {i}", path=path)
+    assert [e["text"] for e in read_history(path)] == ["dictation 9", "dictation 8", "dictation 7"]
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 3 and not list(tmp_path.glob("*.tmp"))

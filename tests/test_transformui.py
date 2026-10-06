@@ -58,7 +58,7 @@ class FakeAccess:
         self.selected_last.append(text)
         if self.select_ok:
             self.selection = text
-        return self.select_ok
+        return text if self.select_ok else None
 
     def paste_rich(self, text, html=None):
         self.pasted.append((text, html))
@@ -171,7 +171,9 @@ def test_without_text_nothing_is_changed_and_the_user_is_told(qt, case):
     access.select_ok = case != "not found"
     open_menu(controller)
     assert not controller.menu.isVisible() and not access.pasted
-    assert app.said[-1] == ("warning", "Select some text first, then try again.")
+    assert app.said[-1] == ("warning", "Rflow couldn't find your last dictation here to rewrite it. Select the text, "
+                                       "then say it again." if case == "not found" else
+                            "Select some text first, then try again.")
 
 
 def test_a_rejected_transform_keeps_the_text_and_says_why(qt):

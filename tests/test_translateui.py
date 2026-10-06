@@ -66,7 +66,7 @@ class FakeAccess:
 
     def select_last(self, text):
         self.selected_last.append(text)
-        return False
+        return None
 
     def activate(self, hwnd):
         self.activated.append(hwnd)

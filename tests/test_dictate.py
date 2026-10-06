@@ -368,3 +368,33 @@ def test_the_recorders_notice_is_shown_once_per_change(make):
     d.recorder.notice = "Headset (Buds) isn't connected: Rflow uses Microphone (Realtek(R) Audio) until it is."
     feed(d, (6, "press"), (6.7, "release"))
     assert len(notices) == 2 and typed == ["hello world "] * 4  # unplugged again: said again; dictation goes on
+
+
+def test_a_key_brushed_while_speaking_keeps_the_dictation(make):
+    d, typed, states = make()
+    feed(d, (0, "press"), (1.5, "interrupt"), (2.0, "interrupt"), (4.0, "release"))  # Shift brushed twice, then let go
+    assert typed == ["hello world "] and states == ["recording", "transcribing", "typed"]
+
+
+def test_a_dictation_that_cant_be_typed_still_goes_to_the_history():
+    results, messages = [], []
+
+    def busy_clipboard(text):
+        raise OSError("the clipboard is busy (another app is holding it open)")
+    d = Dictation(FakeEngine(), FakeRecorder(), paste=busy_clipboard, sounds=False, save=False)
+    d.listener = FakeListener()
+    d.on_state = lambda state, message: messages.append((state, message))
+    d.on_result = lambda heard, typed, seconds: results.append(typed)
+    feed(d, (0, "press"), (0.7, "release"))
+    assert results == ["hello world"]  # in the history, on Home
+    assert messages[-1] == ("error", "Couldn't type it here (the clipboard is busy (another app is holding it open)). "
+                                     "It's on Home, ready to copy.")
+
+
+def test_busy_while_recording_or_typing(make):
+    d, _, _ = make()
+    assert not d.busy
+    feed(d, (0, "press"))
+    assert d.busy
+    feed(d, (0.7, "release"))
+    assert not d.busy

@@ -35,11 +35,13 @@ from sst.snippets import Snippet
 HOLD_SECONDS = 0.4   # key held longer than this = push-to-talk; a quicker tap = hands-free
 MIN_SECONDS = 0.3    # shorter recordings are treated as accidental presses
 MAX_SECONDS = 180    # recordings stop by themselves after 3 minutes (the text is still typed)
+SHORTCUT_SECONDS = 0.6  # another key this soon after Ctrl+Win: a Windows shortcut (Ctrl+Win+D), not a dictation
 DEFAULT_HOTKEY = "ctrl+win"
 START_BEEP = 880  # Hz: the voice pipeline filters it out of the recording (sst.pipeline.session._ToneNotch)
 # A recording whose loudest sample is below this (-80 dBFS) has no sound at all: a muted, unplugged or switched-off
 # microphone. Any working microphone hears more, even in a quiet room.
 SILENT = 1e-4
+_NOT_TYPED = "Couldn't type it here ({}). It's on Home, ready to copy."
 
 log = logging.getLogger(__name__)
 
@@ -107,8 +109,11 @@ class Dictation:
                 self._stop(keep=True)
         elif event == "cancel":
             self._stop(keep=False)
-        elif event == "interrupt" and self._holding:  # it was a shortcut such as Ctrl+Win+D, not dictation
-            self._stop(keep=False, quiet=True)
+        elif event == "interrupt" and self._holding:
+            if at - self._started < SHORTCUT_SECONDS:  # a shortcut such as Ctrl+Win+D, not dictation
+                self._stop(keep=False, quiet=True)
+            else:  # a key brushed while speaking (Shift, a Ctrl+click): what was said is kept, the dictation goes on
+                log.info("Another key was pressed %.1f s into the dictation: it goes on", at - self._started)
 
     def tick(self, now: float) -> None:
         if self.recording and now - self._started > MAX_SECONDS:
@@ -128,6 +133,23 @@ class Dictation:
     def wait(self) -> None:
         """Block until every recording so far is transcribed and typed."""
         self._jobs.join()
+
+    @property
+    def busy(self) -> bool:
+        """Recording, or a dictation still being transcribed or typed: nothing may cut it (an update waits)."""
+        return self.recording or self._jobs.unfinished_tasks > 0
+
+    def _type(self, typed: str) -> str:
+        """Type the text where the user is; "" or why it couldn't be. Either way it goes on to the history: a text that
+        couldn't be typed is never lost."""
+        if not typed:
+            return ""
+        try:
+            self.paste(typed + " ")  # trailing space so the next dictation doesn't run into this one
+            return ""
+        except Exception as e:  # the clipboard held by another app, the keys held down...
+            log.warning("Couldn't type the dictation: %s", e)
+            return str(e) or type(e).__name__
 
     def _start(self, at: float) -> None:
         try:
@@ -252,15 +274,16 @@ class Dictation:
                     typed = cleanup.polish(protected) if cleanup and protected else protected
                     if slots:  # the AI may have lost a placeholder: then the text as heard, with the snippets
                         typed = snippets.expand(typed, slots) or snippets.expand(protected, slots) or text
-                if typed:
-                    self.paste(typed + " ")  # trailing space so the next dictation doesn't run into this one
+                failed = self._type(typed)
                 if float(np.abs(audio).max()) < 0.01:
                     self.on_state("warning", "Almost silent: check the microphone.")
                 if self.save:
                     save_recording(audio, rate, typed)
                 if typed:
                     self.on_result(text, typed, len(audio) / rate)
-                if typed and fell_back:
+                if failed:
+                    self.on_state("error", _NOT_TYPED.format(failed))
+                elif typed and fell_back:
                     self.on_state("typed_local", fell_back)
                 elif typed and cleanup and cleanup.last_error:
                     self.on_state("typed_raw", cleanup.last_error)
@@ -314,15 +337,16 @@ class Dictation:
             return
         typed = final.text
         heard = final.stages.get("merged") or typed
-        if typed:
-            self.paste(typed + " ")  # trailing space so the next dictation doesn't run into this one
+        failed = self._type(typed)
         if len(audio) and float(np.abs(audio).max()) < 0.01:
             self.on_state("warning", "Almost silent: check the microphone.")
         if self.save:
             save_recording(audio, rate, typed)
         if typed:
             self.on_result(heard, typed, len(audio) / rate)
-        if typed and final.notes:
+        if failed:
+            self.on_state("error", _NOT_TYPED.format(failed))
+        elif typed and final.notes:
             self.on_state("typed_local", final.notes[0])
         elif typed and final.provenance.value == "formatted_fallback" and final.error:
             self.on_state("typed_raw", final.error)

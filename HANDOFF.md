@@ -10,7 +10,14 @@ _Last updated: 2026-10-04_
 
 ## Start here (a new session, or the owner's other laptop)
 
-**Where things stand (2026-10-05):**
+**Where things stand (2026-10-06):**
+- **The user testing of 2026-10-06** (a testing agent, as a user, isolated from the owner's data): 75 flaws (2 blockers,
+  22 major, 39 minor, 12 polish) and the capabilities a complete app lacks, in `reports/Rflow user testing
+  2026-10-06.md` (not in git; its scripts, to re-run, in `reports/user-testing-2026-10-06/scripts/`). The owner chose
+  to fix them in phases: 30 never lose work, 31 privacy and data, 32 first run and shortcuts, 33 layout,
+  accessibility and speed, 34 updates, install and trust, 35 networks and moving PCs.
+- **Never lose work** (phase 30, issue #77, branch `phase-30/never-lose-work`, stacked on phase 29's PR #76, not
+  released). See **Never lose work**.
 - **Live translation spoken aloud** (phase 29, issue #75, branch `phase-29/live-voice`, not released): the owner's
   chosen voice, Piper's Danny (English), reads each sentence of the translation out on the laptop, never heard and
   translated again. See **Live translation spoken aloud**.
@@ -147,6 +154,7 @@ _Last updated: 2026-10-04_
 | 20 | **Text Transform** (the owner's idea): say "make it concise" (or double-tap Ctrl for a menu) and the selected text or the last dictation becomes Concise, Professional, Bullet points or Action items, checked, with undo; the text is found again if focus moved | done, on `main` (PR #50, with #48), released **v1.7.0** |
 | 19 | **The voice pipeline** (the owner's plan): always-on mic, chunks while speaking, parallel ASR, merge, dictionary, formatting, guarded LLM | done, on `main` (PR #46), released **v1.6.0** |
 | 26 | **Microphones that follow you**: Windows' own device list, open microphones reopened when devices change, silent recordings caught | done, on `main` (PR #70), released **v2.0.2** |
+| 30 | **Never lose work** (the user testing's blockers): a key brushed while dictating keeps the dictation; a damaged dictionary or settings file never stops Rflow (moved aside, restored from a copy); crash reports; a failed start says why; a failed paste keeps the text; updates wait for idle; the keyboard hook is renewed | in review (issue #77) |
 | 29 | **Live translation spoken aloud** (the owner's request): Piper's Danny on the laptop (sherpa-onnx, no new dependency), each sentence spoken as soon as it's whole, faster when behind; process loopback leaves Rflow's own voice out of what's captured; the microphone pauses while it plays through speakers | in review (issue #75) |
 | 28 | **Live translation, a section of its own** (the owner's redesign): a sidebar section, Ctrl+Alt+L, a movable, resizable, scrollable bar with ✕, and the source: Computer, Microphone or Both (your words marked "You") | done, on `main` (PR #74), released **v2.2.0** |
 | 27 | **Live captions, part 1** (the owner's idea): what the laptop plays → WASAPI loopback → Gemini 3.5 Live Translate → a caption bar left out of screen shares, and a transcript; a separate pipeline (`sst/live/`) | done, on `main` (PR #72), released **v2.1.0** |
@@ -1580,6 +1588,22 @@ no native ARM64 build for now, and the Mac later.
   while it speaks.
 - **Later, if wanted:** Gemini Live Translate already returns the translation as speech in any language (Rflow
   ignores it): that would speak Japanese too, with no download.
+
+## Never lose work (phase 30, after the user testing of 2026-10-06)
+
+| Flaw | Fix |
+|---|---|
+| **B-01** a dictation thrown away when any other key was touched while Ctrl+Win was held | The matcher keeps the hotkey held after another key ("interrupt"), so the release still comes. `Dictation`: another key within `SHORTCUT_SECONDS` (0.6 s) is a Windows shortcut (Ctrl+Win+D) and dropped quietly as before; later, the dictation goes on. The tester's own script (30 s, Shift brushed) now types and saves it |
+| **B-02 / N-11** a damaged `dictionary.db`, or a settings folder that can't be written, stopped every start | `DictionaryStore.open()`: a damaged file is moved aside (`dictionary.damaged-<time>.db`, with its -wal/-shm) and a new one started (Your words come back from the settings); an unwritable folder gives a store in memory. The user is told (`TrayApp._tell`, after the tray icon is up). History writes can't fail a dictation either |
+| **M-14** crashes left no trace | `install_crash_handlers`: `sys.excepthook` and `threading.excepthook` log uncaught errors; `faulthandler` writes native crashes to `logs/crash.log`; a `running` marker (removed at quit and when Windows signs out) tells a crash from a shutdown. The next start keeps the report as `crash-<time>.log` and says so. A start that fails shows why (`start()`) instead of vanishing |
+| **N-10** a damaged settings file reset everything | Every save keeps the previous file as `settings.json.bak`; a damaged one is kept aside and the copy used; the user is told (`settings.LOAD_PROBLEMS`). A save that fails is said once |
+| **N-33** history trimmed in place | A new file, then a swap |
+| **M-19** a failed paste lost the dictation | `Dictation._type`: the text goes to the history and the recording is saved either way; the pill says "Couldn't type it here (…). It's on Home, ready to copy." |
+| **M-22** Win+Ctrl+V instead of a paste | `paste._wait_until_keys_released`: waits while the keys are held (also for the next dictation, up to `HELD_WAIT`), and never presses Ctrl+V with them held |
+| **M-15** "Update now" cut dictations and live translation | `TrayApp.busy()`; a ready update waits ("it installs when this dictation is done / live translation stops") and installs when idle |
+| **M-21** (suspected) Windows dropping a slow hook | `HotkeyListener` puts in a fresh hook every `REHOOK_SECONDS` (30 s) while no key is held, the new one before the old one goes |
+| **The owner's report, 2026-10-06:** "make it concise" after a dictation said "Select some text first" | The log showed why: the last dictation was found but the app had changed it a little ("11 expected, 9 copied"), and the exact match failed. `textaccess.select_last` now returns the text it selected: exact first; else it looks `LOOK_FURTHER` (12) more steps back, finds the closest text ending at the caret (`CLOSE_ENOUGH` 0.85, difflib, never starting on a space) and selects exactly that. The message now tells "couldn't find your last dictation here" apart from "nothing to rewrite", and the log names the window class |
+| crash.log written while nothing crashed | On Windows faulthandler also writes exceptions Windows raises and handles itself (`0x8001010d`, COM, seen on the owner's laptop): `crashed()` counts only real ones (access violation, stack overflow, a fatal Python error) |
 
 ## Known limitations
 - Apps running as administrator don't receive the text, because Windows blocks input from normal programs into them.
