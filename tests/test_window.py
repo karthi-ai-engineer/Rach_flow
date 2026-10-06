@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtGui import QFontMetrics  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
 
 from sst import bench  # noqa: E402
@@ -1301,6 +1302,36 @@ def test_the_smallest_window_folds_the_sidebar_into_a_rail():
     assert not window.grab().isNull()
     window._set_compact(False)
     assert window.nav["models"].text() == "AI & models"
+
+
+def test_the_sidebar_has_the_ten_sections_in_order():
+    window, _ = _window()
+    assert [key for key, _ in w.NAV] == ["home", "live", "words", "snippets", "transform", "translate", "formatting",
+                                         "models", "settings", "report"]
+    assert all(key in w.NAV_ICONS and w.NAV_ICONS[key] in w.theme.ICONS for key in window.nav)
+
+
+@pytest.mark.parametrize("size", [(780, 540), (1000, 540), (1000, 700)])
+def test_every_section_fits_the_smallest_window_in_the_sidebar_and_the_rail(size):
+    profiles = w.Profiles()
+    profiles.add("Rahul")  # two profiles: the profile button shows too
+    window, _ = _window(profiles=profiles)
+    window.show_update("Rflow 9.9.9 is available (you have 1.0.0).", version="9.9.9")
+    window.resize(*size)
+    assert not window.grab().isNull()
+    buttons = [window.nav[key] for key, _ in w.NAV]
+    tops = [b.geometry().top() for b in buttons]
+    assert tops == sorted(tops)
+    assert all(a.geometry().bottom() < b.geometry().top() for a, b in zip(buttons, buttons[1:], strict=False))  # no overlap
+    below = [x for x in (window.update_link, window.status_card, window.profile_button) if x.isVisibleTo(window)]
+    assert window.status_card in below and all(buttons[-1].geometry().bottom() < x.geometry().top() for x in below)
+    assert max(x.geometry().bottom() for x in below) < window.sidebar.height()  # nothing cut off at the bottom
+    assert min(b.height() for b in buttons) >= w.NAV_HEIGHTS[window.compact][1]
+    if window.compact:  # the rail: each short name fits under its icon
+        metrics = QFontMetrics(w.font(11, 600))
+        assert all(metrics.horizontalAdvance(b.text()) <= b.width() - 4 for b in buttons)
+    else:
+        assert window.update_link.isVisibleTo(window) and window.profile_button.isVisibleTo(window)
 
 
 # ---- Report a problem

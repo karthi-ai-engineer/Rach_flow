@@ -1,13 +1,18 @@
 """The Rflow window: a small app like Wispr Flow's, next to the tray icon, in the "Obsidian Signal" design (Rflow UI 2.0;
 sst.theme draws it, sst.ui has its widgets, docs/design/rflow-ui.html is the design).
 
-Five sections in the sidebar:
-  Home          the voice orb and how to dictate, a stats strip, the dictations (searchable, copy and correct)
-  Words         Your words (the dictionary, sound-alikes, suggestions) and Snippets
-  Tools         Text Transform and Translate, with a box to try them; their details one level down
-  AI & models   how Rflow hears you and the AI connection; Speech models and AI connection one level down
-  Settings      the dictation key and the everyday switches; Advanced has the voice pipeline, the Reading test and
-                Profiles
+Ten sections in the sidebar (phase 31: each explains itself at a glance; in the narrow rail, short names under icons):
+  Home              the voice orb and how to dictate, a stats strip, the dictations (searchable, copy and correct)
+  Live translation  speech translated while people speak, in a bar of its own
+  Words             Your words: the dictionary, sound-alikes, suggestions
+  Snippets          a short phrase said, your own text typed
+  Text Transform    its switch, how to use it, examples of each transform, a box to try them, the phrases and the menu
+  Translate         its switch, how to use it, examples, the shortcut and the languages, a box to try it
+  Formatting        "Write numbers as numbers", with what the real formatting stage types, and a box to try it
+  AI & models       how Rflow hears you and the AI connection; Speech models and AI connection one level down
+  Settings          the dictation key, the everyday switches and the Reading test; Advanced has the voice pipeline and
+                    Profiles; Start over at the end
+  Report a problem  a GitHub issue, the version information to paste into it, the logs
 A first-run welcome in three steps sets up how Rflow hears you, a first dictation and an AI connection. It is native
 Qt, following Windows' light or dark mode (an embedded browser would add ~150 MB for the same look).
 
@@ -28,7 +33,20 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QSortFilterProxyModel, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QObject,
+    QPoint,
+    QPointF,
+    QRect,
+    QRectF,
+    QSize,
+    QSortFilterProxyModel,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -4691,6 +4709,41 @@ SECTION = {"home": "home", "live": "live", "dictionary": "words", "snippets": "s
 OPENS = {"words": "dictionary", "tools": "transform"}
 REFRESHED = ("home", "dictionary", "snippets", "profiles", "speech", "cleanup", "transform", "translate", "formatting",
              "live", "models", "settings", "report")
+# A sidebar button's height (roomy, tight), in the sidebar and in the narrow rail: ten sections fit the smallest window.
+NAV_HEIGHTS = {False: (40, 30), True: (52, 36)}
+
+
+class NavButton(Button):
+    """A sidebar button whose height the window sets (MainWindow._fit_sidebar), so every section fits a short window.
+    In the narrow rail its icon sits over its short name, centred in that height."""
+
+    def __init__(self, text: str, icon: str):
+        super().__init__(text, "nav", icon=icon)
+        self.height_now = NAV_HEIGHTS[False][0]
+
+    def _metrics(self):
+        _, padding, px, weight = super()._metrics()
+        return self.height_now, padding, px, weight
+
+    def paintEvent(self, event):
+        if not self.compact:
+            super().paintEvent(event)
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r, checked, colour = QRectF(self.rect()), self.isChecked(), self._colour()
+        icon = 18 if r.height() >= 44 else 16
+        top = (r.height() - icon - 16) / 2  # the icon, then its name in a line of 16
+        if self.icon_name:
+            p.drawPixmap(QPointF(r.center().x() - icon / 2, top),
+                         theme.icon_pixmap(self.icon_name, (tok("iris") if checked else colour).name(), icon,
+                                           self.devicePixelRatioF()))
+        p.setFont(font(11, 600 if checked else 500))
+        p.setPen(colour)
+        p.drawText(QRectF(0, top + icon + 1, r.width(), 16), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                   self.text())
+        self._focus(p, r)
+        p.end()
 
 
 class MainWindow(QWidget):
@@ -4725,15 +4778,18 @@ class MainWindow(QWidget):
         brand.addWidget(self.wordmark)
         brand.addStretch()
         side.addLayout(brand)
-        side.addSpacing(24)
-        self.nav: dict[str, Button] = {}
+        self.brand_gap = QWidget()  # 24 px, less in a short window (_fit_sidebar)
+        side.addWidget(self.brand_gap)
+        self.nav_box = QVBoxLayout()
+        self.nav: dict[str, NavButton] = {}
         for key, label_text in NAV:
-            b = Button(label_text, "nav", icon=NAV_ICONS[key])
+            b = NavButton(label_text, NAV_ICONS[key])
             b.setCheckable(True)
             b.setAutoExclusive(True)
             b.clicked.connect(lambda _=False, k=key: self.show_page(k))
             self.nav[key] = b
-            side.addWidget(b)
+            self.nav_box.addWidget(b)
+        side.addLayout(self.nav_box)
         side.addStretch()
         self.update_link = button("", lambda: app.start_update(), link=True, size="sm", icon="update")
         self.update_link.hide()
@@ -4830,15 +4886,41 @@ class MainWindow(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._set_compact(self.width() < COMPACT_WIDTH)
+        self._fit_sidebar()
         if self.toast.isVisible():
             self.toast.move((self.width() - self.toast.width()) // 2 + self.toast_offset, self.height() - self.toast.height())
+
+    def _fit_sidebar(self) -> None:
+        """Every section's button in the window's height. In a short window (the smallest is 540 px) the gaps, the
+        margins and then the buttons get smaller, down to NAV_HEIGHTS' tight height, before anything is cut off."""
+        if self.compact is None:
+            return
+        roomy, tight = NAV_HEIGHTS[self.compact]
+        side, count = self.sidebar.layout(), len(self.nav)
+        margins = (10, 20, 10, 16) if self.compact else (20, 24, 0, 20)
+        side.setContentsMargins(*margins)
+        self.brand_gap.setFixedHeight(24)
+        self.nav_box.setSpacing(4)
+        self._set_nav_height(roomy)
+        if side.sizeHint().height() > self.height():  # short: smaller gaps and margins, then shorter buttons
+            margins = (10, 12, 10, 10) if self.compact else (20, 16, 0, 14)
+            side.setContentsMargins(*margins)
+            self.brand_gap.setFixedHeight(8 if self.compact else 12)
+            self.nav_box.setSpacing(2)
+            others = side.sizeHint().height() - count * roomy  # all but the buttons themselves
+            self._set_nav_height(max(tight, min(roomy, (self.height() - others) // count)))
+
+    def _set_nav_height(self, height: int) -> None:
+        for b in self.nav.values():
+            b.height_now = height
+            b.updateGeometry()
+        self.sidebar.layout().invalidate()
 
     def _set_compact(self, compact: bool) -> None:
         if compact == self.compact:
             return
         self.compact = compact
         self.sidebar.setFixedWidth(84 if compact else 216)
-        self.sidebar.layout().setContentsMargins(*((10, 20, 10, 16) if compact else (20, 24, 0, 20)))
         self.wordmark.setVisible(not compact)
         for key, b in self.nav.items():
             b.compact = compact
@@ -4856,9 +4938,11 @@ class MainWindow(QWidget):
         self.status_title.setFont(font(11 if compact else 12, 600))
         self.status_title.setAlignment(Qt.AlignmentFlag.AlignHCenter if compact else Qt.AlignmentFlag.AlignLeft)
         self.profile_button.setVisible(not compact and len(self.app.profiles.items) > 1)
+        self.update_link.setVisible(not compact and bool(self.update_link.text()))
         for page in self.pages.values():
             if isinstance(page, Page):
                 page.set_compact(compact)
+        self._fit_sidebar()
         self.layout().invalidate()
 
     def show_page(self, key: str) -> None:
@@ -4905,7 +4989,10 @@ class MainWindow(QWidget):
 
     def _show_profile(self) -> None:
         self.profile_button.setText(self.app.profiles.current.label)
-        self.profile_button.setVisible(not self.compact and len(self.app.profiles.items) > 1)
+        shown = not self.compact and len(self.app.profiles.items) > 1
+        if shown != self.profile_button.isVisibleTo(self):
+            self.profile_button.setVisible(shown)
+            self._fit_sidebar()
         counts = len(self.app.correction_suggestions()) if hasattr(self.app, "correction_suggestions") else 0
         self.nav["words"].badge = str(counts) if counts and not self.compact else ""
         self.nav["words"].update()
@@ -4990,7 +5077,8 @@ class MainWindow(QWidget):
         self.banner_holder.show()
         if version:
             self.update_link.setText(f"Update to {version}")
-            self.update_link.show()
+            self.update_link.setVisible(not self.compact)  # the rail has no room for it: the banner says it
+            self._fit_sidebar()
 
     def set_update_status(self, message: str) -> None:
         self.pages["settings"].update_status.setText(message)
