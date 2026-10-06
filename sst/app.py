@@ -13,6 +13,7 @@ import contextlib
 import ctypes
 import dataclasses
 import faulthandler
+import gc
 import logging
 import math
 import os
@@ -1654,6 +1655,8 @@ class TrayApp:
         for timer in (self.pump, self.live_keys):
             timer.stop()
         self._stop_all()
+        self.dictation, self._local = None, None  # the speech models let go of, so their files can be deleted too
+        gc.collect()
         self.recorder.close()
         self.dictionary.close()
         close_log_files()
