@@ -44,6 +44,13 @@ class FakeGateway:
                     return self._reply(500, {"error": {"message": "backend exploded"}})
                 if model == "slow":
                     time.sleep(1.0)
+                if model.startswith("cut"):  # stopped at the token limit: part of an answer, or none (thinking used it)
+                    part = "So we merge the five" if model == "cut" else ""
+                    if anthropic:
+                        return self._reply(200, {"type": "message", "role": "assistant", "stop_reason": "max_tokens",
+                                                 "content": [{"type": "text", "text": part}] if part else []})
+                    return self._reply(200, {"choices": [{"message": {"role": "assistant", "content": part},
+                                                          "finish_reason": "length"}]})
                 answer = {"long": text + " and then some more words " * 10,
                           "think": "<think>let me see</think> So we merge the five PRs today.",
                           "quoted": '"So we merge the five PRs today."'}.get(model, "So we merge the five PRs today.")
@@ -147,6 +154,24 @@ def test_an_unreachable_gateway_is_skipped_for_a_while(monkeypatch):
 def test_an_implausible_answer_is_not_used(fake, model):
     p = fake.polisher(model=model)
     assert p.polish(HEARD) == HEARD and "unusual" in p.last_error
+
+
+@pytest.mark.parametrize("provider", ["groq", "anthropic"])
+def test_an_answer_cut_off_at_the_token_limit_is_never_used(fake, provider):
+    # "So we merge the five" would pass as plausible: a text with a hole in it. The backup model's is used instead.
+    assert fake.polisher(model="cut", fallback="good", provider=provider).polish(HEARD) == "So we merge the five PRs today."
+    p = fake.polisher(model="cut-empty", provider=provider)  # a model whose thinking used up the limit
+    assert p.polish(HEARD) == HEARD and "ran out of tokens before answering" in p.last_error
+    with pytest.raises(GatewayError, match="ran out of tokens before the end of its answer"):
+        fake.polisher(model="cut", provider=provider).complete(HEARD)
+
+
+def test_text_transform_and_translate_get_a_higher_token_limit(fake):
+    polisher = fake.polisher(model="gpt-4.1-mini", provider="openai")
+    polisher.polish(HEARD)
+    cleanup = _last_post(fake)["max_completion_tokens"]
+    polisher.complete(HEARD)  # a translation into Tamil or Japanese takes several tokens a word
+    assert _last_post(fake)["max_completion_tokens"] >= cleanup + 200
 
 
 @pytest.mark.parametrize("model", ["think", "quoted"])

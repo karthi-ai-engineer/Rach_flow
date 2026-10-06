@@ -40,6 +40,10 @@ DOWN_FOR = 60.0          # after the gateway couldn't be reached (e.g. off the o
 TRANSFORM_TIMEOUT = 8.0    # seconds for a Text Transform answer, plus TRANSFORM_PER_WORD for each word
 TRANSFORM_PER_WORD = 0.05
 IDLE_RECONNECT = 30.0    # servers drop idle connections; refresh an older one while the user is speaking
+# The answer's token limit: a cleanup keeps the words; Text Transform and Translate may write more (Tamil or Japanese take
+# several tokens a word). An answer that reaches it is cut off, and never used.
+ANSWER_TOKENS, ANSWER_TOKENS_PER_WORD = 64, 3
+TRANSFORM_TOKENS, TRANSFORM_TOKENS_PER_WORD = 256, 8
 THINKING_ROOM = 2000     # tokens added to the limit for a model that thinks first: its thinking counts against it
 
 SYSTEM_PROMPT = (
@@ -317,10 +321,11 @@ class Polisher:
         with a readable reason."""
         if not self.address or not self.model:
             raise GatewayError("no AI model is set up: choose one in AI cleanup")
-        timeout, reason = TRANSFORM_TIMEOUT + TRANSFORM_PER_WORD * len(text.split()), ""
+        words, reason = len(text.split()), ""
+        timeout, limit = TRANSFORM_TIMEOUT + TRANSFORM_PER_WORD * words, TRANSFORM_TOKENS + TRANSFORM_TOKENS_PER_WORD * words
         for model in [self.model] + ([self.fallback] if self.fallback and self.fallback != self.model else []):
             try:
-                return self._ask(model, text, timeout)
+                return self._ask(model, text, timeout, limit)
             except TimeoutError:
                 reason = f"{_short(model)} took too long"
             except (OSError, http.client.HTTPException) as e:
@@ -365,9 +370,9 @@ class Polisher:
 
     # ---- HTTP
 
-    def _body(self, model: str, text: str) -> tuple[str, dict]:
-        """The request each provider understands: (path, body)."""
-        service, limit = self.config.service, 64 + 3 * len(text.split())
+    def _body(self, model: str, text: str, limit: int) -> tuple[str, dict]:
+        """The request each provider understands: (path, body). `limit`: tokens for the answer, before any thinking."""
+        service = self.config.service
         if service.api == "anthropic":
             body = {"model": model, "max_tokens": limit, "system": self._system_prompt(),
                     "messages": [{"role": "user", "content": text}]}
@@ -408,10 +413,11 @@ class Polisher:
             body["chat_template_kwargs"] = {"enable_thinking": False}  # Qwen3 and the like: answer directly
         return "/chat/completions", body
 
-    def _ask(self, model: str, text: str, timeout: float | None = None) -> str:
-        path, body = self._body(model, text)
+    def _ask(self, model: str, text: str, timeout: float | None = None, limit: int | None = None) -> str:
+        words = len(text.split())
+        path, body = self._body(model, text, limit or ANSWER_TOKENS + ANSWER_TOKENS_PER_WORD * words)
         with self._lock:
-            status, data = self._request(path, json.dumps(body), timeout or ANSWER_TIMEOUT + ANSWER_PER_WORD * len(text.split()))
+            status, data = self._request(path, json.dumps(body), timeout or ANSWER_TIMEOUT + ANSWER_PER_WORD * words)
         try:
             answer = json.loads(data)
         except ValueError:
@@ -422,10 +428,15 @@ class Polisher:
             if status != 200 or answer.get("type") == "error" or not isinstance(answer.get("content"), list):
                 raise GatewayError(f"{_short(model)}: HTTP {status} {_detail(answer, data)}")
             content = "".join(b.get("text", "") for b in answer["content"] if isinstance(b, dict) and b.get("type") == "text")
+            cut = answer.get("stop_reason") == "max_tokens"
         else:
             if status != 200 or "error" in answer or not answer.get("choices"):
                 raise GatewayError(f"{_short(model)}: HTTP {status} {_detail(answer, data)}")
-            content = answer["choices"][0].get("message", {}).get("content") or ""
+            choice = answer["choices"][0]
+            content, cut = choice.get("message", {}).get("content") or "", choice.get("finish_reason") == "length"
+        if cut:  # stopped at the limit: never a text with a hole in it (the backup model, or the text as heard)
+            raise GatewayError(f"{_short(model)} ran out of tokens before "
+                               + ("the end of its answer" if content.strip() else "answering (thinking used them up)"))
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
         if len(content) > 1 and content[0] == content[-1] == '"' and not text.startswith('"'):
             content = content[1:-1].strip()  # some models wrap the answer in quotes
