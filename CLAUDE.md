@@ -30,6 +30,11 @@ The accuracy research behind phases 10-12 and the correction work to come is in 
    tag `vX.Y.Z` on `main`. The Release workflow publishes `Rflow-Setup.exe` and `Rflow-Setup.exe.sha256`. Every
    installed Rflow offers that release as an update, and the website links to it. Keep those two asset names: the
    updater and the website depend on them.
+8. **More issues and pull requests, each smaller** (the owner's wish of 2026-10-06: their GitHub activity is mostly
+   commits, with few issues and pull requests; code review doesn't matter). Split a phase into one issue and one pull
+   request per part that stands on its own (a page, a fix, the docs and site), stacked on the phase branch, which then
+   goes into `main` with its own pull request. Open an issue for every bug or task found along the way, even one fixed in
+   the same phase, rather than only mentioning it in a pull request.
 
 ## Project
 
