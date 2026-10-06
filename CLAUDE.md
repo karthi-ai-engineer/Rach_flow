@@ -67,7 +67,12 @@ shared by the app (`sst/app.py`, Qt: tray, pill, `TrayApp`) and the console comm
 keeps no state and calls `TrayApp`, or `PreviewApp` in tests and screenshots. Its look ("Obsidian Signal", Rflow UI 2.0;
 the design is `docs/design/rflow-ui.html`) is `sst/theme.py` (colours with one job each, the Geist fonts, icons, the
 soft depth painted under widgets by their host) and `sst/ui.py` (buttons, toggles, lamps, keycaps, the voice orb). In-app updates are `sst/updates.py`, and
-the text cleanup is `sst/gateway.py` (`PROVIDERS`: each provider's request format). Accuracy work follows
+the text cleanup is `sst/gateway.py` (`PROVIDERS`: each provider's request format). What each model accepts
+(temperature, reasoning, thinking, room to answer) is `sst/modelrules.py`, shared with the cloud speech engines. The
+ready-made setups (Recommended, Fastest, Multilingual, Local, Custom) are `sst/setups.py`, and what each model costs a
+month is `sst/costs.py`, from the official pricing pages (the research of 2026-10-06 is in `research_notes/`, not in
+git): when a provider renames, retires or reprices a model, update `costs.py`, `setups.py` and `modelrules.py`
+together. Accuracy work follows
 `docs/accuracy.md`: a change is kept only if `sst eval` (`sst/evaluate.py`) shows it better on the reading test's held-out
 sets (C-E), and an engine's `signature` must change whenever its output can (model, decoding, hotwords), since
 transcriptions are cached by it. Dictation runs through the voice pipeline (`sst/pipeline/`, the owner's plan of
