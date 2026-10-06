@@ -245,6 +245,10 @@ Bug reports, feature requests and pull requests are welcome: [CONTRIBUTING.md](C
 the tests must never do, and how a pull request is reviewed. Security flaws are reported privately
 ([SECURITY.md](SECURITY.md)). Everyone follows the [code of conduct](CODE_OF_CONDUCT.md).
 
+## Who makes it
+
+Rflow is made by [karthi-ai-engineer](https://github.com/karthi-ai-engineer), AI Application Engineer @ Tokyo, Japan.
+
 ## License
 
 Rflow is released under the [MIT License](LICENSE). The files it builds on keep their own licenses, listed in
