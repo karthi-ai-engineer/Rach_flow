@@ -15,6 +15,20 @@ def test_openai_reasoning_models_and_the_least_thinking_they_allow(model, reason
     assert modelrules.openai_effort(model) == effort
 
 
+@pytest.mark.parametrize("model, thinking, temperature", [
+    ("gemini-3.5-flash-lite", "minimal", False), ("models/gemini-3.5-flash-lite", "minimal", False),
+    ("gemini-3.1-flash-lite", "minimal", False), ("gemini-3.6-flash", "minimal", False),
+    ("gemini-3.7-flash", "low", False), ("gemini-3.8-flash", "low", False),  # "minimal" is an error on these
+    ("gemini-3.5-flash", "low", False), ("gemini-flash-latest", "low", False),  # the alias is 3.5 Flash
+    ("gemini-3-flash-preview", "low", False), ("gemini-3.1-pro-preview", "low", False),
+    ("gemini-flash-lite-latest", "", False),  # its model isn't documented: its own thinking and temperature
+    ("gemini-2.5-flash-lite", "", True), ("gemini-2.5-flash", "", True), ("gemma-3-27b-it", "", True),
+])
+def test_gemini_3_thinks_least_at_its_own_temperature(model, thinking, temperature):
+    assert modelrules.gemini_thinking(model) == thinking
+    assert modelrules.gemini_takes_temperature(model) is temperature
+
+
 @pytest.mark.parametrize("model, effort", [("openai/gpt-oss-20b", "low"), ("openai/gpt-oss-120b", "low"),
                                            ("qwen/qwen3.8-27b", "none"), ("llama-3.1-8b-instant", "")])
 def test_groq_models_that_think_are_asked_for_the_least(model, effort):

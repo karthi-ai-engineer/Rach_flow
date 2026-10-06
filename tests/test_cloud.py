@@ -168,18 +168,33 @@ def test_no_language_and_no_words_send_no_hints(fake):
 
 
 def test_gemini_gets_the_audio_inline_with_an_instruction(fake):
-    engine = fake.engine("gemini", model="gemini-flash-latest", language="ta", path="/v1beta")
+    engine = fake.engine("gemini", model="gemini-3.6-flash", language="ta", path="/v1beta")
     engine.words = ["Karthi"]
     assert engine.transcribe(AUDIO, RATE) == "Hello from Gemini."  # its thinking is left out
     request = fake.requests[0]
-    assert request["path"] == "/v1beta/models/gemini-flash-latest:generateContent"
+    assert request["path"] == "/v1beta/models/gemini-3.6-flash:generateContent"
     assert request["x-goog-api-key"] == "test-key" and request["auth"] is None
     body = request["json"]
     audio, instruction = body["contents"][0]["parts"]
     assert audio["inline_data"]["mime_type"] == "audio/wav"
     assert _wav(base64.b64decode(audio["inline_data"]["data"])) == (16_000, 32_000)
     assert "word for word" in instruction["text"] and "Tamil" in instruction["text"] and "Karthi" in instruction["text"]
-    assert body["generationConfig"]["temperature"] == 0
+    # Gemini 3 Flash thinks at "medium" unless told, and Google advises its own temperature (1.0) over 0.
+    assert body["generationConfig"] == {"thinkingConfig": {"thinkingLevel": "minimal"}}
+
+
+@pytest.mark.parametrize("model, config", [
+    ("gemini-3.5-flash-lite", {"thinkingConfig": {"thinkingLevel": "minimal"}}),
+    ("gemini-3.8-flash", {"thinkingConfig": {"thinkingLevel": "low"}}),  # "minimal" is an error on 3.7 and 3.8
+    ("gemini-flash-latest", {"thinkingConfig": {"thinkingLevel": "low"}}),  # Gemini 3.5 Flash, by Google's docs
+    ("gemini-flash-lite-latest", {}),  # its model isn't documented: its own settings, which always work
+    ("gemini-2.5-flash-lite", {"temperature": 0}),  # before Gemini 3: as always
+])
+def test_each_gemini_flash_model_thinks_as_little_as_it_allows(fake, model, config):
+    engine = fake.engine("gemini", model=model, path="/v1beta")
+    engine.transcribe(AUDIO, RATE)
+    assert fake.requests[0]["json"]["generationConfig"] == config
+    assert ("|think:" in engine.signature) is ("temperature" not in config)  # cached apart from the old requests' text
 
 
 def test_a_provider_error_is_typed_by_parakeet_and_said(fake):

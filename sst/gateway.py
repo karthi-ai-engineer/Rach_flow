@@ -388,7 +388,12 @@ class Polisher:
             elif effort := modelrules.openai_effort(model):
                 body["reasoning_effort"] = effort
         elif service.key == "gemini":
-            body["temperature"] = 0  # no limit: Gemini's thinking counts against it and would cut the answer short
+            # No limit: Gemini's thinking counts against it and would cut the answer short. Gemini 3 thinks as little as it
+            # allows, at its own temperature.
+            if thinking := modelrules.gemini_thinking(model):
+                body["reasoning_effort"] = thinking
+            if modelrules.gemini_takes_temperature(model):
+                body["temperature"] = 0
         elif service.key == "groq":
             body["max_completion_tokens"] = limit  # Groq's current name for the limit (max_tokens is deprecated)
             if effort := modelrules.groq_effort(model):  # gpt-oss: as little thinking as it allows, with room for it

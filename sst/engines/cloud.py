@@ -3,8 +3,8 @@ server (vLLM, a company AI gateway, any server with OpenAI's transcription API).
 
 The voice is sent to the provider: the window asks before a cloud model is used. OpenAI, Groq and own servers share
 OpenAI's transcription API (a multipart upload of the recording); Gemini's Flash models get the recording inline in a
-generateContent request, with an instruction to write down exactly what was said. Your words and the chosen language
-go along as hints.
+generateContent request, with an instruction to write down exactly what was said; Gemini 3's are asked to think as little
+as they allow (sst.modelrules). Your words and the chosen language go along as hints.
 
 Gemini Transcribe (gemini-3.5-transcribe), Google's dedicated speech-to-text model, gets no instruction: the recording
 and an audioTranscriptionConfig. Always VERBATIM (fillers and false starts kept: the voice pipeline does its own
@@ -40,6 +40,7 @@ import numpy as np
 
 from sst.audio import TARGET_RATE, condition, resample
 from sst.engines.whisper import LANGUAGES
+from sst.modelrules import gemini_takes_temperature, gemini_thinking
 from sst.pipeline.contracts import RawTranscript, WordInfo
 from sst.pipeline.dictionary import speech_hints
 
@@ -170,7 +171,12 @@ class CloudEngine:
     def signature(self) -> str:
         words = hashlib.sha1("/".join(self.words).encode("utf-8")).hexdigest()[:10] if self.words else "none"
         where = self.name if self.name in CLOUD else f"{self.name}@{hashlib.sha1(self.url.encode()).hexdigest()[:8]}"
-        mode = f"|verbatim:{self._mode}" if self._transcribe_model() else ""  # the vocabulary changes the text
+        if self._transcribe_model():
+            mode = f"|verbatim:{self._mode}"  # the vocabulary changes the text
+        elif self.provider.api == "gemini" and not gemini_takes_temperature(self.model):  # Gemini 3 asked to think less
+            mode = f"|think:{gemini_thinking(self.model) or 'default'}"
+        else:
+            mode = ""  # requests as they always were
         return f"cloud|{where}|{self.model}|lang:{self.language or 'auto'}|words:{words}{mode}|peak-1"
 
     @property
@@ -314,11 +320,19 @@ class CloudEngine:
             instruction += " " + HINTS.format(terms=", ".join(f'"{h}"' for h in hints))
         body = json.dumps({"contents": [{"parts": [
             {"inline_data": {"mime_type": "audio/wav", "data": base64.b64encode(wav).decode("ascii")}},
-            {"text": instruction}]}], "generationConfig": {"temperature": 0}}).encode("utf-8")
+            {"text": instruction}]}], "generationConfig": self._flash_config()}).encode("utf-8")
         status, data, _ = self._request(f"/models/{self.model}:generateContent", body, self._google(), timeout)
         answer = _json(status, data)
         parts = ((answer.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
         return RawTranscript("".join(p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought")))
+
+    def _flash_config(self) -> dict:
+        """A Flash model's generationConfig: Gemini 3 thinks as little as it allows ("medium" unless told: slower, and
+        3-4 times the cost) at its own temperature; an older model writes at temperature 0 (sst.modelrules)."""
+        config = {"temperature": 0} if gemini_takes_temperature(self.model) else {}
+        if thinking := gemini_thinking(self.model):
+            config["thinkingConfig"] = {"thinkingLevel": thinking}
+        return config
 
     # ---- Gemini Transcribe (the owner's plan, sections 18-21): upload, transcribe and delete kept apart
 

@@ -264,11 +264,14 @@ def test_anthropic_errors_are_readable(fake):
     assert polisher.polish(HEARD) == HEARD and "backend exploded" in polisher.last_error
 
 
-def test_gemini_gets_no_token_limit(fake):
-    fake.polisher(provider="gemini").polish(HEARD)
+@pytest.mark.parametrize("model, sent_too", [
+    ("gemini-3.5-flash-lite", {"reasoning_effort": "minimal"}), ("gemini-3.8-flash", {"reasoning_effort": "low"}),
+    ("gemini-flash-lite-latest", {}), ("gemini-2.5-flash-lite", {"temperature": 0})])
+def test_gemini_gets_no_token_limit_and_gemini_3_thinks_least_at_its_own_temperature(fake, model, sent_too):
+    fake.polisher(model=model, provider="gemini").polish(HEARD)
     sent = _last_post(fake)
-    assert sent["temperature"] == 0 and "max_tokens" not in sent and "max_completion_tokens" not in sent
-    assert "chat_template_kwargs" not in sent
+    assert "max_tokens" not in sent and "max_completion_tokens" not in sent and "chat_template_kwargs" not in sent
+    assert {k: sent[k] for k in ("reasoning_effort", "temperature") if k in sent} == sent_too
 
 
 @pytest.mark.parametrize("provider", ["ollama", "vllm"])

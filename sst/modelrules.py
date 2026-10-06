@@ -2,9 +2,45 @@
 From the providers' model pages, seen 2026-10-06 (the research notes "Rflow model costs and setups"); a model these rules
 don't know keeps its provider's defaults, which always work.
 
-AI cleanup, Text Transform and Translate ask through these (sst.gateway). Standard library only.
+AI cleanup, Text Transform and Translate ask through these (sst.gateway), and so do Gemini's Flash models as speech
+models (sst.engines.cloud). Thinking is billed as output and makes the answer slower, and a dictation needs next to none.
+Standard library only.
 """
 import re
+
+# ---- Google Gemini
+
+# Aliases whose model Google documents. Another alias (gemini-flash-lite-latest: its model isn't documented) keeps the
+# model's own thinking and temperature, which always work.
+GEMINI_ALIASES = {"gemini-flash-latest": "gemini-3.5-flash"}
+
+
+def _gemini(model: str) -> tuple[tuple[int, int], str] | None:
+    """A Gemini model's version and family, ((3, 5), "flash-lite") for gemini-3.5-flash-lite; None without a version."""
+    name = model.strip().lower().removeprefix("models/")
+    m = re.fullmatch(r"gemini-(\d+)(?:\.(\d+))?-(.+)", GEMINI_ALIASES.get(name, name))
+    return ((int(m.group(1)), int(m.group(2) or 0)), m.group(3)) if m else None
+
+
+def gemini_thinking(model: str) -> str:
+    """How little a Gemini 3 model can be asked to think: "minimal" for its Flash-Lite models and 3.6 Flash, "low" for
+    the others ("minimal" is an error on 3.7 and 3.8 Flash); "" for any other model, which keeps its own. Gemini 3's
+    Flash models think at "medium" unless told: slower, and 3-4 times the cost."""
+    gemini = _gemini(model)
+    if gemini is None or gemini[0] < (3, 0):
+        return ""
+    version, family = gemini
+    return "minimal" if family.startswith("flash-lite") or (version == (3, 6) and family.startswith("flash")) else "low"
+
+
+def gemini_takes_temperature(model: str) -> bool:
+    """Whether a model on Gemini's API gets temperature 0, as before: not a Gemini 3 model, nor an alias that may point to
+    one. Google advises Gemini 3's default of 1.0, since lower "may lead to unexpected behavior, such as looping"."""
+    if not model.strip().lower().removeprefix("models/").startswith("gemini-"):
+        return True  # Gemma and the like
+    gemini = _gemini(model)
+    return gemini is not None and gemini[0] < (3, 0)
+
 
 # ---- OpenAI (Chat Completions)
 
