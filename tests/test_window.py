@@ -1144,6 +1144,15 @@ def test_ai_and_models_shows_both_halves_and_switches_the_cleanup():
     assert ("check_ai", "gemini", "gemini-3.5-flash-lite") in app.calls
 
 
+def test_a_long_microphone_name_is_cut_short_and_whole_in_its_tooltip():
+    # The user testing's M-03: the owner's own laptop microphone made AI & models 1418 px wide in a 696 px view.
+    long = "Microphone Array (Intel® Smart Sound Technology for Digital Microphones)"
+    box = w.MicrophoneBox(long, [long, "Headset (Buds)"], long)
+    assert box.minimumSizeHint().width() < 300 and box.combo.sizeHint().width() < 300  # not the name's width
+    assert box.combo.currentText() == long and box.combo.toolTip() == long  # cut with … in the box, whole in its tooltip
+    assert box.combo.itemData(box.combo.findData(long), Qt.ItemDataRole.ToolTipRole) == long
+
+
 def test_ai_and_models_without_a_connection_offers_one():
     window, _ = _window()
     page = window.pages["models"]

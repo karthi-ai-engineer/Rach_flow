@@ -52,6 +52,9 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QStyle,
+    QStyleOptionComboBox,
+    QStylePainter,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -657,10 +660,79 @@ def link_row(title: str, caption_text: str, on_click, icon: str = "chevron-right
 
 # ---------------------------------------------------------------- the microphone box (AI & models and the welcome)
 
+def fit_to_width(box: QComboBox, letters: int = 12) -> QComboBox:
+    """A dropdown that asks for the room of a few letters, not for its longest item's: a long name never makes its page
+    wider than the window (the user testing's M-03 and N-04: a microphone's or a model's name)."""
+    box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+    box.setMinimumContentsLength(letters)
+    box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    return box
+
+
+class ElidedChoice(Choice):
+    """A dropdown whose closed box cuts a long name with … ("Microphone Array (Intel® Smart Sound…"), the whole name in
+    its tooltip; the list shows every name whole."""
+
+    def __init__(self):
+        super().__init__()
+        fit_to_width(self)
+        self.currentIndexChanged.connect(lambda _=0: self.setToolTip(self.currentText()))
+
+    def addItem(self, text: str, data=None) -> None:
+        super().addItem(text, data)
+        self.setItemData(self.count() - 1, text, Qt.ItemDataRole.ToolTipRole)
+        self.setToolTip(self.currentText())  # also while its signals are blocked (the list filled again)
+
+    def paintEvent(self, event):
+        p = QStylePainter(self)
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        p.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option)
+        room = self.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, option,
+                                           QStyle.SubControl.SC_ComboBoxEditField, self).width()
+        option.currentText = self.fontMetrics().elidedText(option.currentText, Qt.TextElideMode.ElideRight, room - 4)
+        p.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, option)
+        p.end()
+
+
+class ElidedText(QLabel):
+    """A label on one line, cut with … when the space is short (the whole text is its tooltip), so a long name never
+    sets the width of its page. `role` and `tone` as label()'s; no role for a font set by hand (a key, an address)."""
+
+    def __init__(self, value: str = "", role: str | None = "caption", tone: str | None = "3"):
+        super().__init__()
+        if role:
+            self.setProperty("role", role)
+        if tone:
+            self.setProperty("tone", tone)
+        self.setMinimumWidth(1)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._full = ""
+        self.setText(value)
+
+    def setText(self, value: str) -> None:
+        self._full = value
+        self._elide()
+
+    def text(self) -> str:
+        return self._full
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        width = self.width() if self.width() > 1 else 10_000  # before the first layout: whole
+        shown = self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, width)
+        super().setText(shown)
+        self.setToolTip(self._full if shown != self._full else "")
+
+
 class MicrophoneBox(QWidget):
     """A microphone choice with a live level meter, so the user sees at once that the microphone hears them. The list
     follows Windows while it's shown (a headset plugged in or out shows up within FOLLOW_MS), "Windows default" says
-    which microphone that is now, and a chosen one that isn't connected says what Rflow uses meanwhile."""
+    which microphone that is now, and a chosen one that isn't connected says what Rflow uses meanwhile. Long names are
+    cut with … (whole in the tooltip), so they never widen the page."""
 
     changed = Signal(str)  # the chosen device name ("" = the Windows default)
     followed = Signal()  # the list changed (a microphone plugged in or out, a new default)
@@ -671,13 +743,13 @@ class MicrophoneBox(QWidget):
         """`source` () -> (microphones, default name) is asked again every FOLLOW_MS while the box is shown."""
         super().__init__()
         self._source, self._listed = source, None
-        self.combo = Choice()
+        self.combo = ElidedChoice()
         self.combo.currentIndexChanged.connect(self._chosen)
         self.level = Meter()
         self.level.setToolTip("Say something: the bars light up.")
         self.note = caption("", "3")
         self.note.hide()
-        self.hearing = caption("", "3", wrap=False)  # the microphone the meter (and so dictation) actually opened
+        self.hearing = ElidedText()  # the microphone the meter (and so dictation) actually opened
         self.hearing.hide()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -711,6 +783,7 @@ class MicrophoneBox(QWidget):
             self.combo.addItem(f"{current} (not connected)", current)
         self.combo.setCurrentIndex(max(0, self.combo.findData(current)))
         self.combo.blockSignals(False)
+        self.combo.setToolTip(self.combo.currentText())
         self._show_note()
 
     def _show_note(self) -> None:
