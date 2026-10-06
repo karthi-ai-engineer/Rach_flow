@@ -465,16 +465,16 @@ def test_switching_providers_keeps_each_one_s_key_and_address():
     page = window.pages["cleanup"]
     page.provider.setCurrentIndex(page.provider.findData("groq"))
     page.api_key.setText("groq-key")
-    page.model.setCurrentText("llama-3.1-8b-instant")
+    page.model.setCurrentText("openai/gpt-oss-20b")
     page.provider.setCurrentIndex(page.provider.findData("vllm"))
     assert page.api_key.text() == "" and page.model.currentText() == ""  # a fresh start for the other provider
     page.gateway_url.setText("http://my-server:8000/v1")
     page.provider.setCurrentIndex(page.provider.findData("groq"))
-    assert page.api_key.text() == "groq-key" and page.model.currentText() == "llama-3.1-8b-instant"
+    assert page.api_key.text() == "groq-key" and page.model.currentText() == "openai/gpt-oss-20b"
     page.cleanup_on.setChecked(True)
     _button(page, "Save").click()
     on, model, _, gateway = app.calls[-1][1:]
-    assert (on, model) == (True, "llama-3.1-8b-instant")
+    assert (on, model) == (True, "openai/gpt-oss-20b")
     assert gateway == GatewayConfig("", "groq-key", "groq", {"vllm": ("http://my-server:8000/v1", "")})
     assert gateway.address == "https://api.groq.com/openai/v1"
 

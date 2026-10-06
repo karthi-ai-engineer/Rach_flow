@@ -6752,7 +6752,7 @@ class PreviewApp:
 
     def ai_models(self, gateway: GatewayConfig) -> list[str]:
         self.calls.append(("ai_models", gateway.service.key))
-        return {"gemini": ["gemini-2.0-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-pro", "text-embedding-004"],
+        return {"gemini": ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "text-embedding-004"],
                 "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1-mini"]}.get(gateway.service.key, ["model-a"])
 
     def check_ai(self, gateway: GatewayConfig, model: str) -> str:
