@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from sst import modelrules
 from sst.settings import CONFIG_DIR
 
 GATEWAY_FILE = CONFIG_DIR / "gateway.json"  # the API keys, encrypted for the Windows user; never in git
@@ -39,6 +40,7 @@ DOWN_FOR = 60.0          # after the gateway couldn't be reached (e.g. off the o
 TRANSFORM_TIMEOUT = 8.0    # seconds for a Text Transform answer, plus TRANSFORM_PER_WORD for each word
 TRANSFORM_PER_WORD = 0.05
 IDLE_RECONNECT = 30.0    # servers drop idle connections; refresh an older one while the user is speaking
+THINKING_ROOM = 2000     # tokens added to the limit for a model that thinks first: its thinking counts against it
 
 SYSTEM_PROMPT = (
     "You clean up text from a speech recognizer. Fix recognition errors using the context and the user's vocabulary "
@@ -367,8 +369,13 @@ class Polisher:
         """The request each provider understands: (path, body)."""
         service, limit = self.config.service, 64 + 3 * len(text.split())
         if service.api == "anthropic":
-            return "/messages", {"model": model, "max_tokens": limit, "temperature": 0, "system": self._system_prompt(),
-                                 "messages": [{"role": "user", "content": text}]}
+            body = {"model": model, "max_tokens": limit, "system": self._system_prompt(),
+                    "messages": [{"role": "user", "content": text}]}
+            if modelrules.claude_takes_temperature(model):
+                body["temperature"] = 0
+            else:  # Claude 4.7 and later refuse it; room in case the model thinks first
+                body["max_tokens"] += THINKING_ROOM
+            return "/messages", body
         body = {"model": model,
                 "messages": [{"role": "system", "content": self._system_prompt()}, {"role": "user", "content": text}]}
         if service.key == "openai":

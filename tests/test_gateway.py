@@ -239,13 +239,21 @@ def test_openai_reasoning_models_get_room_to_think_and_no_temperature(fake):
 
 
 def test_anthropic_gets_its_messages_api(fake):
-    polisher = fake.polisher(provider="anthropic", vocabulary=["PRs"])
+    polisher = fake.polisher(model="claude-haiku-4-5", provider="anthropic", vocabulary=["PRs"])
     assert polisher.polish(HEARD) == "So we merge the five PRs today."
     sent = _last_post(fake)
     assert sent["path"] == "/v1/messages" and sent["auth"] is None
     assert sent["x-api-key"] == "test-key" and sent["anthropic-version"] == gateway.ANTHROPIC_VERSION
     assert "PRs" in sent["system"] and [m["role"] for m in sent["messages"]] == ["user"]
-    assert sent["max_tokens"] > 0 and sent["temperature"] == 0
+    assert 0 < sent["max_tokens"] < gateway.THINKING_ROOM and sent["temperature"] == 0  # Haiku 4.5 takes it
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-opus-4-7", "a-name-of-its-own"])
+def test_claude_4_7_and_later_get_no_temperature_and_room_to_think(fake, model):
+    # Anthropic answers HTTP 400 to temperature 0 from Claude 4.7 on, and Opus 5.5 thinks whether asked or not.
+    fake.polisher(model=model, provider="anthropic").polish(HEARD)
+    sent = _last_post(fake)
+    assert "temperature" not in sent and sent["max_tokens"] > gateway.THINKING_ROOM
 
 
 def test_anthropic_errors_are_readable(fake):
