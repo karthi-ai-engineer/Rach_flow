@@ -595,6 +595,16 @@ def test_the_source_and_screen_sharing_apply_while_it_runs(tray_app, monkeypatch
     assert not app.settings.live_hide_from_share and calls == [("source", "microphone"), ("hidden", False)]
 
 
+def test_a_running_live_translation_keeps_the_languages_it_started_with(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    app.apply_settings(dataclasses.replace(app.settings, live_target="en", live_mic_target="ja"))
+    assert app.live_languages() == ("en", "ja")
+    monkeypatch.setattr(type(app.live), "running", property(lambda self: True))
+    app.live.config = app.live_config()  # what it started with
+    app.apply_settings(dataclasses.replace(app.settings, live_target="ta", live_mic_target="ko"))
+    assert app.live_languages() == ("en", "ja")  # the page says what it translates into: the new ones wait for a start
+
+
 def test_ctrl_alt_l_starts_and_stops_live_translation_from_any_app(tray_app, monkeypatch):
     app, _, _ = tray_app
     listener = app.live_listener

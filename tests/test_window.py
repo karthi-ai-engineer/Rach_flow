@@ -1238,11 +1238,64 @@ def test_live_translation_is_a_section_of_its_own_and_starts_and_stops_there():
     window.show_page("live")
     page = window.pages["live"]
     assert page.state.text() == "Off" and page.start_button.text() == "Start" and page.connect_card.isHidden()
+    assert page.doing.text() == "Ready to translate what the computer plays into English" and not page.light.blinking
+    assert not page.start_button.running and not page.start_card.grab().isNull()  # green, with its glow
     page.start_button.click()
-    assert ("start_live", "computer") in app.calls and page.start_button.text() == "Stop"
-    assert page.state.text() == "On: translating your laptop's sound"
+    assert ("start_live", "computer") in app.calls and page.start_button.text() == "Stop" and page.start_button.running
+    assert page.state.text() == "Live" and page.light.state == "live" and page.light.blinking
+    assert page.doing.text() == "Translating what the computer plays into English"
+    assert not page.start_card.grab().isNull()  # red
     page.start_button.click()
     assert ("stop_live",) in app.calls and page.start_button.text() == "Start" and page.state.text() == "Off"
+    assert not page.start_button.running and not page.light.blinking
+
+
+def test_the_page_follows_live_translation_started_or_stopped_elsewhere():
+    window, app = _live_window()
+    window.show_page("live")
+    page = window.pages["live"]
+    app._live = True  # started with the shortcut or from the tray menu
+    window.refresh()  # what the TrayApp does when live translation starts or stops
+    assert page.start_button.text() == "Stop" and page.state.text() == "Live" and page.light.blinking
+    app._live = False  # stopped with the bar's ✕
+    window.refresh()
+    assert page.start_button.text() == "Start" and page.state.text() == "Off" and not page.light.blinking
+
+
+def test_the_live_light_blinks_only_while_it_runs_and_is_shown():
+    from PySide6.QtGui import QHideEvent, QShowEvent
+    window, _ = _live_window()
+    window.show_page("live")
+    light = window.pages["live"].light
+    window.pages["live"].start_button.click()
+    assert light.blinking and not light._timer.isActive()  # the window isn't on the screen: nothing ticks
+    QApplication.sendEvent(light, QShowEvent())  # shown
+    assert light._timer.isActive() and light._timer.interval() == 500  # lit half a second, dimmed the other half
+    light._tick()
+    assert not light.lit
+    QApplication.sendEvent(light, QHideEvent())  # another page, or the window closed or minimised
+    assert not light._timer.isActive()
+    QApplication.sendEvent(light, QShowEvent())
+    assert light._timer.isActive() and light.lit
+    window.pages["live"].start_button.click()  # stopped
+    assert not light.blinking and not light._timer.isActive() and light.lit
+
+
+def test_what_it_does_names_the_languages_and_a_new_one_waits_for_the_next_start():
+    window, app = _live_window(live_source="both", live_target="en", live_mic_target="ja")
+    window.show_page("live")
+    page = window.pages["live"]
+    page.start_button.click()
+    assert page.doing.text() == "Translating what the computer plays into English, and what you say into Japanese"
+    page.target.setCurrentIndex(page.target.findData("ta"))
+    assert app.settings.live_target == "ta" and page.doing.text().startswith("Translating what the computer plays into "
+                                                                            "English")  # the session keeps its language
+    assert page.note.text() == "Saved: the next start uses the new language." and not page.note.isHidden()
+    page.sources.buttons["computer"].click()  # a source changes at once
+    assert page.doing.text() == "Translating what the computer plays into English"
+    app._live = False  # stopped elsewhere: the note about that session goes
+    window.refresh()
+    assert page.note.isHidden() and page.doing.text() == "Ready to translate what the computer plays into Tamil"
 
 
 def test_the_source_decides_which_languages_are_asked_for():
@@ -1288,6 +1341,10 @@ def test_without_a_gemini_key_it_says_where_to_add_one():
     window.show_page("live")
     page = window.pages["live"]
     assert not page.connect_card.isHidden() and not page.start_button.isEnabled()
+    assert page.state.text() == "Off" and page.doing.text() == "Add a Gemini key to start it"
+    assert not page.start_card.grab().isNull()  # pressed in, quiet
+    _button(page.connect_card, "Add a Gemini key").click()
+    assert window.current_page() == "models"
 
 
 def test_past_sessions_are_listed_to_open():
@@ -1320,4 +1377,4 @@ def test_hearing_the_translation_is_switched_on_in_the_section():
 def test_the_section_says_when_the_voice_cant_speak_the_language_chosen():
     window, _ = _live_window(live_target="ja")
     window.show_page("live")
-    assert window.pages["live"].speak_caption.text().startswith("Danny speaks English: choose English above")
+    assert window.pages["live"].speak_caption.text().startswith("Danny speaks English: choose English below")

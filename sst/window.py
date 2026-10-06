@@ -91,14 +91,17 @@ from sst.transform import TRANSFORMS
 from sst.translate import LANGUAGES as TRANSLATE_LANGUAGES
 from sst.translate import fallback_second, system_language
 from sst.ui import (
+    BlinkLamp,
     Button,
     Card,
+    GlowCard,
     Host,
     IconButton,
     Lamp,
     Mark,
     Meter,
     Orb,
+    PowerButton,
     Segmented,
     Toast,
     Toggle,
@@ -133,7 +136,6 @@ LIVE_SOURCE_WORDS = {
     "both": "An online meeting: the others from your laptop, and your own words from the microphone, marked “You”. "
             "Use headphones, or the microphone hears the meeting too.",
 }
-LIVE_DOING = {"computer": "your laptop's sound", "microphone": "your microphone", "both": "your laptop and your microphone"}
 LIVE_SPEEDS = [("Normal", 1.0), ("A little faster", 1.15), ("Faster", 1.3)]
 LIVE_SHORTCUTS = [("Ctrl+Alt+L", "ctrl+alt+l"), ("Ctrl+Shift+L", "ctrl+shift+l"), ("Win+Alt+L", "win+alt+l"), ("Off", "")]
 TRANSLATE_SHORTCUTS = [("Ctrl+C+C (press Ctrl+C twice)", "ctrl+c+c"), ("Ctrl+Alt+L", "ctrl+alt+l"), ("Off", "")]
@@ -3088,38 +3090,94 @@ class ToolsPage(Page):
             run_in_background(self, lambda: self.app.run_transform(sample, key), done)
 
 
+def live_doing(source: str, target: str, mic_target: str) -> str:
+    """What live translation does with a source, in words: "what the computer plays into English"."""
+    computer = f"what the computer plays into {language_name(target)}"
+    if source == "microphone":
+        return f"what the microphone hears into {language_name(mic_target)}"
+    if source == "both":
+        return f"{computer}, and what you say into {language_name(mic_target)}"
+    return computer
+
+
 class LivePage(Page):
-    """Live translation (sst.live): start and stop it, what it listens to and into which languages, its shortcut, how
-    the bar shows in screen shares, and the past sessions' transcripts."""
+    """Live translation (sst.live), a main feature: a big Start (a Stop while it runs, with a blinking Live light and
+    what it's doing), the translation spoken aloud, then what it listens to and into which languages, its shortcut, how
+    the bar shows in screen shares, and the past sessions' transcripts. It shows the real state, however live
+    translation was started or stopped: here, the shortcut, the tray or the bar's ✕."""
 
     def __init__(self, app, go_to):
         super().__init__("Live translation", "Speech translated while people speak, in a bar you can move anywhere: a "
                                              "meeting, a video, or the people in the room.")
         self.app = app
+        self._running = False
         self.connect_card, connect = card(12, (16, 12, 12, 12), kind="well", horizontal=True)
         info = QLabel()
         info.setPixmap(theme.icon_pixmap("info", tok("warn").name(), 16, 1.0))
         connect.addWidget(info)
         connect.addWidget(caption("Live translation uses Google Gemini 3.5 Live Translate: add a Gemini key.", "2"), 1)
-        connect.addWidget(button("Add a Gemini key", lambda: go_to("cleanup"), primary=True, size="sm"))
+        connect.addWidget(button("Add a Gemini key", lambda: go_to("models"), primary=True, size="sm"))
         self.add(self.connect_card)
 
-        self.start_card, column = card(10, (24, 22, 24, 22))
-        head = QVBoxLayout()
-        head.setSpacing(6)
-        self.state = label("", "heading")
-        head.addWidget(self.state)
+        # Start / Stop first, with the light and what it's doing next to it
+        self.start_card = GlowCard()
+        column = QVBoxLayout(self.start_card)
+        column.setContentsMargins(24, 24, 24, 20)
+        column.setSpacing(16)
+        self.start_button = PowerButton("Start")
+        self.start_button.clicked.connect(self._start_clicked)
+        self.light = BlinkLamp("off")
+        self.state = label("Off", "heading", wrap=False)
+        status = QHBoxLayout()
+        status.setSpacing(8)
+        status.addWidget(self.light, 0, Qt.AlignmentFlag.AlignVCenter)
+        status.addWidget(self.state, 0, Qt.AlignmentFlag.AlignVCenter)
+        status.addStretch()
+        words = QVBoxLayout()
+        words.setSpacing(4)
+        words.addStretch()  # centred on the button
+        words.addLayout(status)
+        self.doing = label("", tone="2")
+        words.addWidget(self.doing)
+        words.addStretch()
+        top = QHBoxLayout()
+        top.setSpacing(20)
+        top.addWidget(self.start_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        top.addLayout(words, 1)
+        column.addLayout(top)
         self.how = QHBoxLayout()
         self.how.setSpacing(6)
-        head.addLayout(self.how)
-        self.start_button = button("Start", self._start_clicked, primary=True)
-        top = row(head, self.start_button, spacing=16)
-        top.setStretch(0, 1)
-        column.addLayout(top)
+        column.addLayout(self.how)
         self.note = caption("", "3")
         self.note.hide()
         column.addWidget(self.note)
         self.add(self.start_card)
+
+        # Hear it: the translation spoken aloud by a voice on the laptop (sst.live.voice), a row of its own
+        self.voice_card, column = card(6, (20, 18, 20, 18))
+        self.speak = Toggle("Speak the translation")
+        self.speak.toggled.connect(self._speak_toggled)
+        self.speak_icon = QLabel()
+        head = row(self.speak_icon, label("Speak the translation", "heading", wrap=False), self.speak, stretch_at=2,
+                   spacing=10)
+        column.addLayout(head)
+        self.speak_caption = caption("", "2")
+        column.addWidget(self.speak_caption)
+        self.speed = Choice(small=True)
+        for label_text, value in LIVE_SPEEDS:
+            self.speed.addItem(label_text, value)
+        self.speed.setMinimumWidth(200)
+        self.speed.currentIndexChanged.connect(self._speed_chosen)
+        self.speed_row = QWidget()  # the speed, under a line: only while it speaks
+        speed = QVBoxLayout(self.speed_row)
+        speed.setContentsMargins(0, 10, 0, 0)
+        speed.setSpacing(0)
+        speed.addWidget(divider())
+        line = setting_row("Speed", "It speeds up by itself when it falls behind.", self.speed)[0]
+        line.layout().setContentsMargins(0, 14, 0, 0)
+        speed.addWidget(line)
+        column.addWidget(self.speed_row)
+        self.add(self.voice_card)
 
         self.source_card, column = card(6, (20, 20, 20, 10))
         column.addWidget(label("Listen to", "heading"))
@@ -3134,22 +3192,6 @@ class LivePage(Page):
         self.mic_row, self.mic_title, _ = setting_row("Microphone into", "", self.mic_target)
         column.addWidget(self.mic_row)
         self.add(self.source_card)
-
-        # Hear it: the translation spoken aloud by a voice on the laptop (sst.live.voice)
-        self.voice_card, column = card(4, (20, 10, 20, 14))
-        self.speak = Toggle("Speak the translation")
-        self.speak.toggled.connect(self._speak_toggled)
-        self.speak_row, _, self.speak_caption = setting_row("Speak the translation", "", self.speak)
-        column.addWidget(self.speak_row)
-        column.addWidget(divider())
-        self.speed = Choice(small=True)
-        for label_text, value in LIVE_SPEEDS:
-            self.speed.addItem(label_text, value)
-        self.speed.setMinimumWidth(200)
-        self.speed.currentIndexChanged.connect(self._speed_chosen)
-        self.speed_row = setting_row("Speed", "It speeds up by itself when it falls behind.", self.speed)[0]
-        column.addWidget(self.speed_row)
-        self.add(self.voice_card)
 
         options, column = card(4, (20, 10, 20, 14))
         self.shortcut = Choice(small=True)
@@ -3190,11 +3232,20 @@ class LivePage(Page):
     def refresh(self) -> None:
         s, app = self.app.settings, self.app
         problem, running = app.live_problem(), app.live_running()
+        if running != self._running:  # started or stopped, here or elsewhere: a note about the last session goes
+            self._running = running
+            self._say("")
+        source = s.live_source if s.live_source in LIVE_SOURCE_WORDS else "computer"
+        doing = live_doing(source, *app.live_languages())  # while it runs, a new language waits for the next start
         self.connect_card.setVisible(bool(problem))
-        self.state.setText(f"On: translating {LIVE_DOING.get(s.live_source, LIVE_DOING['computer'])}" if running
-                           else "Off")
-        self.start_button.setText("Stop" if running else "Start")
+        self.start_button.set_running(running, "Stop" if running else "Start")
         self.start_button.setEnabled(running or not problem)
+        self.light.set_state("live" if running else "off")
+        self.light.set_blinking(running)  # its timer also stops while the page is hidden
+        self.state.setText("Live" if running else "Off")
+        set_tone(self.state, "live" if running else None)
+        self.doing.setText(f"Translating {doing}" if running else "Add a Gemini key to start it" if problem
+                           else f"Ready to translate {doing}")
         clash = app.live_shortcut_clash()
         clear(self.how)
         if s.live_shortcut and not clash:
@@ -3207,7 +3258,6 @@ class LivePage(Page):
                                       f"stays with {clash}: choose another." if clash
                                       else "Starts and stops live translation in any app.")
         self.shortcut_caption.show()
-        source = s.live_source if s.live_source in LIVE_SOURCE_WORDS else "computer"
         self.sources.set_current(source)
         self.source_words.setText(LIVE_SOURCE_WORDS[source])
         for box, value in ((self.target, s.live_target), (self.mic_target, s.live_mic_target),
@@ -3243,10 +3293,11 @@ class LivePage(Page):
         voice, (state, percent, problem) = self.app.live_voice(), self.app.live_voice_state()
         speaks = language_name(voice.language)
         spoken = LiveConfig(target=s.live_target, mic_target=s.live_mic_target, source=source).spoken_lanes(voice.language)
-        for box, value in ((self.speak, s.live_speak),):
-            box.blockSignals(True)
-            box.setChecked(value)
-            box.blockSignals(False)
+        self.speak_icon.setPixmap(theme.icon_pixmap("speaker" if s.live_speak else "speaker-off", tok("text2").name(), 18,
+                                                    self.devicePixelRatioF()))
+        self.speak.blockSignals(True)
+        self.speak.setChecked(s.live_speak)
+        self.speak.blockSignals(False)
         self.speed.blockSignals(True)
         self.speed.setCurrentIndex(max(0, self.speed.findData(s.live_speak_speed)))
         self.speed.blockSignals(False)
@@ -3255,7 +3306,7 @@ class LivePage(Page):
         elif problem:
             words = f"The voice couldn't be downloaded ({problem}). Switch it on again to try once more."
         elif not spoken:
-            words = (f"{voice.name} speaks {speaks}: choose {speaks} above to hear the translation. Until then the "
+            words = (f"{voice.name} speaks {speaks}: choose {speaks} below to hear the translation. Until then the "
                      f"translation is only shown.")
         elif state == "missing":
             words = (f"{voice.name}, an {speaks} voice that runs on this laptop, reads each sentence out as it's "
@@ -3265,7 +3316,6 @@ class LivePage(Page):
             if source != "computer":
                 words += " Through speakers the microphone pauses while it speaks; headphones keep it listening."
         self.speak_caption.setText(words)
-        self.speak_caption.show()
         self.speed_row.setVisible(s.live_speak)
 
     def _speak_toggled(self, on: bool) -> None:
@@ -4872,6 +4922,12 @@ class PreviewApp:
     def live_running(self) -> bool:
         return self._live
 
+    _live_languages = ("", "")  # what the session running translates into (a language changed meanwhile waits)
+
+    def live_languages(self) -> tuple[str, str]:
+        s = self.settings
+        return self._live_languages if self._live and all(self._live_languages) else (s.live_target, s.live_mic_target)
+
     def live_sessions(self, limit: int = 8) -> list:
         return list(self._live_sessions)[:limit]
 
@@ -4885,6 +4941,7 @@ class PreviewApp:
     def start_live(self) -> str:
         self.calls.append(("start_live", self.settings.live_source))
         self._live = not self.live_problem()
+        self._live_languages = (self.settings.live_target, self.settings.live_mic_target)
         return self.live_problem()
 
     def stop_live(self) -> None:
