@@ -86,7 +86,7 @@ PROVIDERS = {p.key: p for p in [
     Provider("anthropic", "Anthropic", "https://api.anthropic.com/v1", api="anthropic",
              key_page="https://console.anthropic.com/settings/keys", hint="e.g. a Haiku model (the fastest)"),
     Provider("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
-             key_page="https://aistudio.google.com/apikey", hint="e.g. a Flash-Lite model (the fastest)"),
+             key_page="https://aistudio.google.com/apikey", hint="e.g. gemini-3.5-flash-lite (fast and cheap)"),
     Provider("groq", "Groq", "https://api.groq.com/openai/v1", key_page="https://console.groq.com/keys",
              hint="e.g. openai/gpt-oss-20b (fast and cheap)"),
     Provider("ollama", "Ollama (on this computer)", "http://localhost:11434/v1", needs_key=False, own_server=True,

@@ -580,7 +580,7 @@ def _prompt(request) -> str:
 
 def test_only_names_and_terms_go_to_the_speech_model_as_a_spelling_reference(fake):
     for provider, path in (("gemini", "/v1beta"), ("groq", "/v1")):
-        engine = fake.engine(provider, model="gemini-flash-lite-latest" if provider == "gemini" else "", path=path)
+        engine = fake.engine(provider, model="gemini-3.5-flash-lite" if provider == "gemini" else "", path=path)
         engine.words = OWNER_WORDS
         engine.transcribe(AUDIO, RATE)
         prompt = _prompt(fake.requests[-1])
@@ -592,7 +592,7 @@ def test_only_names_and_terms_go_to_the_speech_model_as_a_spelling_reference(fak
 def test_a_copied_hint_list_is_replaced_by_the_transcript_made_without_hints(fake):
     fake.reply = lambda request: ("What is the problem. GitHub, Rflow, Parakeet, Vercel." if "GitHub" in _prompt(request)
                                   else "What is the problem.")
-    engine = fake.engine("gemini", model="gemini-flash-lite-latest", path="/v1beta")
+    engine = fake.engine("gemini", model="gemini-3.5-flash-lite", path="/v1beta")
     engine.words = OWNER_WORDS
     raw = engine.transcribe_chunk(AUDIO, RATE)
     assert raw.text == "What is the problem." and raw.diagnostics["hint_echo"] == "replaced"
@@ -616,7 +616,7 @@ def test_without_a_second_opinion_the_copied_list_is_taken_out(fake):
             return "Send it to me, GitHub Rflow Parakeet Vercel."
         return None
     fake.reply = reply
-    engine = fake.engine("gemini", model="gemini-flash-lite-latest", path="/v1beta")
+    engine = fake.engine("gemini", model="gemini-3.5-flash-lite", path="/v1beta")
     engine.words = OWNER_WORDS
     raw = engine.transcribe_chunk(AUDIO, RATE)
     assert raw.text == "Send it to me." and raw.diagnostics["hint_echo"] == "removed"
