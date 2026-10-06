@@ -594,11 +594,22 @@ def test_the_speech_page_shows_the_model_in_use_and_what_comes_next():
     assert not whisper.download.isHidden() and "1.6 GB" in whisper.download.text()  # not downloaded yet
     assert whisper.choose.isHidden()
     assert "In use: NVIDIA Parakeet" in page.in_use.title.text() and "hears English" in page.in_use.note.text()
+    assert list(page.where) == ["local", "cloud"]  # two groups: on this PC, and the cloud
     page.where["cloud"].click()
-    assert page.groups.currentIndex() == list(w.WHERE).index("cloud")
-    assert {"openai", "groq", "gemini"} <= set(page.models) and "Your voice is sent to OpenAI" in _labels(page)
-    page.where["server"].click()
-    assert "Your own server" in _labels(page)
+    assert list(page.tiles) == ["openai", "groq", "gemini", "server"]
+
+    def shown() -> list[str]:
+        return [key for key in page.tiles if not page.models[key].frame.isHidden()]
+    assert page.groups.currentIndex() == 1 and shown() == [] and not page.pick.isHidden()  # a tile first
+    assert [page.tiles[key].state.text() for key in page.tiles] == ["Needs a key"] * 3 + ["Needs an address"]
+    assert all(tile.logo.width() == 28 for tile in page.tiles.values())  # room for each provider's logo
+    page.tiles["openai"].clicked.emit()
+    assert page.tiles["openai"].chosen and shown() == ["openai"] and page.pick.isHidden()
+    assert "Your voice is sent to OpenAI" in _labels(page)
+    page.tiles["server"].clicked.emit()
+    assert shown() == ["server"] and not page.tiles["openai"].chosen
+    page.where["local"].click()
+    assert page.groups.currentIndex() == 0 and page.where["local"].isChecked()
 
 
 def test_a_cloud_model_asks_first_then_keeps_its_key_and_model():
@@ -741,7 +752,7 @@ def test_the_server_card_starts_from_ai_cleanups_server_and_lists_its_speech_mod
     page.show_where("server")
     server = page.models["server"]
     assert (server.address.text(), server.key.text()) == ("http://gateway.example/v1", "gw-key")
-    assert "Filled in from AI cleanup's server" in server.result.text()
+    assert "Filled in from your own server in Your API keys" in server.result.text()
     server.choose.click()
     assert "Choose a model first" in server.result.text() and not app.calls
     server._load_models()
@@ -1217,6 +1228,20 @@ def test_your_own_server_is_one_line_for_ai_cleanup_and_speech():
     server.bar.save.click()
     assert ("save_server", "http://localhost:8000/v1", ("vllm", SPEECH_SERVER)) in app.calls
     assert app.gateway.base_url == app.gateway.speech_server()[0] == "http://localhost:8000/v1"
+
+
+def test_a_cloud_tile_takes_its_key_from_your_api_keys():
+    window, app = _window()
+    keys, speech = window.pages["models"].keys, window.pages["speech"]
+    keys.add_buttons["groq"].click()
+    keys.rows["groq"].key.setText("gsk-test-key-0000")
+    keys.rows["groq"].bar.save.click()
+    assert app.gateway.chosen == "" and app.settings.speech_model == "parakeet"  # nothing chosen by saving a key
+    window.show_page("speech")
+    speech.show_where("groq")
+    groq = speech.models["groq"]
+    assert speech.tiles["groq"].chosen and speech.tiles["groq"].state.text() == "Key saved"
+    assert groq.key.text() == "gsk-test-key-0000" and "From Your API keys" in groq.key_note.text()
 
 
 def test_switching_the_cleanup_s_provider_needs_a_model_first():

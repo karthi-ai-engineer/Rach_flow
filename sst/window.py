@@ -64,7 +64,7 @@ from PySide6.QtWidgets import (
 from sst import RECORDINGS_DIR, __version__, bench, theme
 from sst.audio import LevelMeter, Take, call_quality, save_wav
 from sst.commands import DEFAULT_PHRASES, UNDO, normalize, parse_phrases, phrases_for
-from sst.engines import DEFAULT_MODEL, SPEECH_MODELS, WHERE, usable
+from sst.engines import DEFAULT_MODEL, SPEECH_MODELS, usable
 from sst.engines.cloud import CLOUD, SPEECH
 from sst.engines.whisper import LANGUAGES
 from sst.gateway import PROVIDERS, SPEECH_SERVER, GatewayConfig, Polisher
@@ -2014,7 +2014,7 @@ class _ModelCard:
         self.app, self.model = app, model
         self.frame, layout = card(8, (20, 18, 20, 20))
         self.status_row, self.lamp, self.status = _status_line()
-        layout.addLayout(row(label(model.name, "heading", wrap=False), self.status_row, stretch_at=1))
+        layout.addLayout(_heading(ElidedText(model.name, "heading", None), self.status_row))
         layout.addWidget(label(model.summary, tone="2"))
         layout.addWidget(caption(f"Languages: {model.languages}  ·  Size: {model.size}", "3"))
         self.progress = QProgressBar()
@@ -2072,31 +2072,30 @@ def _form() -> QFormLayout:
 
 
 class _CloudCard:
-    """A cloud speech model: the provider's key (the same one the AI connection uses), its model, a Test, and "Use this
-    model" after a question, since the voice goes to the provider."""
+    """A cloud speech model, opened by its tile: the provider's key (the one in Your API keys, or one pasted here, which
+    goes there too), its model, a Test, and "Use this model" after a question, since the voice goes to the provider."""
 
     def __init__(self, page, app, model):
         self.page, self.app, self.model = page, app, model
         provider = CLOUD[model.key]
         self.frame, layout = card(10, (20, 18, 20, 20))
         self.status_row, self.lamp, self.status = _status_line()
-        layout.addLayout(row(label(model.name, "heading", wrap=False), self.status_row, stretch_at=1))
+        layout.addLayout(_heading(ElidedText(model.name, "heading", None), self.status_row))
         layout.addWidget(label(model.summary, tone="2"))
         layout.addWidget(caption(f"Languages: {model.languages}  ·  {model.size}", "3"))
         self.privacy = caption("", "warn")
         layout.addWidget(self.privacy)
-        form = QFormLayout()
-        form.setHorizontalSpacing(16)
-        form.setVerticalSpacing(10)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.key = KeyField(app.gateway.key_for(model.key), "Paste your key: encrypted on this computer, shared with "
-                                                            "the AI connection")
-        key_link = button("Get a key", lambda _=False: QDesktopServices.openUrl(QUrl(provider.key_page)), link=True,
-                          size="sm", icon="external", icon_after=True)
+        form = _form()
+        self.key = KeyField(app.gateway.key_for(model.key), "Paste your key")
+        key_link = button("Get a free key" if model.key == "gemini" else "Get a key",
+                          lambda _=False: QDesktopServices.openUrl(QUrl(provider.key_page)), link=True, size="sm",
+                          icon="external", icon_after=True)
         key_row = row(self.key, key_link)
         key_row.setStretch(0, 1)
         form.addRow(caption("API key", "2", wrap=False), key_row)
-        self.model_box = Choice(editable=True)  # one of the usual models, or any other name the provider knows
+        self.key_note = caption("", "3")
+        form.addRow("", self.key_note)
+        self.model_box = fit_to_width(Choice(editable=True))  # one of the usual models, or any other name it knows
         self.model_box.addItems(provider.models)
         self.model_box.setCurrentText(self._saved_model())
         self.model_box.lineEdit().setPlaceholderText("Type to search, or any model name the provider knows")
@@ -2132,7 +2131,9 @@ class _CloudCard:
         self.privacy.setText(f"Your voice is sent to {name} each time you dictate. " + _parakeet_takes_over(name))
         saved = app.gateway.key_for(key)
         if not self.key.edited() and saved != self.key.saved:
-            self.key.show_saved(saved)  # changed in the AI connection; a key being typed here is left alone
+            self.key.show_saved(saved)  # changed in Your API keys or the AI connection; a key being typed stays
+        self.key_note.setText("From Your API keys on AI & models." if saved else
+                              "A key pasted here is kept in Your API keys, encrypted on this PC.")
         if key == app.loading_speech:
             _set_status(self.lamp, self.status, "Loading...", "warn")
         elif key == app.speech_in_use():
@@ -2180,34 +2181,32 @@ class _CloudCard:
 
 
 class _ServerCard:
-    """The speech model on the user's own server: its address, a key if it needs one, the model (Load models lists the
-    server's speech models first), a Test, and "Use this model". The address and key are kept apart from the AI
-    connection's; a new card starts from the AI connection's own server (e.g. a company gateway)."""
+    """The speech model on the user's own server, opened by its tile: its address, a key if it needs one, the model
+    (Load models lists the server's speech models first), a Test, and "Use this model". The address and key are kept
+    apart from the AI connection's; a new card starts from your own server in Your API keys (e.g. a company gateway)."""
 
     def __init__(self, page, app, model):
         self.page, self.app, self.model = page, app, model
         self.frame, layout = card(10, (20, 18, 20, 20))
         self.status_row, self.lamp, self.status = _status_line()
-        layout.addLayout(row(label(model.name, "heading", wrap=False), self.status_row, stretch_at=1))
+        layout.addLayout(_heading(ElidedText(model.name, "heading", None), self.status_row))
         layout.addWidget(label(model.summary, tone="2"))
         layout.addWidget(caption(f"Languages: {model.languages}  ·  {model.size}", "3"))
-        self.note = caption("", "2")
+        self.note = caption("", "warn")
         layout.addWidget(self.note)
         self._saved = app.gateway.speech_server()  # (address, key) as last saved
         address, key = self._saved if self._saved[0] else app.gateway.entries().get("vllm", ("", ""))
-        form = QFormLayout()
-        form.setHorizontalSpacing(16)
-        form.setVerticalSpacing(10)
+        form = _form()
         self.address = QLineEdit(address)
         self.address.setPlaceholderText("e.g. http://localhost:8000/v1, or your company's AI gateway")
         field(self.address)
         form.addRow(caption("Address", "2", wrap=False), self.address)
-        self.key = KeyField(key, "Only if your server needs one (encrypted on this computer)")
+        self.key = KeyField(key, "Only if your server needs one")
         self.load = button("Load models", self._load_models, size="sm")
         key_row = row(self.key, self.load)
         key_row.setStretch(0, 1)
         form.addRow(caption("API key", "2", wrap=False), key_row)
-        self.model_box = Choice(editable=True)  # one of the loaded models, or any name the server knows
+        self.model_box = fit_to_width(Choice(editable=True))  # one of the loaded models, or any name the server knows
         self.model_box.lineEdit().setPlaceholderText("e.g. whisper-1: Load models, then type to search")
         if app.settings.speech_server_model:
             self.model_box.addItem(app.settings.speech_server_model)
@@ -2221,7 +2220,7 @@ class _ServerCard:
         self.result.hide()  # until there is something to say: an empty line would leave a gap
         layout.addWidget(self.result)
         if not self._saved[0] and address:
-            self._say("Filled in from AI cleanup's server. Load models to see what it offers.")
+            self._say("Filled in from your own server in Your API keys. Load models to see what it offers.")
         self._shown = self._fields()  # what the card showed when it was last in step: changes are measured from it
         self.bar = SaveBar(self._use, self.discard)
         self.choose = self.bar.save  # "Use this model", or "Save" once it is the one in use
@@ -2344,8 +2343,12 @@ class _ScanCard:
                                "downloaded model on a short sentence (about half a minute with Whisper). Models not "
                                "downloaded yet are estimated.", tone="2"))
         self.button = button("Scan this PC", lambda _=False: app.scan_computer(), size="sm")
-        self.status = caption("", "3", wrap=False)
-        layout.addLayout(row(self.button, self.status, stretch_at=2))
+        self.status = ElidedText("", "caption", "3")
+        line = QHBoxLayout()
+        line.setSpacing(12)
+        line.addWidget(self.button)
+        line.addWidget(self.status, 1)
+        layout.addLayout(line)
         self.result = QWidget()
         result = QVBoxLayout(self.result)
         result.setContentsMargins(0, 8, 0, 0)
@@ -2391,8 +2394,12 @@ class _InUseCard:
         self.page, self.app = page, app
         self.frame, layout = card(10, (20, 18, 20, 20))
         self.lamp = Lamp("ok")
-        self.title = label("", "heading", wrap=False)
-        layout.addLayout(row(self.lamp, self.title, stretch_at=2, spacing=10))
+        self.title = ElidedText("", "heading", None)
+        heading = QHBoxLayout()
+        heading.setSpacing(10)
+        heading.addWidget(self.lamp, 0, Qt.AlignmentFlag.AlignVCenter)
+        heading.addWidget(self.title, 1)
+        layout.addLayout(heading)
         self.detail = label("", tone="2")
         layout.addWidget(self.detail)
         self.language = Choice(search=True)
@@ -2427,8 +2434,8 @@ class _InUseCard:
             title, detail, state = (f"Switching to {SPEECH_MODELS[app.loading_speech].name}...",
                                     "Dictation goes on meanwhile.", "warn")
         elif model is None:
-            title, detail, state = ("No speech model yet", "Download NVIDIA Parakeet below, or choose a cloud model or "
-                                    "your server.", "warn")
+            title, detail, state = ("No speech model yet", "Download NVIDIA Parakeet (On this PC), or choose a cloud "
+                                    "model.", "warn")
         else:
             title, state = f"In use: {model.name}", "ok"
             if model.where == "cloud":
@@ -2457,8 +2464,81 @@ class _InUseCard:
         self.bar.saved("Saved. Active from the next dictation.")
 
 
+# How Rflow hears you, in two groups; the cloud group's tiles, in this order: a cloud speech model (its SPEECH_MODELS
+# key), its name on the tile, and the icon that stands in for its logo until there is one.
+SPEECH_GROUPS = [("local", "On this PC"), ("cloud", "Cloud")]
+CLOUD_TILES = [("openai", "OpenAI", "cloud"), ("groq", "Groq", "cloud"), ("gemini", "Gemini", "cloud"),
+               ("server", "Your own server", "models")]
+
+
+class _CloudTile(Card):
+    """A cloud speech model as a tile: room for the provider's logo, its name, and its state (in use, its key saved,
+    what it needs). A click, Space or Enter chooses it: raised, or pressed in with an Iris edge once chosen."""
+
+    clicked = Signal()
+
+    def __init__(self, key: str, name: str, icon: str):
+        super().__init__("tile")
+        self.key, self.icon, self.chosen = key, icon, False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(name)
+        self.setMinimumWidth(100)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(6)
+        self.logo = QLabel()  # the provider's logo goes here, 28 px square; an icon stands in until then
+        self.logo.setFixedSize(28, 28)
+        self.logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        surface(self.logo, "well", 8)
+        layout.addWidget(self.logo)
+        layout.addSpacing(2)
+        self.title = ElidedText(name, "rowtitle", None)
+        layout.addWidget(self.title)
+        self.state_row, self.lamp, self.state = lamp_row("ok", "", stretch=True)
+        layout.addWidget(self.state_row)
+
+    def set_chosen(self, chosen: bool) -> None:
+        self.chosen = chosen
+        self.set_kind("chosen" if chosen else "tile")
+        self._show_logo()
+
+    def set_state(self, words: str, lamp: str = "") -> None:
+        self.state.setText(words)
+        self.lamp.setVisible(bool(lamp))
+        if lamp:
+            self.lamp.set_state(lamp)
+        self._show_logo()
+
+    def _show_logo(self) -> None:
+        colour = tok("iris" if self.chosen else "text2").name()
+        self.logo.setPixmap(theme.icon_pixmap(self.icon, colour, 16, self.devicePixelRatioF()))
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.clicked.emit()
+            return
+        super().keyPressEvent(event)
+
+
+def _show_only(stack: QStackedWidget, index: int) -> None:
+    """Show one page of a stack, and let the stack be as tall as that page (not as its tallest)."""
+    for i in range(stack.count()):
+        stack.widget(i).setSizePolicy(QSizePolicy.Policy.Preferred,
+                                      QSizePolicy.Policy.Preferred if i == index else QSizePolicy.Policy.Ignored)
+    stack.setCurrentIndex(index)
+    stack.updateGeometry()
+
+
 class SpeechPage(Page):
-    """Which model turns the voice into text: a building block of its own, chosen apart from the AI connection."""
+    """Which model turns the voice into text, a building block of its own, chosen apart from the AI connection. Two
+    groups: On this PC (Parakeet and Whisper, with their download, size and Scan this PC), and Cloud: four tiles (OpenAI,
+    Groq, Gemini, your own server), each opening its key, its model, a Test and Use."""
 
     def __init__(self, app, go_to=None):
         go_to = go_to or (lambda page: None)
@@ -2468,43 +2548,72 @@ class SpeechPage(Page):
         self.app = app
         self.in_use = _InUseCard(self, app)
         self.add(self.in_use.frame)
-        self.tabs = Segmented([(key, WHERE_LABELS.get(key, label_text)) for key, label_text in WHERE.items()])
+        self.tabs = Segmented(SPEECH_GROUPS)
         self.where: dict[str, QPushButton] = self.tabs.buttons
         self.tabs.changed.connect(self.show_where)
         self.add(self.tabs)
-        self.groups = QStackedWidget()
         self.models: dict[str, _ModelCard | _CloudCard | _ServerCard] = {}
-        for key in WHERE:
-            self.groups.addWidget(self._group(key))
+        self.tiles: dict[str, _CloudTile] = {}
+        self.tile = ""  # the cloud tile chosen ("" = none yet)
+        self.groups = QStackedWidget()
+        self.groups.addWidget(self._local_group())
+        self.groups.addWidget(self._cloud_group())
         self.add(self.groups)
         self.body.addStretch()
         chosen = SPEECH_MODELS.get(app.settings.speech_model, SPEECH_MODELS[DEFAULT_MODEL])
-        self.show_where(chosen.where)
+        self.show_where("local" if chosen.where == "local" else chosen.key)
 
-    def _group(self, where: str) -> QWidget:
+    def _group(self, words: str) -> tuple[QWidget, QVBoxLayout]:
         group = Host()
         layout = QVBoxLayout(group)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(24)
-        models = [m for m in SPEECH_MODELS.values() if m.where == where]
-        if where == "cloud":
-            layout.addWidget(label("The provider recognises your speech on its servers, with your API key: nothing to "
-                                   "download, little memory, quick on any PC. Keys are shared with the AI connection.",
-                                   tone="2"))
-        cards = {"cloud": lambda model: _CloudCard(self, self.app, model),
-                 "server": lambda model: _ServerCard(self, self.app, model)}
-        for model in models:
-            self.models[model.key] = cards.get(where, lambda model: _ModelCard(self.app, model))(model)
+        layout.setSpacing(16)
+        layout.addWidget(label(words, tone="2"))
+        return group, layout
+
+    def _local_group(self) -> QWidget:
+        group, layout = self._group("Your voice stays on this PC: private, free, and it works offline. Each model is "
+                                    "downloaded once.")
+        for model in (m for m in SPEECH_MODELS.values() if m.where == "local"):
+            self.models[model.key] = _ModelCard(self.app, model)
             layout.addWidget(self.models[model.key].frame)
-        if where == "local":
-            self.scan = _ScanCard(self.app)
-            layout.addWidget(self.scan.frame)
-        layout.addStretch()  # cards keep their own height when another group is taller
+        self.scan = _ScanCard(self.app)
+        layout.addWidget(self.scan.frame)
+        layout.addStretch()
+        return group
+
+    def _cloud_group(self) -> QWidget:
+        group, layout = self._group("The provider turns your voice into text on its servers, with your API key: nothing "
+                                    "to download, quick on any PC. Your voice goes to the provider each time you dictate.")
+        tiles = QHBoxLayout()
+        tiles.setSpacing(12)
+        for key, name, icon in CLOUD_TILES:
+            self.tiles[key] = _CloudTile(key, name, icon)
+            self.tiles[key].clicked.connect(lambda k=key: self.show_where(k))
+            tiles.addWidget(self.tiles[key], 1)
+        layout.addLayout(tiles)
+        self.pick = caption("Choose one: then its key, the model, and Use.", "3")
+        layout.addWidget(self.pick)
+        for key, _, _ in CLOUD_TILES:  # the chosen tile's card, under the tiles (a card for each, kept while hidden)
+            model = SPEECH_MODELS[key]
+            panel = _ServerCard(self, self.app, model) if model.where == "server" else _CloudCard(self, self.app, model)
+            self.models[key] = panel
+            panel.frame.hide()
+            layout.addWidget(panel.frame)
+        layout.addStretch()
         return group
 
     def show_where(self, where: str) -> None:
-        self.where[where].setChecked(True)
-        self.groups.setCurrentIndex(list(WHERE).index(where))
+        """A group ("local", "cloud"), or a cloud tile by its model ("openai", "groq", "gemini", "server")."""
+        group = "local" if where == "local" else "cloud"
+        self.where[group].setChecked(True)
+        _show_only(self.groups, [key for key, _ in SPEECH_GROUPS].index(group))
+        if where in self.tiles:
+            self.tile = where
+        for key, tile in self.tiles.items():
+            tile.set_chosen(key == self.tile)
+            self.models[key].frame.setVisible(key == self.tile)
+        self.pick.setVisible(not self.tile)
         self.refresh()
 
     def refresh(self) -> None:
@@ -2512,6 +2621,17 @@ class SpeechPage(Page):
         for model_card in self.models.values():
             model_card.refresh()
         self.scan.refresh()
+        app = self.app
+        for key, tile in self.tiles.items():
+            if key == app.loading_speech:
+                tile.set_state("Loading", "warn")
+            elif key == app.speech_in_use():
+                tile.set_state("In use", "ok")
+            elif key == "server":  # its own address, or your own server's in Your API keys to start from
+                server = app.gateway.speech_server()[0] or app.gateway.entries().get("vllm", ("", ""))[0]
+                tile.set_state("Address saved" if server else "Needs an address")
+            else:
+                tile.set_state("Key saved" if app.gateway.key_for(key) else "Needs a key")
 
     def _editable(self) -> list:
         return [self.in_use, *(c for c in self.models.values() if hasattr(c, "edited"))]
