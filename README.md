@@ -86,18 +86,21 @@ or dark mode. Changes in Settings apply at once; the AI connection has a Save bu
    | Ollama (on this computer) | nothing: it uses `http://localhost:11434/v1` (change it if yours runs elsewhere) |
    | vLLM or another OpenAI-compatible server | its **address** (e.g. `http://localhost:8000/v1`, LM Studio, a company AI gateway) and a key if it needs one |
 
-2. **Load models**, choose a **model** and optionally a **backup model**, click **Test**, then **Save**. Fast chat
-   models suit dictation (e.g. gpt-4o-mini, a Haiku model, a Flash-Lite model, llama-3.1-8b-instant); models that
-   "think" first are usually too slow.
+2. **Load models**, choose a **model** and optionally a **backup model**, click **Test**, then **Save**. Fast, cheap
+   models suit dictation (e.g. gpt-4o-mini, claude-haiku-4-5, gemini-3.5-flash-lite, openai/gpt-oss-20b on Groq).
+   Models that "think" first are asked to think as little as they allow; the big ones (Pro, Opus, the largest GPT)
+   are slow and costly for dictation.
 3. Add **your words** in the Dictionary (names, company, products, tech terms), so they come out spelled right.
    Speech recognition listens for them too, even with AI cleanup off: on the owner's reading test, errors on names and
    terms fell from 40% to 24.5%. Add names and terms, not everyday words, which would be heard where you didn't say them.
 
 Each provider gets the request it understands: Anthropic its own Messages API, OpenAI without the options only
-self-hosted models need, and so on. Switching the provider back and forth keeps each one's key and address. Only the
-finished text goes to the provider, never audio. If the model fails, the backup is used; if the provider is slow or
-unreachable, the text is typed as heard at once and the pill says "Typed as heard". Home keeps both versions (hover a
-dictation). Keys are stored in `gateway.json`, encrypted for your Windows account (DPAPI).
+self-hosted models need, Claude 4.7 and later and Gemini 3 no temperature, which they refuse or advise against, and so
+on (`sst/modelrules.py` says what each model accepts). Switching the provider back and forth keeps each one's key and
+address. Only the finished text goes to the provider, never audio. If the model fails or its answer is cut off at the
+token limit, the backup is used; if the provider is slow or unreachable, the text is typed as heard at once and the pill
+says "Typed as heard". Home keeps both versions (hover a dictation). Keys are stored in `gateway.json`, encrypted for
+your Windows account (DPAPI).
 
 **Profiles:** several people on one computer, or a work and a private setup, each get a profile (the button under the
 logo, or the *Profiles* page). Each profile has its own dictation key, microphone, words, AI provider and keys,
@@ -207,6 +210,7 @@ Rach_flow/
    ├─ updates.py              in-app updates from GitHub Releases (checksum-verified)
    ├─ settings.py             profiles, settings, history, stats and "start with Windows" (%APPDATA%\sst)
    ├─ gateway.py              AI cleanup: the providers and their request formats, backup model, timeouts, keys (DPAPI)
+   ├─ modelrules.py           what each provider's models accept: how little they can think, whether they take a temperature
    ├─ cli.py                  the `sst` command
    ├─ dictate.py              Dictation: hotkey events -> record -> transcribe -> clean up -> type
    ├─ hotkey.py               global hotkeys (low-level keyboard hook) and sending keys
