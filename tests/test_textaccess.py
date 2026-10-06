@@ -287,9 +287,21 @@ def test_a_character_outside_the_bmp_is_one_step(desktop):
     assert count(d, VK_LEFT) == 5
 
 
-def test_a_mismatch_is_collapsed_and_reported(desktop):
-    d = desktop("Dear team, Hello, world")  # the app changed what Rflow typed
-    assert not select_last("Hello world")
+def test_text_the_app_changed_a_little_is_still_found_as_it_is_there(desktop):
+    d = desktop("Dear team, Hello, world")  # the app added a comma to what Rflow typed
+    assert select_last("Hello world") == "Hello, world" and d.selected == "Hello, world"
+    assert d.clipboard == RESTORED
+
+
+def test_the_owners_case_a_dropped_space_and_full_stop_still_finds_the_dictation(desktop):
+    # 2026-10-06: 11 steps back gave 9 characters (an app dropped the trailing space and the full stop), so it failed.
+    d = desktop("Hi there. Thank you")
+    assert select_last("Thank you. ") == "Thank you" and d.selected == "Thank you"
+
+
+def test_text_that_isnt_close_is_never_selected(desktop):
+    d = desktop("Dear team, see you on Monday")  # the caret moved, or the dictation was deleted
+    assert select_last("Hello world ") is None
     assert d.selected == "" and d.caret == len(d.units)  # nothing left selected, the caret back where it was
     assert presses(d)[-1] == [(VK_RIGHT, False), (VK_RIGHT, True)]
     assert d.clipboard == RESTORED

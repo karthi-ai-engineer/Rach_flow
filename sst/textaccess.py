@@ -8,6 +8,7 @@ when the result can't go back where the text was, it is left on the clipboard fo
 Every Windows call sits behind a small module-level function, so the tests replace them with fakes.
 """
 import ctypes
+import difflib
 import logging
 import time
 import unicodedata
@@ -28,6 +29,9 @@ from sst.paste import (
 )
 
 log = logging.getLogger(__name__)
+# The text typed last, changed by the app as it was pasted: how many more caret steps are looked at, and how close the
+# text there must be to what was typed (difflib's ratio; "Thank you." typed, "Thank you" there: 0.95).
+LOOK_FURTHER, CLOSE_ENOUGH = 12, 0.85
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
@@ -225,12 +229,14 @@ def collapse_selection() -> None:
     send_keys([(VK_RIGHT, False), (VK_RIGHT, True)])
 
 
-def select_last(text: str) -> bool:
-    """Select `text`, which Rflow has just typed before the caret, and check with a copy that exactly it is selected.
-    Never leaves a wrong selection behind: on a mismatch the selection is collapsed again and False returned."""
+def select_last(text: str) -> str | None:
+    """Select `text`, which Rflow has just typed before the caret, check with a copy what is selected, and return it;
+    None when it can't be found. Apps often change pasted text a little (the trailing space dropped, a comma or a
+    capital added, quotes curled): then a few more caret steps are looked at, the closest text ending at the caret is
+    found among them, and exactly that is selected. Never leaves a wrong selection behind."""
     plain = text.replace("\r\n", "\n")  # a line break is one caret step
     if not plain.strip():
-        return False
+        return None
     want = _loose(plain)
     # Most editors step over a whole cluster (a Tamil letter with its vowel sign, an emoji with its skin tone), a few over
     # each code point; the second count is tried only when they differ and the first selected the wrong text.
@@ -238,13 +244,55 @@ def select_last(text: str) -> bool:
         select_back(steps)
         copied = copy_selection(timeout=0.6 + steps / 500, fallback=True)  # the app works through every Shift+Left
         if copied is not None and _loose(copied) == want:
-            return True
+            return copied
         log.info("The text typed last wasn't found before the caret (%d steps): %s", steps,
                  "nothing copied" if copied is None else f"{len(copied)} characters copied, {len(plain)} expected")
         collapse_selection()
         if copied is None:
-            break  # nothing copied: this app doesn't select or copy this way, and another count won't change that
-    return False
+            return None  # nothing copied: this app doesn't select or copy this way, and another count won't change that
+    return _select_close(plain, want)
+
+
+def _select_close(plain: str, want: str) -> str | None:
+    """The app changed the text as it was pasted: look LOOK_FURTHER more steps back, find where the typed text starts
+    there (closely, not exactly), and select from there to the caret."""
+    look = len(plain) + LOOK_FURTHER
+    select_back(look)
+    around = copy_selection(timeout=0.6 + look / 500, fallback=True)
+    collapse_selection()
+    start = _closest_start(around, want) if around else None
+    if start is None:
+        log.info("Nothing before the caret is close to the text typed last (%d characters looked at)",
+                 len(around or ""))
+        return None
+    found = around[start:].replace("\r\n", "\n")
+    for steps in dict.fromkeys((_clusters(found), len(found))):
+        select_back(steps)
+        copied = copy_selection(timeout=0.6 + steps / 500, fallback=True)
+        if copied is not None and _loose(copied) == _loose(found):
+            log.info("The text typed last was found as the app changed it (%d characters typed, %d there)",
+                     len(plain), len(found))
+            return copied
+        collapse_selection()
+        if copied is None:
+            break
+    return None
+
+
+def _closest_start(around: str, want: str) -> int | None:
+    """Where in `around` (the text before the caret) the text typed last starts, allowing the small changes apps make
+    (difflib's ratio of at least CLOSE_ENOUGH, compared loosely); None when nothing there is that close."""
+    best, best_score = None, CLOSE_ENOUGH
+    for start in range(len(around)):
+        tail = _loose(around[start:])
+        if not tail:
+            break
+        if around[start].isspace() or abs(len(tail) - len(want)) > max(3, len(want) // 5):
+            continue  # a selection never starts on a space
+        score = difflib.SequenceMatcher(None, tail, want, autojunk=False).ratio()
+        if score > best_score or (score == best_score and best is None):
+            best, best_score = start, score
+    return best
 
 
 def _loose(text: str) -> str:
