@@ -126,6 +126,12 @@ class GatewayConfig:
         return (f"GatewayConfig(provider={self.service.key!r}, base_url={self.base_url!r}, "
                 f"api_key={'set' if self.api_key else 'missing'})")
 
+    @property
+    def chosen(self) -> str:
+        """AI cleanup's provider, or "" while none is chosen. A key or server saved before then is kept with the
+        others, so saving one never chooses the cleanup's provider (the user testing's M-04)."""
+        return self.service.key if self.provider or self.base_url or self.api_key else ""
+
     def entries(self) -> dict[str, tuple[str, str]]:
         """Every provider's (address, key): the chosen one's and the others'."""
         entries = dict(self.others)
@@ -134,18 +140,19 @@ class GatewayConfig:
         return entries
 
     def key_for(self, provider: str) -> str:
-        """The user's key for a provider. Cloud speech models use the same keys as AI cleanup: one per provider."""
-        return self.api_key if provider == self.service.key else self.others.get(provider, ("", ""))[1]
+        """The user's key for a provider: one per provider, which speech, AI cleanup and live translation all use."""
+        return self.api_key if provider == self.chosen else self.others.get(provider, ("", ""))[1]
 
     def with_key(self, provider: str, key: str) -> "GatewayConfig":
-        """A copy with this provider's key changed (the Speech recognition page); AI cleanup's choice stays as it is."""
-        if provider == self.service.key:
+        """A copy with this provider's key changed (Your API keys, a cloud speech model); AI cleanup's choice of
+        provider and address stays as it is."""
+        if provider == self.chosen:
             return dataclasses.replace(self, api_key=key)
         return self.with_entry(provider, self.others.get(provider, ("", ""))[0], key)
 
     def with_entry(self, provider: str, url: str, key: str) -> "GatewayConfig":
         """A copy with this provider's address and key changed (or the speech server's: SPEECH_SERVER)."""
-        if provider == self.service.key:
+        if provider == self.chosen:
             return dataclasses.replace(self, base_url=url, api_key=key)
         others = {name: entry for name, entry in self.others.items() if name != provider}
         if url or key:

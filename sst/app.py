@@ -38,7 +38,7 @@ from sst.commands import UNDO, match_command, phrases_for
 from sst.dictate import DEFAULT_HOTKEY, Dictation, already_running, wispr_flow_running
 from sst.engines import DEFAULT_MODEL, SPEECH_MODELS, load_engine, usable
 from sst.engines.cloud import CLOUD, REMOTE, SERVER, CloudEngine
-from sst.gateway import SPEECH_SERVER, GatewayConfig, Polisher
+from sst.gateway import PROVIDERS, SPEECH_SERVER, GatewayConfig, Polisher
 from sst.hotkey import HotkeyListener, parse_hotkey
 from sst.live.captions import LiveCaptions
 from sst.live.contracts import MIC, Kind, LiveConfig, LiveEvent
@@ -821,6 +821,31 @@ class TrayApp:
         if self.dictation:
             self._apply_cleanup()  # also when only the endpoint or key changed (a cloud speech model's key too)
         self._load_speech()  # a key added or removed can change which speech model is usable
+
+    # -- Your API keys (AI & models): one key per provider, which speech, AI cleanup and live translation read
+
+    def save_key(self, provider: str, key: str) -> None:
+        """A provider's key added, changed or removed (""). Which provider and model AI cleanup uses never changes here
+        (the user testing's M-04: a Gemini key added for live translation switched the cleanup to Gemini, no model)."""
+        if provider in PROVIDERS and key != self.gateway.key_for(provider):
+            self._keys_changed(self.gateway.with_key(provider, key))
+
+    def save_server(self, address: str, key: str, names: tuple[str, ...] = ("vllm",)) -> None:
+        """Your own server's address and key ("" removes it), for AI cleanup's server ("vllm"), the speech model's
+        (SPEECH_SERVER), or both when they are the same server. Neither becomes the one in use here."""
+        gateway = self.gateway
+        for name in names:
+            gateway = gateway.with_entry(name, address, key)
+        if gateway != self.gateway:
+            self._keys_changed(gateway)
+
+    def _keys_changed(self, gateway: GatewayConfig) -> None:
+        self.gateway = gateway
+        gateway.save(self.profile.gateway_file)
+        if self.dictation:
+            self._apply_cleanup()  # the cleanup's provider or the speech model in use may use the key: no reload
+        self._load_speech()  # a key added or removed can change which speech model is usable
+        self.window.refresh()
 
     def add_words(self, new_words: list[str]) -> int:
         known = {w.lower() for w in self.settings.vocabulary}

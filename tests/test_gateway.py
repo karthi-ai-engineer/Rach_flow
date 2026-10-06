@@ -321,6 +321,20 @@ def test_cloud_speech_shares_each_providers_key():
     assert set(groq.entries()) == {"openai", "anthropic", "vllm", "groq"}
 
 
+def test_saving_a_key_never_chooses_or_changes_the_cleanup_s_provider():
+    # The user testing's M-04: a Gemini key added for live translation switched AI cleanup to Gemini, with no model.
+    config = GatewayConfig("", "sk-openai", "openai").with_key("gemini", "AIza-live")
+    assert (config.chosen, config.api_key, config.key_for("gemini")) == ("openai", "sk-openai", "AIza-live")
+    legacy = GatewayConfig("https://api.openai.com/v1", "sk-old")  # from before the provider choice: by its address
+    assert legacy.with_key("openai", "sk-new") == GatewayConfig("https://api.openai.com/v1", "sk-new")
+    nothing = GatewayConfig()  # a new install: no provider chosen yet
+    assert nothing.chosen == "" and nothing.service.key == "vllm"
+    server = nothing.with_entry("vllm", "http://localhost:8000/v1", "")
+    assert server.chosen == "" and server.address == ""  # kept for later, not made the cleanup's server
+    assert server.entries() == {"vllm": ("http://localhost:8000/v1", "")} and server.key_for("vllm") == ""
+    assert server.with_key("vllm", "srv-key").others["vllm"] == ("http://localhost:8000/v1", "srv-key")
+
+
 def test_a_key_saved_for_speech_survives_saving_and_loading(tmp_path):
     path = tmp_path / "gateway.json"
     GatewayConfig().with_key("gemini", "g-key").save(path)

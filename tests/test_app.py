@@ -426,6 +426,26 @@ def test_a_model_on_your_own_server_switches_its_address_without_a_reload(tray_a
     assert _wait_for(lambda: app.speech_in_use() == "parakeet", QTest.qWait)
 
 
+def test_a_key_added_on_ai_and_models_never_changes_the_cleanup_or_the_speech_model(tray_app, monkeypatch):
+    # The user testing's M-04: a Gemini key added for live translation switched AI cleanup to Gemini, with no model.
+    from sst.gateway import SPEECH_SERVER
+    monkeypatch.setattr(sst_app.Polisher, "prepare", lambda self: None)  # no connection to the provider
+    app, saved, _ = tray_app
+    app.save_cleanup(True, "gpt-4o-mini", "", GatewayConfig("", "sk-openai", "openai"))
+    assert "add a Gemini key" in app.live_problem()
+    app.save_key("gemini", "AIza-live")
+    assert saved["gateway"].key_for("gemini") == "AIza-live" and not app.live_problem()
+    assert (app.gateway.chosen, app.gateway.api_key, app.settings.cleanup_model) == ("openai", "sk-openai", "gpt-4o-mini")
+    assert app.dictation.cleanup.model == "gpt-4o-mini" and app.speech_in_use() == "parakeet"
+    app.save_key("openai", "sk-new")  # the cleanup's own key: used from the next dictation
+    assert app.dictation.cleanup.config.api_key == "sk-new" and app.gateway.chosen == "openai"
+    app.save_server("http://localhost:8000/v1", "", ("vllm", SPEECH_SERVER))
+    assert app.gateway.speech_server() == ("http://localhost:8000/v1", "") and app.gateway.chosen == "openai"
+    assert app.settings.speech_model == "parakeet"  # kept for when it's chosen
+    app.save_key("gemini", "")  # removed
+    assert "add a Gemini key" in app.live_problem() and app.gateway.key_for("openai") == "sk-new"
+
+
 def test_a_new_install_starts_without_a_speech_model_then_downloads_parakeet(no_parakeet, tray_app, monkeypatch,
                                                                               tmp_path):
     from PySide6.QtTest import QTest
