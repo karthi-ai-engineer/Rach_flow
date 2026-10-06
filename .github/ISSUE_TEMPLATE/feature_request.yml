@@ -1,0 +1,26 @@
+name: Feature request
+description: Something Rflow could do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: want
+    attributes:
+      label: What do you want to do?
+      description: The task or the moment, not only the button you imagine ("dictate into a terminal", "say a word and get my signature").
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: What happens today?
+      description: What you do instead, or where Rflow gets in the way.
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could it work?
+      description: Optional. Other apps that do it well are welcome.
+  - type: input
+    id: version
+    attributes:
+      label: Rflow version
+      description: Settings, at the bottom.
