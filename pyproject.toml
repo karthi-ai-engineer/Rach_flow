@@ -1,8 +1,10 @@
 [project]
 name = "sst"
 dynamic = ["version"]
-description = "Record from the microphone and transcribe it locally (Parakeet first, more engines later)."
+description = "Rflow: dictation for Windows. Hold Ctrl+Win, speak, and the text is typed; speech is recognised on the laptop."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.0",

@@ -66,6 +66,7 @@ Type: files; Name: "{userstartup}\SST Dictation.lnk"
 [Files]
 Source: "..\dist\sst\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Hold Ctrl+Win in any app and speak"
