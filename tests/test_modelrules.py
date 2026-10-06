@@ -4,6 +4,17 @@ import pytest
 from sst import modelrules
 
 
+@pytest.mark.parametrize("model, reasoning, effort", [
+    ("gpt-6-luna", True, "none"), ("gpt-6-sol", True, "none"), ("gpt-6.1-sol", True, "none"),
+    ("gpt-6-astra", True, "low"), ("gpt-5.6-luna", True, "none"), ("gpt-5-nano", True, "minimal"),
+    ("gpt-5-mini-2025-08-07", True, "minimal"), ("gpt-5", True, "minimal"), ("gpt-5.4-mini", True, ""),
+    ("o4-mini", True, ""), ("gpt-4.1-mini", False, ""), ("gpt-4o-mini", False, ""),
+])
+def test_openai_reasoning_models_and_the_least_thinking_they_allow(model, reasoning, effort):
+    assert bool(modelrules.OPENAI_REASONING.match(model)) is reasoning  # gpt-6 was missed before
+    assert modelrules.openai_effort(model) == effort
+
+
 @pytest.mark.parametrize("model, version, temperature", [
     ("claude-haiku-4-5", (4, 5), True), ("claude-haiku-4-5-20251001", (4, 5), True),
     ("claude-sonnet-4-5-20250929", (4, 5), True), ("claude-sonnet-4-6", (4, 6), True), ("claude-opus-4-6", (4, 6), True),

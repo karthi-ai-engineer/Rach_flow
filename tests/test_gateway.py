@@ -232,10 +232,13 @@ def test_openai_gets_its_current_limit_name_and_no_self_hosted_options(fake):
     assert "max_tokens" not in sent and "chat_template_kwargs" not in sent  # OpenAI refuses fields it doesn't know
 
 
-def test_openai_reasoning_models_get_room_to_think_and_no_temperature(fake):
-    fake.polisher(model="gpt-5-mini", provider="openai").polish(HEARD)
+@pytest.mark.parametrize("model, effort", [("gpt-5-mini", "minimal"), ("gpt-6-luna", "none"), ("gpt-6-astra", "low"),
+                                           ("o3", None)])
+def test_openai_reasoning_models_think_least_with_room_and_no_temperature(fake, model, effort):
+    fake.polisher(model=model, provider="openai").polish(HEARD)
     sent = _last_post(fake)
-    assert "temperature" not in sent and sent["max_completion_tokens"] > 2000
+    assert "temperature" not in sent and sent["max_completion_tokens"] > gateway.THINKING_ROOM
+    assert sent.get("reasoning_effort") == effort  # the least it allows; a model not known keeps its default
 
 
 def test_anthropic_gets_its_messages_api(fake):

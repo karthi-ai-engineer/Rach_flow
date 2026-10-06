@@ -51,7 +51,6 @@ SYSTEM_PROMPT = (
 # Models in a provider's list that don't write text (speech, images, embeddings...): left out of "Load models".
 NOT_FOR_TEXT = re.compile(r"whisper|tts|transcribe|dall-e|image|embed|moderation|realtime|audio|guard|search|"
                           r"babbage|davinci|computer-use|imagen|veo|aqa", re.IGNORECASE)
-REASONING_MODEL = re.compile(r"^(o\d|gpt-5)", re.IGNORECASE)  # OpenAI models that think before answering
 
 log = logging.getLogger(__name__)
 
@@ -380,11 +379,13 @@ class Polisher:
                 "messages": [{"role": "system", "content": self._system_prompt()}, {"role": "user", "content": text}]}
         if service.key == "openai":
             # OpenAI's current name for the limit (its newest models refuse max_tokens). Reasoning models spend tokens on
-            # thinking first and take only the default temperature.
-            reasoning = bool(REASONING_MODEL.match(model))
-            body["max_completion_tokens"] = limit + (2000 if reasoning else 0)
+            # thinking first, as little as they allow, and take only the default temperature.
+            reasoning = bool(modelrules.OPENAI_REASONING.match(model))
+            body["max_completion_tokens"] = limit + (THINKING_ROOM if reasoning else 0)
             if not reasoning:
                 body["temperature"] = 0
+            elif effort := modelrules.openai_effort(model):
+                body["reasoning_effort"] = effort
         elif service.key == "gemini":
             body["temperature"] = 0  # no limit: Gemini's thinking counts against it and would cut the answer short
         else:
