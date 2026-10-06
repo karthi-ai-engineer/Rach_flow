@@ -4871,6 +4871,12 @@ class PreviewApp:
     def live_running(self) -> bool:
         return self._live
 
+    _live_languages = ("", "")  # what the session running translates into (a language changed meanwhile waits)
+
+    def live_languages(self) -> tuple[str, str]:
+        s = self.settings
+        return self._live_languages if self._live and all(self._live_languages) else (s.live_target, s.live_mic_target)
+
     def live_sessions(self, limit: int = 8) -> list:
         return list(self._live_sessions)[:limit]
 
@@ -4884,6 +4890,7 @@ class PreviewApp:
     def start_live(self) -> str:
         self.calls.append(("start_live", self.settings.live_source))
         self._live = not self.live_problem()
+        self._live_languages = (self.settings.live_target, self.settings.live_mic_target)
         return self.live_problem()
 
     def stop_live(self) -> None:

@@ -862,6 +862,12 @@ class TrayApp:
     def live_running(self) -> bool:
         return self.live.running
 
+    def live_languages(self) -> tuple[str, str]:
+        """What live translation translates into now (the computer's sound, the microphone's): while it runs, the ones
+        it started with, since a language changed meanwhile waits for the next start."""
+        c = self.live.config if self.live.running else self.live_config()
+        return c.target, c.mic_target
+
     def live_folder(self) -> Path:
         return self.profile.folder() / "live captions"  # its name since 2.1.0, so earlier sessions stay listed
 
