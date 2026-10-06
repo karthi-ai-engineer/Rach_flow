@@ -993,11 +993,57 @@ def test_the_pipeline_switches_are_settings():
     assert page.mic_ready.currentData() == "always"
     page.mic_ready.setCurrentIndex(page.mic_ready.findData("warm"))
     assert app.settings.always_on_mic is False and app.settings.warm_mic is True
-    page.format_text.setChecked(False)
     page.debug_pipeline.setChecked(True)
     page.voice_pipeline.setChecked(False)
     s = app.settings
-    assert (s.format_text, s.debug_pipeline, s.voice_pipeline) == (False, True, False)
+    assert (s.debug_pipeline, s.voice_pipeline) == (True, False)
+
+
+# ---- Formatting
+
+def test_formatting_is_a_section_with_the_switch_moved_from_settings():
+    window, app = _window(settings=Settings(welcomed=True))
+    assert not hasattr(window.pages["settings"], "format_text")
+    window.nav["formatting"].click()
+    page = window.pages["formatting"]
+    assert window.current_page() == "formatting" and page.format_text.isChecked() and page.pipeline_off.isHidden()
+    page.format_text.setChecked(False)
+    assert app.settings.format_text is False and "Off" in page.switch_words.text()
+    page.trial.setText("it costs five dollars")
+    assert "Formatting is off" in page.trial_result.text()
+    page.format_text.setChecked(True)
+    assert app.settings.format_text is True and "$5" in page.trial_result.text()
+    page.trial.setText("we have two options")
+    assert "Nothing to change" in page.trial_result.text()
+
+
+def test_the_formatting_examples_are_what_the_real_stage_types():
+    expected = {"sales went up twenty five percent this quarter": "sales went up 25% this quarter",
+                "the budget is twenty five thousand dollars": "the budget is $25,000",
+                "it costs nine dollars ninety nine": "it costs $9.99",
+                "let's meet at three thirty pm": "let's meet at 3:30 PM",
+                "the launch is on october first twenty twenty six": "the launch is on October 1, 2026",
+                "we need twenty five hundred copies": "we need 2,500 copies",
+                "send it to john dot smith at gmail dot com": "send it to john.smith@gmail.com"}
+    assert list(expected) == w.FORMAT_EXAMPLES
+    for said, typed in expected.items():
+        assert w.formatted(said)[0] == typed
+    for said in w.FORMAT_KEPT:
+        assert w.formatted(said)[0] == said  # prose stays as said
+    window, _ = _window()
+    page = window.pages["formatting"]
+    page.refresh()
+    shown = _shown(page.changed_box)
+    assert all(w.formatted(said)[1] in shown for said in expected) and "25%</span>" in shown  # its changes in Iris
+
+
+def test_formatting_says_when_the_voice_pipeline_is_off_and_turns_it_on():
+    window, app = _window(settings=Settings(welcomed=True, voice_pipeline=False))
+    window.show_page("formatting")
+    page = window.pages["formatting"]
+    assert not page.pipeline_off.isHidden()
+    _button(page.pipeline_off, "Turn it on").click()
+    assert app.settings.voice_pipeline and page.pipeline_off.isHidden()
 
 
 

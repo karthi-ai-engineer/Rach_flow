@@ -69,7 +69,9 @@ from sst.hotkey import parse_hotkey
 from sst.live.contracts import LANGUAGES as LIVE_LANGUAGES
 from sst.live.contracts import LiveConfig, language_name
 from sst.live.voice import DANNY
+from sst.pipeline.contracts import VoiceConfig
 from sst.pipeline.dictionary import speech_hints
+from sst.pipeline.formatting import Formatter
 from sst.scan import Computer
 from sst.settings import (
     Profiles,
@@ -3700,6 +3702,141 @@ class TranslatePage(Page):
         run_in_background(self, lambda: self.app.run_translation(sample, s.translate_to, second), done)
 
 
+# ---------------------------------------------------------------- Formatting
+
+# What the formatting stage writes, shown on its page. The page runs each phrase through the real stage, with the app's
+# own policy, so what it shows is what Rflow types; the tests check the outputs too.
+FORMAT_EXAMPLES = ["sales went up twenty five percent this quarter", "the budget is twenty five thousand dollars",
+                   "it costs nine dollars ninety nine", "let's meet at three thirty pm",
+                   "the launch is on october first twenty twenty six", "we need twenty five hundred copies",
+                   "send it to john dot smith at gmail dot com"]
+FORMAT_KEPT = ["we have two options", "meet me at five", "the first time"]  # prose, or unclear: stays as said
+
+
+def formatted(said: str) -> tuple[str, str]:
+    """What the formatting stage types for `said`: (the text, the text as HTML with each change in Iris)."""
+    result = Formatter(VoiceConfig().formatting).format(said)
+    parts, pos = [], 0
+    for change in result.changes:
+        at = result.text.find(change.replacement, pos)
+        if at < 0:
+            continue
+        parts += [html.escape(result.text[pos:at]),
+                  f"<span style='color:{tok('iris').name()}; font-weight:600'>{html.escape(change.replacement)}</span>"]
+        pos = at + len(change.replacement)
+    parts.append(html.escape(result.text[pos:]))
+    return result.text, "".join(parts)
+
+
+class FormattingPage(Page):
+    """Formatting (sst.pipeline.formatting): the switch for writing spoken numbers, money, times and dates the usual
+    way, what it changes and what it leaves (run through the real stage), and a box to try it."""
+
+    def __init__(self, app, go_to=None):
+        super().__init__("Formatting", "Numbers, amounts of money, times and dates you say are typed the way people "
+                                       "write them. Ordinary words stay as you said them.")
+        self.app = app
+        self.pipeline_off, off = card(12, (16, 12, 12, 12), kind="well", horizontal=True)
+        self.off_icon = QLabel()
+        off.addWidget(self.off_icon)
+        off.addWidget(caption("Formatting is part of the voice pipeline, which is off (Settings, Advanced): your "
+                              "dictations are typed as heard.", "2"), 1)
+        off.addWidget(button("Turn it on", self._pipeline_on, link=True, size="sm"))
+        self.add(self.pipeline_off)
+
+        switch_card, layout = card(0, (20, 4, 20, 4))
+        self.format_text = Toggle("Write numbers as numbers")
+        self.format_text.toggled.connect(self._apply)
+        switch, _, self.switch_words = setting_row("Write numbers as numbers", " ", self.format_text)  # words: refresh()
+        layout.addWidget(switch)
+        self.add(switch_card)
+
+        changes, layout = card(12, (20, 18, 20, 20))
+        layout.addWidget(label("What changes", "heading"))
+        self.changed_box = self._table(FORMAT_EXAMPLES)
+        layout.addWidget(self.changed_box)
+        layout.addSpacing(4)
+        layout.addWidget(label("What stays as you said it", "heading"))
+        layout.addWidget(caption("Small numbers in a sentence, and anything that could be read two ways: a wrong "
+                                 "number would change what you meant.", "2"))
+        self.kept_box = self._table(FORMAT_KEPT)
+        layout.addWidget(self.kept_box)
+        self.add(changes)
+
+        trial, layout = card(10, (20, 18, 20, 20))
+        layout.addWidget(label("Try it", "heading"))
+        self.trial = QLineEdit()
+        self.trial.setPlaceholderText("Type what you would say, e.g. the call is at nine am tomorrow")
+        field(self.trial)
+        self.trial.textChanged.connect(self._try)
+        layout.addWidget(self.trial)
+        self.trial_result = label("", tone="2")
+        self.trial_result.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self.trial_result)
+        self.add(trial)
+        self.body.addStretch()
+        self._try()
+
+    def _table(self, phrases: list[str]) -> Card:
+        """Phrases as said, and as Rflow types them (its changes in Iris), one per line in a well."""
+        box = Card("well", 14)
+        grid = QGridLayout(box)
+        grid.setContentsMargins(16, 12, 16, 12)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(10)
+        grid.addWidget(_caps_label("You say"), 0, 0)
+        grid.addWidget(_caps_label("Rflow types"), 0, 2)
+        box.arrows = []
+        for i, said in enumerate(phrases, 1):
+            grid.addWidget(label(said, tone="2"), i, 0)
+            arrow = QLabel()
+            box.arrows.append(arrow)
+            grid.addWidget(arrow, i, 1)
+            typed = label(formatted(said)[1])
+            typed.setTextFormat(Qt.TextFormat.RichText)
+            typed.setObjectName("typed")
+            typed.said = said
+            grid.addWidget(typed, i, 2)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(2, 1)
+        return box
+
+    def refresh(self) -> None:
+        s = self.app.settings
+        self.format_text.blockSignals(True)
+        self.format_text.setChecked(s.format_text)
+        self.format_text.blockSignals(False)
+        self.switch_words.setText("On: “twenty five percent” is typed as 25%." if s.format_text else
+                                  "Off: numbers are typed in words, as you said them.")
+        self.pipeline_off.setVisible(not s.voice_pipeline)
+        self.off_icon.setPixmap(theme.icon_pixmap("info", tok("warn").name(), 16, self.devicePixelRatioF()))
+        for box in (self.changed_box, self.kept_box):  # the theme's colours: the arrows, the changes in Iris
+            for arrow in box.arrows:
+                arrow.setPixmap(theme.icon_pixmap("arrow-right", tok("text3").name(), 14, self.devicePixelRatioF()))
+            for typed in box.findChildren(QLabel, "typed"):
+                typed.setText(formatted(typed.said)[1])
+        self._try()
+
+    def _apply(self, *_) -> None:
+        self.app.apply_settings(dataclasses.replace(self.app.settings, format_text=self.format_text.isChecked()))
+        self.refresh()
+
+    def _pipeline_on(self) -> None:
+        self.app.apply_settings(dataclasses.replace(self.app.settings, voice_pipeline=True))
+        self.refresh()
+
+    def _try(self, *_) -> None:
+        said = self.trial.text().strip()
+        if not said:
+            self.trial_result.setText("What Rflow would type appears here.")
+        elif not self.app.settings.format_text:
+            self.trial_result.setText("Formatting is off: typed as you said it.")
+        else:
+            typed, shown = formatted(said)
+            self.trial_result.setText(f"Rflow types: {shown}" if typed != said else "Nothing to change: typed as you "
+                                                                                    "said it.")
+
+
 # ---------------------------------------------------------------- Settings
 
 MIC_READY = [("While Rflow runs", "always"), ("5 minutes after dictating", "warm"), ("Only while dictating", "off")]
@@ -3736,12 +3873,6 @@ class SettingsPage(Page):
         self.start_with_windows.setEnabled(can_start_with_windows())
         layout.addWidget(setting_row("Start when I sign in", "Rflow waits quietly in the tray" if can_start_with_windows()
                                      else "Available in the installed app", self.start_with_windows)[0])
-        layout.addWidget(divider())
-        self.format_text = Toggle("Write numbers as numbers")
-        self.format_text.setChecked(s.format_text)
-        self.format_text.setToolTip("Spoken forms are written the usual way. Ordinary words stay as said: \"two "
-                                    "options\" isn't changed, \"twenty five percent\" becomes 25%.")
-        layout.addWidget(setting_row("Write numbers as numbers", "25%, October 1, 3:30 PM, $5", self.format_text)[0])
         self.add(everyday)
 
         privacy, layout = card(0, (20, 4, 20, 4))
@@ -3822,8 +3953,7 @@ class SettingsPage(Page):
 
         self.hotkey.currentIndexChanged.connect(self._apply)
         self.mic_ready.currentIndexChanged.connect(self._apply)
-        for box in (self.format_text, self.voice_pipeline, self.debug_pipeline, self.raw_audio, self.sounds,
-                    self.save_recordings):
+        for box in (self.voice_pipeline, self.debug_pipeline, self.raw_audio, self.sounds, self.save_recordings):
             box.toggled.connect(self._apply)
         self.start_with_windows.toggled.connect(lambda on: set_start_with_windows(on) if can_start_with_windows() else None)
         self._show_keys()
@@ -3849,13 +3979,12 @@ class SettingsPage(Page):
         return dataclasses.replace(current, hotkey=self.hotkey.currentData(), sounds=self.sounds.isChecked(),
                                    save_recordings=self.save_recordings.isChecked(),
                                    always_on_mic=ready == "always", warm_mic=warm,
-                                   raw_audio=self.raw_audio.isChecked(), format_text=self.format_text.isChecked(),
-                                   voice_pipeline=self.voice_pipeline.isChecked(),
+                                   raw_audio=self.raw_audio.isChecked(), voice_pipeline=self.voice_pipeline.isChecked(),
                                    debug_pipeline=self.debug_pipeline.isChecked())
 
     def refresh(self) -> None:
         s = self.app.settings
-        for box, on in ((self.sounds, s.sounds), (self.format_text, s.format_text), (self.voice_pipeline, s.voice_pipeline),
+        for box, on in ((self.sounds, s.sounds), (self.voice_pipeline, s.voice_pipeline),
                         (self.debug_pipeline, s.debug_pipeline), (self.raw_audio, s.raw_audio),
                         (self.save_recordings, s.save_recordings)):
             box.blockSignals(True)
@@ -4459,18 +4588,19 @@ class ProfilesPage(Page):
 # ---------------------------------------------------------------- the window
 
 NAV = [("home", "Home"), ("live", "Live translation"), ("words", "Words"), ("snippets", "Snippets"),
-       ("transform", "Text Transform"), ("translate", "Translate"), ("models", "AI & models"), ("settings", "Settings")]
+       ("transform", "Text Transform"), ("translate", "Translate"), ("formatting", "Formatting"), ("models", "AI & models"),
+       ("settings", "Settings")]
 NAV_ICONS = {"home": "home", "live": "live", "words": "words", "snippets": "snippets", "transform": "transform",
-             "translate": "translate", "models": "models", "settings": "settings"}
-RAIL_NAMES = {"live": "Live", "transform": "Transform", "models": "AI"}  # shorter names under the narrow rail's icons
+             "translate": "translate", "formatting": "formatting", "models": "models", "settings": "settings"}
+RAIL_NAMES = {"live": "Live", "transform": "Transform", "formatting": "Format", "models": "AI"}  # under the rail's icons
 # The section each page belongs to (its sidebar button), and the page a section opens on. "tools" was the section of
 # Text Transform and Translate until phase 31: a link to it (from another page, an older build) opens Text Transform.
 SECTION = {"home": "home", "live": "live", "dictionary": "words", "snippets": "snippets", "transform": "transform",
-           "translate": "translate", "models": "models", "speech": "models", "cleanup": "models", "settings": "settings",
-           "reading": "settings", "profiles": "settings"}
+           "translate": "translate", "formatting": "formatting", "models": "models", "speech": "models", "cleanup": "models",
+           "settings": "settings", "reading": "settings", "profiles": "settings"}
 OPENS = {"words": "dictionary", "tools": "transform"}
-REFRESHED = ("home", "dictionary", "snippets", "profiles", "speech", "cleanup", "transform", "translate", "live", "models",
-             "settings")
+REFRESHED = ("home", "dictionary", "snippets", "profiles", "speech", "cleanup", "transform", "translate", "formatting",
+             "live", "models", "settings")
 
 
 class MainWindow(QWidget):
@@ -4557,6 +4687,7 @@ class MainWindow(QWidget):
                       "snippets": SnippetsPage(app, self.show_page),
                       "live": LivePage(app, self.show_page),
                       "transform": TransformPage(app, self.show_page), "translate": TranslatePage(app, self.show_page),
+                      "formatting": FormattingPage(app, self.show_page),
                       "models": ModelsPage(app, self.show_page), "speech": SpeechPage(app, self.show_page),
                       "cleanup": CleanupPage(app, self.show_page), "settings": SettingsPage(app, self.show_page),
                       "reading": ReadingTestPage(app, self.show_page), "profiles": ProfilesPage(app, self.show_page),
