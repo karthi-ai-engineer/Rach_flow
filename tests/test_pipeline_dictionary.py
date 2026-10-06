@@ -475,3 +475,30 @@ def test_only_names_and_terms_are_speech_hints():
     assert speech_hints(owner) == ["tray", "GitHub", "Rflow", "Parakeet", "Vercel"]
     assert speech_hints(["Visual Studio Code", "stand meeting", "Karthi", "karthi", "H100", " ", "Swift"]) == [
         "Visual Studio Code", "Karthi", "H100"]  # a name written as one stays; duplicates and everyday words go
+
+
+def test_a_damaged_dictionary_is_moved_aside_and_a_new_one_starts(tmp_path):
+    from sst.pipeline.dictionary import DictionaryStore
+    path = tmp_path / "dictionary.db"
+    path.write_bytes(b"this is not a database" * 100)
+    store, problem = DictionaryStore.open(path)
+    store.add_term("Kubernetes")  # it works
+    store.close()
+    assert problem.startswith("Your dictionary file was damaged") and "Your words come back from your settings" in problem
+    assert len(list(tmp_path.glob("dictionary.damaged-*.db"))) == 1
+
+
+def test_a_dictionary_that_cant_be_written_works_in_memory(tmp_path):
+    from sst.pipeline.dictionary import DictionaryStore
+    blocker = tmp_path / "profiles"
+    blocker.write_text("a file where the folder should be", encoding="utf-8")
+    store, problem = DictionaryStore.open(blocker / "dictionary.db")
+    store.add_term("Kubernetes")
+    assert problem.startswith("Rflow can't keep your dictionary in") and "won't be kept" in problem
+
+
+def test_a_good_dictionary_opens_without_a_word(tmp_path):
+    from sst.pipeline.dictionary import DictionaryStore
+    store, problem = DictionaryStore.open(tmp_path / "dictionary.db")
+    store.close()
+    assert problem == ""

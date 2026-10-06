@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import time
 import winreg
@@ -20,6 +21,7 @@ PROFILES_FILE = CONFIG_DIR / "profiles.json"
 FIRST_PROFILE = "default"
 
 log = logging.getLogger(__name__)
+LOAD_PROBLEMS: list[str] = []  # what Settings.load had to do about a damaged file, for the app to tell the user
 
 
 @dataclass
@@ -66,14 +68,17 @@ class Settings:
 
     @classmethod
     def load(cls, path: Path = SETTINGS_FILE) -> "Settings":
-        """Settings from disk. A missing or damaged file gives the defaults, so the app always starts."""
+        """Settings from disk, so the app always starts: a damaged file is kept aside and the last good copy (written at
+        every save) used instead; with none, the defaults. What happened goes to LOAD_PROBLEMS for the user."""
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return cls()
         except (OSError, ValueError) as e:
-            log.warning("Ignoring unreadable settings file %s: %s", path, e)
-            return cls()
+            log.warning("Unreadable settings file %s: %s", path, e)
+            data = _recover(path)
+            if data is None:
+                return cls()
         defaults = cls()
         values = {}
         for f in fields(cls):  # keep only known keys with the right type
@@ -91,7 +96,37 @@ class Settings:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        if path.exists():  # the last good copy, should this file ever be damaged (a full disk, a sync conflict)
+            try:
+                shutil.copyfile(path, _backup(path))
+            except OSError as e:
+                log.warning("Couldn't keep a copy of the settings: %s", e)
         tmp.replace(path)  # atomic: a crash mid-write never leaves a half-written file
+
+
+def _backup(path: Path) -> Path:
+    return path.with_name(path.name + ".bak")
+
+
+def _recover(path: Path) -> dict | None:
+    """A damaged settings file: kept aside for a look, and the last good copy's values, or None (the defaults)."""
+    aside = path.with_name(f"{path.name}.damaged-{time.strftime('%Y%m%d-%H%M%S')}")
+    try:
+        path.replace(aside)  # the next save writes a good file where it was
+    except OSError:
+        aside = None
+    try:
+        data = json.loads(_backup(path).read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            LOAD_PROBLEMS.append("Your settings file was damaged, so Rflow went back to the copy from before your last "
+                                 "change.")
+            return data
+    except (OSError, ValueError):
+        pass
+    kept = f" The damaged file is kept as {aside.name}." if aside else ""
+    LOAD_PROBLEMS.append("Your settings file was damaged and there was no good copy, so Rflow started with its defaults, "
+                         f"Your words and snippets too.{kept}")
+    return None
 
 
 def add_to_history(text: str, heard: str | None = None, path: Path = HISTORY_FILE) -> None:
@@ -120,7 +155,9 @@ def read_history(path: Path = HISTORY_FILE) -> list[dict]:
             continue
     if len(lines) > HISTORY_KEEP * 2:  # trim now and then, not on every write
         entries = entries[-HISTORY_KEEP:]
-        path.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8")
+        tmp = path.with_name(path.name + ".tmp")  # a new file, then a swap: a crash or full disk can't empty it
+        tmp.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8")
+        tmp.replace(path)
     return entries[::-1][:HISTORY_KEEP]
 
 

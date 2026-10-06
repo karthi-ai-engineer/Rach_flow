@@ -19,6 +19,7 @@ thousands of entries stays cheap to edit; the engine keeps its own index and reb
 """
 import enum
 import json
+import logging
 import re
 import sqlite3
 import threading
@@ -30,6 +31,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from sst.pipeline.contracts import DictionaryConfig, DictionaryReplacement, DictionaryResult
+
+log = logging.getLogger(__name__)
 
 COMMON_WORDS_FILE = Path(__file__).resolve().parent.parent / "static" / "common_words.txt"
 SCHEMA_VERSION = 1
@@ -343,6 +346,10 @@ def _clean_context(words: Iterable[str]) -> list[str]:
     return out
 
 
+def _cant_keep(path: Path, error) -> str:
+    return f"Rflow can't keep your dictionary in {path.parent} ({error}): it works now, but changes won't be kept."
+
+
 class DictionaryStore:
     """The user's terms, their aliases and the learner's candidates, in SQLite. Thread-safe: one connection, one lock.
 
@@ -357,16 +364,49 @@ class DictionaryStore:
         self._version = 0
         self._data_version = None  # PRAGMA data_version: changes when another connection writes
         self._preferred: dict[str, int] = {}  # compact key of each preferred term -> its id
-        with self._lock:
-            if str(path) != ":memory:":
-                self._db.execute("PRAGMA journal_mode=WAL")
-            self._db.execute("PRAGMA foreign_keys=ON")
-            current = self._db.execute("PRAGMA user_version").fetchone()[0]
-            for version in range(current, len(_SCHEMA)):
-                self._db.executescript(_SCHEMA[version])
-                self._db.execute(f"PRAGMA user_version = {version + 1}")
-                self._db.commit()
-            self._sync()
+        try:
+            with self._lock:
+                if str(path) != ":memory:":
+                    self._db.execute("PRAGMA journal_mode=WAL")
+                self._db.execute("PRAGMA foreign_keys=ON")
+                current = self._db.execute("PRAGMA user_version").fetchone()[0]
+                for version in range(current, len(_SCHEMA)):
+                    self._db.executescript(_SCHEMA[version])
+                    self._db.execute(f"PRAGMA user_version = {version + 1}")
+                    self._db.commit()
+                self._sync()
+        except Exception:
+            self._db.close()  # a damaged file stays locked otherwise, and can't be moved aside
+            raise
+
+    @classmethod
+    def open(cls, path: str | Path) -> tuple["DictionaryStore", str]:
+        """The store at `path`, whatever state it's in, so Rflow always starts: a damaged file is moved aside and a new
+        one started; a folder that can't be written gives a store in memory. With what happened, in plain words for
+        the user ("" when all is well)."""
+        path = Path(path)
+        try:
+            return cls(path), ""
+        except sqlite3.DatabaseError as e:  # not a database, or a damaged one
+            damaged = e
+        except OSError as e:  # the folder can't be made or written
+            log.warning("The dictionary can't be kept in %s: %s", path.parent, e)
+            return cls(), _cant_keep(path, e)
+        if not path.exists():  # sqlite couldn't create it: the folder isn't writable
+            return cls(), _cant_keep(path, damaged)
+        aside = path.with_name(f"{path.stem}.damaged-{time.strftime('%Y%m%d-%H%M%S')}{path.suffix}")
+        try:
+            path.replace(aside)
+            for extra in ("-wal", "-shm"):  # its write-ahead log belongs to it
+                if (side := path.with_name(path.name + extra)).exists():
+                    side.replace(aside.with_name(aside.name + extra))
+            store = cls(path)
+        except (OSError, sqlite3.Error) as e:
+            return cls(), _cant_keep(path, e)
+        log.warning("The dictionary was damaged (%s): a new one started, the old one kept as %s", damaged, aside.name)
+        return store, (f"Your dictionary file was damaged ({damaged}), so Rflow started a new one: Your words come back "
+                       f"from your settings; sound-alikes and learned corrections start again. The old file is kept as "
+                       f"{aside.name}.")
 
     @property
     def version(self) -> int:
