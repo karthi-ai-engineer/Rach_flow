@@ -53,6 +53,7 @@ class LiveConfig:
     mic_target: str = "ja"  # the language what the microphone hears is translated into
     speak: bool = False  # the translation spoken aloud too, by a voice on the laptop (sst.live.speaker)
     speak_speed: float = 1.0
+    duck: float = 0.3  # how loud the other apps stay while the voice speaks (1.0: as they are; sst.live.ducking)
 
     @property
     def lanes(self) -> tuple[str, ...]:
