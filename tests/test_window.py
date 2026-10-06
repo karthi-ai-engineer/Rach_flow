@@ -75,8 +75,16 @@ def test_pages_one_level_down_lead_back():
     assert window.current_page() == "models"
     window.show_page("words")
     assert window.current_page() == "dictionary"  # Words opens on Your words
-    window.pages["dictionary"].tabs.buttons["snippets"].click()
-    assert window.current_page() == "snippets" and window.nav["words"].isChecked()
+
+
+def test_words_and_snippets_are_sections_of_their_own():
+    window, _ = _window()
+    window.nav["snippets"].click()
+    assert window.current_page() == "snippets" and window.nav["snippets"].isChecked()
+    assert window.pages["snippets"].title.text() == "Snippets" and not hasattr(window.pages["snippets"], "tabs")
+    window.nav["words"].click()
+    assert window.current_page() == "dictionary" and window.pages["dictionary"].title.text() == "Words"
+    assert not hasattr(window.pages["dictionary"], "tabs")
 
 
 def test_home_shows_the_stats_and_the_dictations_by_day():
@@ -150,7 +158,7 @@ def test_the_dictionary_adds_several_words_and_removes_one():
     page.entry.setText("Tamil,  CodeQL , github")
     page._add()
     assert app.settings.vocabulary == ["GitHub", "Tamil", "CodeQL"] and page.entry.text() == ""
-    assert page.count.text() == "3 words" and page.tabs.buttons["dictionary"].suffix == "3"
+    assert page.count.text() == "3 words"
     remove = next(b for b in page.findChildren(w.IconButton) if b.toolTip() == "Remove GitHub")
     remove.click()
     assert app.settings.vocabulary == ["Tamil", "CodeQL"]

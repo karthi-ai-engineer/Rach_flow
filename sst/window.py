@@ -1163,29 +1163,7 @@ class HomePage(Page):
         QTimer.singleShot(1200, back)
 
 
-# ---------------------------------------------------------------- Words: Your words and Snippets
-
-def _words_header(app, go_to, current: str) -> Segmented:
-    tabs = Segmented([("dictionary", "Your words"), ("snippets", "Snippets")])
-    tabs.set_current(current)
-    tabs.changed.connect(lambda key: go_to(key) if key != current else None)
-    tabs.app = app
-    return tabs
-
-
-def _count_words(app) -> int:
-    entries = {w.lower() for w in app.settings.vocabulary}
-    entries |= {t.preferred.lower() for t in app.dictionary_terms()}
-    return len(entries)
-
-
-def _show_counts(tabs: Segmented, app) -> None:
-    tabs.buttons["dictionary"].suffix = str(_count_words(app))
-    tabs.buttons["snippets"].suffix = str(len(load_snippets(app.settings.snippets)))
-    for b in tabs.buttons.values():
-        b.updateGeometry()
-        b.update()
-
+# ---------------------------------------------------------------- Words (Your words) and Snippets: a section each
 
 class WordChip(QWidget):
     """A word as a chip: flat at rest, raised with ✕ under the pointer."""
@@ -1232,10 +1210,12 @@ class WordChip(QWidget):
 
 
 class DictionaryPage(Page):
+    """Your words: names and terms Rflow should always spell right, what it hears them as, and corrections to learn."""
+
     def __init__(self, app, go_to):
-        tabs = _words_header(app, go_to, "dictionary")
-        super().__init__("Words", "Names Rflow should always get right, and phrases it types for you.", tabs)
-        self.tabs, self.app, self.go_to = tabs, app, go_to
+        super().__init__("Words", "Names and terms Rflow should always get right: your colleagues, products, places. Add "
+                                  "them once; Rflow listens for them and spells them your way.")
+        self.app, self.go_to = app, go_to
         # one box: type to find a word among yours; Enter (or Add) adds it (several: separate them with commas)
         self.entry_box = Card("field", 14)
         entry = QHBoxLayout(self.entry_box)
@@ -1313,7 +1293,6 @@ class DictionaryPage(Page):
 
     def refresh(self) -> None:
         settings: Settings = self.app.settings
-        _show_counts(self.tabs, self.app)
         self.cleanup_off.setVisible(not settings.cleanup)
         clear(self.suggestions)
         suggestions = self.app.correction_suggestions()
@@ -1440,12 +1419,10 @@ class SnippetsPage(Page):
     """Snippets (sst.snippets): say a short phrase, get your own text typed, exactly as written here."""
 
     def __init__(self, app, go_to=None):
-        go_to = go_to or (lambda page: None)
-        tabs = _words_header(app, go_to, "snippets")
-        super().__init__("Words", "Say a short phrase, get your own text: “my email” types your email address, "
-                                  "“my signature” your signature, line breaks and all. Typed exactly as "
-                                  "written here, and never sent to the AI.", tabs)
-        self.tabs, self.app = tabs, app
+        super().__init__("Snippets", "Say a short phrase, get your own text: “my email” types your email address, "
+                                     "“my signature” your signature, line breaks and all. Typed exactly as "
+                                     "written here, and never sent to the AI.")
+        self.app = app
         self.editing: str | None = None  # the cue of the snippet being edited
         form, layout = card(12, (20, 20, 20, 20))
         self.form_title = label("Add a snippet", "heading")
@@ -1501,7 +1478,6 @@ class SnippetsPage(Page):
 
     def refresh(self) -> None:
         mine = load_snippets(self.app.settings.snippets)
-        _show_counts(self.tabs, self.app)
         clear(self.rows)
         self.count.setText(f"{len(mine)} snippet{'s' if len(mine) != 1 else ''}")
         self.list_card.setVisible(bool(mine))
@@ -4388,12 +4364,13 @@ class ProfilesPage(Page):
 
 # ---------------------------------------------------------------- the window
 
-NAV = [("home", "Home"), ("words", "Words"), ("tools", "Tools"), ("live", "Live translation"), ("models", "AI & models"),
-       ("settings", "Settings")]
-NAV_ICONS = {"home": "home", "words": "words", "tools": "tools", "live": "live", "models": "models", "settings": "settings"}
+NAV = [("home", "Home"), ("words", "Words"), ("snippets", "Snippets"), ("tools", "Tools"), ("live", "Live translation"),
+       ("models", "AI & models"), ("settings", "Settings")]
+NAV_ICONS = {"home": "home", "words": "words", "snippets": "snippets", "tools": "tools", "live": "live", "models": "models",
+             "settings": "settings"}
 RAIL_NAMES = {"models": "AI", "live": "Live"}  # shorter names under the icons of the narrow rail
 # The section each page belongs to (its sidebar button), and the page a section opens on.
-SECTION = {"home": "home", "dictionary": "words", "snippets": "words", "tools": "tools", "live": "live", "transform": "tools",
+SECTION = {"home": "home", "dictionary": "words", "snippets": "snippets", "tools": "tools", "live": "live", "transform": "tools",
            "translate": "tools", "models": "models", "speech": "models", "cleanup": "models", "settings": "settings",
            "reading": "settings", "profiles": "settings"}
 OPENS = {"words": "dictionary"}
