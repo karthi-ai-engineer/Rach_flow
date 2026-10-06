@@ -1300,3 +1300,24 @@ def test_past_sessions_are_listed_to_open():
     assert datetime(2026, 10, 5).strftime("%a 5 %b, 14:03") in texts and "23 lines" in texts and "1 line" in texts
     next(b for b in page.findChildren(QPushButton) if b.text() == "Open").click()
     assert ("open_live_session", Path("a.txt")) in app.calls
+
+
+def test_hearing_the_translation_is_switched_on_in_the_section():
+    window, app = _live_window()
+    window.show_page("live")
+    page = window.pages["live"]
+    assert not page.speak.isChecked() and page.speed_row.isHidden()
+    assert "Downloaded the first time (64 MB)" in page.speak_caption.text()
+    page.speak.setChecked(True)
+    assert ("set_live_speak", True) in app.calls and app.settings.live_speak and not page.speed_row.isHidden()
+    page.speed.setCurrentIndex(page.speed.findData(1.3))
+    assert app.settings.live_speak_speed == 1.3
+    app._voice_state = ("downloading", 37, "")
+    page.refresh()
+    assert page.speak_caption.text().startswith("Downloading the voice Danny: 37%")
+
+
+def test_the_section_says_when_the_voice_cant_speak_the_language_chosen():
+    window, _ = _live_window(live_target="ja")
+    window.show_page("live")
+    assert window.pages["live"].speak_caption.text().startswith("Danny speaks English: choose English above")

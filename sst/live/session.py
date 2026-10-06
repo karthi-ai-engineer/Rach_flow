@@ -7,6 +7,10 @@ one transcript, the log and whoever shows them (the caption bar). Qt-free: the a
 The microphone's lines that come back untranslated (speech already in mic_target: a meeting's Japanese from the
 speakers when there are no headphones, or someone speaking Japanese) are dropped, never shown or saved: with Both they
 are echo, and with the microphone alone they need no translation.
+
+With speaking on, the translation also goes to a Speaker (sst.live.speaker), and a way that could hear the voice gets
+silence while it speaks: the microphone near speakers (not headphones), and what the laptop plays where Windows can't
+leave Rflow's own sound out (before Windows 11). So the spoken translation is never heard and translated again.
 """
 import logging
 import statistics
@@ -28,6 +32,7 @@ class LiveSession:
         self.lanes: dict[str, tuple] = {}  # lane -> (capture, engine)
         self.lags: dict[str, list[float]] = {}  # per way, per line that ended in a pause: complete this long after it
         self.lines: dict[str, int] = {}
+        self.speaker = None  # speaks the translation aloud (sst.live.speaker), while the user wants it
 
     @property
     def running(self) -> bool:
@@ -40,7 +45,7 @@ class LiveSession:
         engine = engine_factory(self._event)
         engine.start()
         try:
-            capture.start(engine.feed)
+            capture.start(self._feed(lane, capture, engine))
         except Exception:
             engine.stop()
             raise
@@ -64,6 +69,26 @@ class LiveSession:
     def stop(self) -> None:
         for lane in list(self.lanes):
             self.remove(lane)
+        self.set_speaker(None)
+
+    def set_speaker(self, speaker) -> None:
+        """Speak the translation with `speaker` (started here), or stop speaking (None)."""
+        old, self.speaker = self.speaker, speaker
+        if old is not None:
+            old.stop()
+            log.info("The voice said %d sentences (%d skipped to keep up)", old.said, old.skipped)
+        if speaker is not None:
+            speaker.start()
+
+    def _feed(self, lane: str, capture, engine) -> Callable[[bytes], None]:
+        """What a way's engine is fed: its frames, or silence while the voice plays where this way hears it."""
+        def feed(frame: bytes) -> None:
+            speaker = self.speaker
+            if speaker is not None and speaker.speaking and (
+                    not speaker.private if lane == MIC else getattr(capture, "hears_self", False)):
+                frame = bytes(len(frame))
+            engine.feed(frame)
+        return feed
 
     def _event(self, event: LiveEvent) -> None:
         if event.kind is Kind.LINE:
@@ -77,4 +102,6 @@ class LiveSession:
                       event.source, event.text)
             if self.transcript is not None:
                 self.transcript.add(event)
+        if self.speaker is not None:
+            self.speaker.hear(event)
         self.on_event(event)

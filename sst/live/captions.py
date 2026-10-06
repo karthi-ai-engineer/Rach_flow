@@ -7,7 +7,7 @@ keyboard from the app in front (WS_EX_NOACTIVATE: clicks move, resize and scroll
 default it isn't in screen shares or recordings (SetWindowDisplayAffinity); a switch shows it, for colleagues to read.
 
 With Both (an online meeting) the microphone's lines are the user's own: marked "You" in the accent colour, without the
-words heard (the user knows what they said).
+words heard (the user knows what they said). The speaker button turns the spoken translation on and off.
 """
 import ctypes
 import dataclasses
@@ -65,6 +65,7 @@ _CURSORS = {(True, False): Qt.CursorShape.SizeHorCursor, (False, True): Qt.Curso
 class CaptionBar(QWidget):
     closed = Signal()  # the ✕: stop live translation
     moved = Signal(object)  # [x, y, width, height] after a move or a resize, to remember
+    speak_toggled = Signal(bool)  # the speaker button: the translation spoken aloud, or not
 
     def __init__(self, config: LiveConfig | None = None):
         super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
@@ -80,6 +81,7 @@ class CaptionBar(QWidget):
         self.current: dict[str, tuple[str, str]] = {}  # way -> (words heard, translation) of the line being spoken
         self.problems: dict[str, str] = {}  # way -> what went wrong, until words come again
         self.status = "Starting…"
+        self.voice_note = ""  # the voice's state in the title while it isn't simply on or off (downloading, loading)
         self._drag: tuple[QPoint, QRect, tuple] | None = None  # (where the press was, the geometry then, the edges)
         self._tail_at = 0  # where the finished lines end in the document: what follows is redrawn as words come
 
@@ -90,15 +92,14 @@ class CaptionBar(QWidget):
         self.title = QLabel()
         self.title.setFont(theme.font(12, 600))
         self.title.setStyleSheet(f"color: {theme.tok('text3', popup=True).name()}; background: transparent;")
-        self.close_button = QToolButton()
+        self.speak_button = self._head_button("Speak the translation")
+        self.speak_button.setCheckable(True)
+        self.speak_button.clicked.connect(lambda on: self.speak_toggled.emit(on))
+        self.close_button = self._head_button("Stop live translation")
         self.close_button.setIcon(QIcon(theme.icon_pixmap("close", theme.tok("text2", popup=True).name(), 14, 2.0)))
-        self.close_button.setToolTip("Stop live translation")
-        self.close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.close_button.setStyleSheet("QToolButton { border: none; border-radius: 6px; padding: 4px; background: "
-                                        "transparent; } QToolButton:hover { background: rgba(255, 255, 255, 28); }")
         self.close_button.clicked.connect(self.closed.emit)
         head.addWidget(self.title, 1)
+        head.addWidget(self.speak_button)
         head.addWidget(self.close_button)
         outer.addLayout(head)
         self.view = QTextBrowser()
@@ -116,9 +117,31 @@ class CaptionBar(QWidget):
         self.view.document().setDocumentMargin(2)
         self.view.viewport().installEventFilter(self)  # its presses move the bar too; the wheel still scrolls it
         outer.addWidget(self.view, 1)
+        self.set_speaking(False)
         self._update_title()
         self._redraw_tail()
 
+    @staticmethod
+    def _head_button(tip: str) -> QToolButton:
+        b = QToolButton()
+        b.setToolTip(tip)
+        b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setStyleSheet("QToolButton { border: none; border-radius: 6px; padding: 4px; background: transparent; }"
+                        "QToolButton:hover { background: rgba(255, 255, 255, 28); }")
+        return b
+
+    def set_speaking(self, on: bool, hint: str = "") -> None:
+        """The speaker button shows whether the translation is spoken; `hint` says why nothing is (its tooltip)."""
+        self.speak_button.setChecked(on)
+        colour = theme.tok("primary" if on else "text2", popup=True).name()
+        self.speak_button.setIcon(QIcon(theme.icon_pixmap("speaker" if on else "speaker-off", colour, 15, 2.0)))
+        self.speak_button.setToolTip(hint or ("Stop speaking the translation" if on else "Speak the translation"))
+        self.problems.pop("voice", None)
+
+    def set_voice_note(self, note: str) -> None:
+        self.voice_note = note
+        self._update_title()
     # -- what's shown
 
     def show_event(self, event: LiveEvent) -> None:
@@ -178,6 +201,8 @@ class CaptionBar(QWidget):
                 parts.append(f"you into {language_name(c.mic_target)}")
         if self.status not in ("Listening", ""):
             parts.append(self.status)
+        if self.voice_note:
+            parts.append(self.voice_note)
         self.title.setText("  ·  ".join(parts))
 
     def _add_finished(self, lane: str, heard: str, said: str) -> None:
@@ -362,15 +387,17 @@ class LiveCaptions(QObject):
     """Starts and stops a live translation session and shows it in the translation bar; thread-safe towards the
     engines (their events arrive on their own threads and are moved to Qt's). The app wires the parts:
     `make_session(config, on_event)` builds the LiveSession (with its transcript), `make_lane(lane, config)` gives a
-    way's (capture, engine_factory)."""
+    way's (capture, engine_factory), `make_speaker(config)` the Speaker that says the translation aloud (None while the
+    voice isn't downloaded)."""
 
     event = Signal(object)
     changed = Signal(bool)  # running or not
     moved = Signal(object)  # the bar's new [x, y, width, height], to remember
+    speak_toggled = Signal(bool)  # the bar's speaker button
 
-    def __init__(self, make_session: Callable, make_lane: Callable):
+    def __init__(self, make_session: Callable, make_lane: Callable, make_speaker: Callable | None = None):
         super().__init__()
-        self._make_session, self._make_lane = make_session, make_lane
+        self._make_session, self._make_lane, self._make_speaker = make_session, make_lane, make_speaker
         self.event.connect(self._on_event)
         self.session = None
         self.config = LiveConfig()
@@ -401,8 +428,10 @@ class LiveCaptions(QObject):
         self.session, self.bar = session, bar
         bar.closed.connect(self.stop)
         bar.moved.connect(self.moved.emit)
+        bar.speak_toggled.connect(self.speak_toggled.emit)
         for lane, error in failed:
             self._couldnt_start(lane, error)
+        self._update_speaker()
         bar.place(geometry)
         bar.show()
         self.changed.emit(True)
@@ -429,7 +458,48 @@ class LiveCaptions(QObject):
         self.bar.set_config(self.config)
         if not self.session.lanes:
             self.stop()
+            return problem
+        self._update_speaker()
         return problem
+
+    def set_speak(self, on: bool) -> None:
+        """The translation spoken aloud, or not: at once if live translation runs, and for the next start."""
+        self.config = dataclasses.replace(self.config, speak=on)
+        self._update_speaker()
+
+    def set_speak_speed(self, speed: float) -> None:
+        self.config = dataclasses.replace(self.config, speak_speed=speed)
+        if self.session is not None and self.session.speaker is not None:
+            self.session.speaker.set_speed(speed)
+
+    def set_voice_note(self, note: str) -> None:
+        """The voice's state in the bar's title (downloading, loading), or "" when it's simply on or off."""
+        if self.bar is not None:
+            self.bar.set_voice_note(note)
+
+    def _update_speaker(self) -> None:
+        """The voice while speaking is on: started, told which ways it speaks now; stopped when speaking is off."""
+        session = self.session
+        if session is None:
+            return
+        speaker = session.speaker
+        if self.config.speak and speaker is None and self._make_speaker is not None:
+            speaker = self._make_speaker(self.config)  # None while the voice isn't downloaded
+            if speaker is not None:
+                session.set_speaker(speaker)
+        elif not self.config.speak and speaker is not None:
+            session.set_speaker(None)
+            speaker = None
+        hint = ""
+        if speaker is not None:
+            lanes = self.config.spoken_lanes(speaker.language)
+            speaker.set_lanes(lanes)
+            speaker.set_speed(self.config.speak_speed)
+            if not lanes:
+                hint = (f"The voice speaks {language_name(speaker.language)}: nothing here is translated into it. "
+                        f"Choose {language_name(speaker.language)} to hear the translation.")
+        if self.bar is not None:
+            self.bar.set_speaking(speaker is not None, hint)
 
     def _couldnt_start(self, lane: str, error: Exception) -> str:
         log.warning("Live translation: the %s didn't start: %s", "microphone" if lane == MIC else "computer's sound",

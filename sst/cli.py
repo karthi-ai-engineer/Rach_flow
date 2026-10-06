@@ -8,7 +8,7 @@
   uv run sst eval [<folder>...]    score reading tests (all of them by default); --degrade, --model, --no-cleanup
   uv run sst web                   open a Record / Stop page in the browser
   uv run sst live [--to ja]        live translation of what the laptop plays (Gemini), until Ctrl+C;
-                                   --source microphone (or both), --mic-to ja
+                                   --source microphone (or both), --mic-to ja, --speak (aloud too)
 
 Options: --engine parakeet (or whisper-turbo; openai, groq, gemini, server as set up in Rflow)
          --device <number from `sst devices`>
@@ -144,6 +144,20 @@ def cmd_live(args) -> None:
     for lane in config.lanes:
         capture = Capture.microphone() if lane == MIC else Capture.speakers()
         session.add(lane, capture, lambda emit, lane=lane: GeminiLiveTranslate(key, config.for_lane(lane), emit, lane=lane))
+    if args.speak:
+        from sst.live.speaker import Speaker
+        from sst.live.voice import DANNY, VOICES, PiperVoice, install
+        from sst.live.wasapi import Player
+        voice = VOICES.get(settings.live_voice, DANNY)
+        if not voice.ready():
+            print(f"Downloading the voice {voice.name} ({round(voice.size / 1e6)} MB, once)...")
+            install(voice, progress=lambda done, total: print(f"\r  {done * 100 // total}%", end="", flush=True))
+            print()
+        lanes = config.spoken_lanes(voice.language)
+        if not lanes:
+            print(f"  (The voice speaks {language_name(voice.language)}: nothing here is translated into it.)")
+        session.set_speaker(Speaker(lambda: PiperVoice(voice), Player(), lanes, voice.language, settings.live_speak_speed,
+                                    on_problem=lambda message: print(f"\n  ! {message}", flush=True)))
     try:
         stopped.wait(args.seconds or None)
     finally:
@@ -231,6 +245,8 @@ def main() -> None:
     p_live.add_argument("--source", choices=["computer", "microphone", "both"],
                         help="what to translate: what the laptop plays, the microphone, or both (default: as set in Rflow)")
     p_live.add_argument("--mic-to", help="language code for what the microphone hears (default: as set in Rflow, ja)")
+    p_live.add_argument("--speak", action="store_true",
+                        help="speak the translation aloud too (an English voice on this laptop, downloaded the first time)")
     p_web = sub.add_parser("web", help="open the record/stop page in your browser")
     p_web.add_argument("--port", type=int, default=8765)
     p_web.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")

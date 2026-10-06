@@ -122,13 +122,31 @@ def test_an_output_that_cant_be_opened_is_reported_to_the_caller():
     assert not any(t.name == "live-output" and t.is_alive() for t in threading.enumerate())
 
 
-def test_the_speakers_are_heard_in_loopback_and_the_microphone_for_calls(monkeypatch):
+def test_the_speakers_are_heard_without_rflows_own_sound_and_the_microphone_for_calls(monkeypatch):
     opened = []
-    monkeypatch.setattr(wasapi, "_Stream", lambda flow, role: opened.append((flow, role)))
-    Capture.speakers()._opener()
-    Capture.microphone()._opener()
-    assert opened == [(wasapi.E_RENDER, wasapi.E_CONSOLE), (wasapi.E_CAPTURE, wasapi.E_COMMUNICATIONS)]
+    monkeypatch.setattr(wasapi, "_ProcessLoopback", lambda: opened.append("process loopback") or "excluding Rflow")
+    monkeypatch.setattr(wasapi, "_Stream", lambda flow, role: opened.append((flow, role)) or "a stream")
+    assert Capture.speakers()._opener() == "excluding Rflow"
+    assert Capture.microphone()._opener() == "a stream"
+    assert opened == ["process loopback", (wasapi.E_CAPTURE, wasapi.E_COMMUNICATIONS)]
     assert (Capture.speakers().what, Capture.microphone().what) == ("output device", "microphone")
+
+
+def test_without_process_loopback_the_whole_output_is_captured(monkeypatch):
+    def unavailable():
+        raise OSError("process loopback refused (0x80070057)")  # before Windows 11
+    monkeypatch.setattr(wasapi, "_ProcessLoopback", unavailable)
+    monkeypatch.setattr(wasapi, "_Stream", lambda flow, role: (flow, role))
+    assert Capture.speakers()._opener() == (wasapi.E_RENDER, wasapi.E_CONSOLE)
+
+
+def test_the_capture_says_whether_rflows_own_voice_is_in_it():
+    class Mixed(FakeStream):
+        hears_self = True
+    _, capture = run_capture([Mixed()], 0.1)
+    assert capture.hears_self
+    _, capture = run_capture([FakeStream()], 0.1)
+    assert not capture.hears_self
 
 
 def test_the_real_mix_format_parts_are_the_documented_sizes():

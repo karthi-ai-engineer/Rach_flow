@@ -51,6 +51,8 @@ class LiveConfig:
     hide_from_capture: bool = True  # the caption bar isn't in screen shares and recordings
     source: str = "computer"  # a key of SOURCES: what's translated (the laptop, the microphone, or both)
     mic_target: str = "ja"  # the language what the microphone hears is translated into
+    speak: bool = False  # the translation spoken aloud too, by a voice on the laptop (sst.live.speaker)
+    speak_speed: float = 1.0
 
     @property
     def lanes(self) -> tuple[str, ...]:
@@ -61,6 +63,12 @@ class LiveConfig:
         """With both, the microphone is the user in an online meeting: their lines are marked "You". With the
         microphone alone it hears everyone in the room, so nothing is marked."""
         return self.source == "both"
+
+    def spoken_lanes(self, language: str) -> tuple[str, ...]:
+        """The ways a voice speaking `language` reads aloud: what's translated into that language. With both, only the
+        others' words: the user's own are for the people they talk to."""
+        lanes = (SYSTEM,) if self.source == "both" else self.lanes
+        return tuple(lane for lane in lanes if self.for_lane(lane).target == language)
 
     def for_lane(self, lane: str) -> "LiveConfig":
         """The settings one way's engine works with: what the microphone hears goes into mic_target."""

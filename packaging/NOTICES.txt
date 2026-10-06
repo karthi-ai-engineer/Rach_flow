@@ -23,6 +23,13 @@ not included: downloaded from Hugging Face only when the user chooses it)
   The Whisper model weights are released by OpenAI under the MIT License.
   https://github.com/openai/whisper/blob/main/LICENSE
 
+Voice for live translation (not included: downloaded from Hugging Face only when the user turns speaking on)
+  Piper voice "Danny" (en_US-danny-low, rhasspy/piper-voices), released under the MIT License.
+  https://huggingface.co/rhasspy/piper-voices  It was trained from Mycroft's mimic3-voices (CC BY-SA 4.0,
+  https://github.com/MycroftAI/mimic3-voices). The voice's model card is kept next to it.
+  espeak-ng data, the 6 files English needs (from k2-fsa's sherpa-onnx copy of this voice), GNU GPL v3:
+  https://github.com/espeak-ng/espeak-ng  (data files only, read by sherpa-onnx to turn words into phonemes).
+
 Software
 --------
 faster-whisper        MIT License                 https://github.com/SYSTRAN/faster-whisper

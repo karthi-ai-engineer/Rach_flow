@@ -540,7 +540,7 @@ def test_live_translation_needs_a_gemini_key_and_asks_once_before_the_first_star
     started = []
 
     class FakeSession:  # a LiveSession's ways, without devices or Google
-        transcript = None
+        transcript = speaker = None
 
         def __init__(self):
             self.lanes = {}
@@ -637,3 +637,34 @@ def test_past_sessions_are_listed_newest_first(tray_app):
     (folder / "notes.txt").write_text("not a session", encoding="utf-8")
     assert [(began, lines) for began, lines, _ in app.live_sessions()] == [
         (datetime(2026, 10, 5, 14, 3, 12), 2), (datetime(2026, 10, 4, 9, 0, 0), 1)]
+
+
+def test_speaking_needs_the_voice_downloaded_first_then_speaks(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    from sst.live.contracts import SYSTEM, LiveConfig
+    from sst.live.speaker import Speaker
+    monkeypatch.setattr(sst_app.Voice, "ready", lambda self, root=None: False)
+    assert app._live_speaker(LiveConfig(speak=True)) is None and app.live_voice_state()[0] == "missing"
+    started = []
+    monkeypatch.setattr(app, "download_live_voice", lambda: started.append(True))
+    app.set_live_speak(True)
+    assert app.settings.live_speak and started == [True]
+    monkeypatch.setattr(sst_app.Voice, "ready", lambda self, root=None: True)
+    speaker = app._live_speaker(LiveConfig(target="en", speak=True, speak_speed=1.3))
+    assert isinstance(speaker, Speaker) and speaker.lanes == {SYSTEM} and speaker.speed == 1.3
+    assert app.live_voice_state() == ("ready", 0, "")
+
+
+def test_the_voices_download_shows_its_progress_and_speaks_when_done(tray_app, monkeypatch):
+    app, _, _ = tray_app
+    notes, speak = [], []
+    monkeypatch.setattr(app.live, "set_voice_note", notes.append)
+    monkeypatch.setattr(app.live, "set_speak", speak.append)
+    app.settings = dataclasses.replace(app.settings, live_speak=True)
+    app.voice_downloading = 0
+    app._on_voice_progress(42)
+    assert app.live_voice_state() == ("downloading", 42, "") and notes[-1] == "Downloading the voice: 42%"
+    app._on_voice_done("")
+    assert app.voice_downloading is None and notes[-1] == "" and speak == [True]
+    app._on_voice_done("the model server answered 503")
+    assert app.live_voice_state()[2] == "the model server answered 503"
