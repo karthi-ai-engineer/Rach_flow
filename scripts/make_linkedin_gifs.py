@@ -16,7 +16,8 @@ don't change merged into longer ones, and each frame storing only the pixels tha
 Everything is drawn like the feature clips (scripts/make_demo_video.py, make_feature_clips_a.py and _b.py, imported, not
 copied): the pill, the Translate popup and the translation bar are Rflow's own widgets with example data, grabbed off the
 screen, so nothing appears, takes focus, presses keys or touches the clipboard. The transforms' results are the ones the
-real TransformGuard accepts (make_feature_clips_b.check_results), and the numbers come from the real formatting stage.
+real TransformGuard accepts (checked before drawing: the run stops if one isn't), and the numbers come from the real
+formatting stage.
 Pillow is added only for the run:
 
   uv run --no-sync --with pillow python scripts/make_linkedin_gifs.py [1 2 ...] [--out DIR] [--frames DIR]
@@ -127,6 +128,7 @@ class Gif:
     stage = BASE
     captions: list[tuple[float, str]] = []
     checks: tuple[float, ...] = ()  # moments to look at (exported as PNG with --frames)
+    SHADOWS = False  # a window that changes size over the glows: its shadow dithered (see write_gif)
 
     def draw(self, p: QPainter, t: float) -> None:
         raise NotImplementedError
@@ -253,6 +255,7 @@ class Transform(Gif):
     """The paragraph selected, Ctrl+Win held, the command said: the selection replaced by the result, the window
     shrinking to it, the pill naming the transform; then the paragraph back, as at the start."""
     KEY = ""
+    BEFORE = AFTER = ""  # the paragraph and the result: the feature clip's (make_feature_clips_b), unless given here
     COUNT = False  # the word count under the window
     duration = 6.4
     SELECT, KEYS, DOWN, UP, DONE, HIDE, BACK = 0.55, 0.95, 1.15, 2.3, 2.85, 5.1, 5.4
@@ -265,13 +268,19 @@ class Transform(Gif):
         from sst.transform import TRANSFORMS
         clips_b.STAGE = self.stage  # its result drawing reads the stage's text size, line and width
         clips_b.block.cache_clear()
-        self.before_h, self.after_h = self.height(clips_b.PARAGRAPH), self.height(clips_b.RESULTS[self.KEY])
+        self.before, self.after = self.BEFORE or clips_b.PARAGRAPH, self.AFTER or clips_b.RESULTS[self.KEY]
+        if self.BEFORE:  # a pair of its own: one Rflow would type (the real guard accepts it)
+            from sst.transform import TransformGuard
+            got = TransformGuard().validate(self.before, self.after, self.KEY)
+            if not got.accepted:
+                sys.exit(f"TransformGuard rejects the {self.KEY} result: {got.reasons}")
+        self.before_h, self.after_h = self.height(self.before), self.height(self.after)
         bottom = self.TOP + max(self.before_h, self.after_h)  # the pill, the words said and the keys under the window
         self.stage = clips_b.STAGE = demo.STAGE = replace(self.stage, pill_y=bottom + 46, keys_y=bottom + 148)
         self.command_y = bottom + 98
         if self.stage.keys_y > 626:
             sys.exit(f"{self.name}: the window is too tall for the keys under it")
-        self.after, self.command = clips_b.RESULTS[self.KEY], clips_b.COMMANDS[self.KEY]
+        self.command = clips_b.COMMANDS[self.KEY]
         self.captions = [(0, f"Say: “{self.command}”")]
         self.pill = demo.PillTrack(self.DOWN + 0.05, self.HIDE, [
             (self.DOWN + 0.05, "recording", False, ""), (self.UP, "transforming", False, ""),
@@ -289,30 +298,30 @@ class Transform(Gif):
         return demo.BAR + 32 + body + 12
 
     def draw(self, p, t):
-        k = ramp(t, self.DONE - 0.05, 0.45) * (1 - ramp(t, self.BACK, 0.45))
+        k = ramp(t, self.DONE + 0.05, 0.6) * (1 - ramp(t, self.BACK, 0.45))  # the window eases to the text's height
         editor = QRectF(20, self.TOP, 500, mix(self.before_h, self.after_h, k))
         demo.STAGE = replace(self.stage, editor=editor)
         demo.draw_editor(p)
         demo.STAGE = self.stage
         if self.COUNT:  # how long it is, under the window: the words before, then after
-            for text, amount, colour in ((clips_b.PARAGRAPH, 1 - k, T["text3"]), (self.after, k, T["iris"])):
+            for text, amount, colour in ((self.before, 1 - k, T["text3"]), (self.after, k, T["iris"])):
                 if amount > 0:
                     with faded(p, amount):
                         write(p, QRectF(editor.right() - 200, editor.bottom() + 8, 196, 22), f"{len(text.split())} words",
                               14, 500, colour, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         gone, came = ramp(t, self.DONE - 0.15, 0.2), ramp(t, self.DONE + 0.05, 0.3)  # one text out, then the other in
-        out, back = ramp(t, self.BACK - 0.1, 0.2), ramp(t, self.BACK + 0.15, 0.3)
-        paragraph = clips_b.PARAGRAPH
+        out, back = ramp(t, self.BACK - 0.1, 0.2), ramp(t, self.BACK + 0.4, 0.3)  # the paragraph back once there's room
+        paragraph = self.before
         if gone < 1:
             with faded(p, 1 - gone):
                 demo.draw_text(p, paragraph, round(len(paragraph) * ramp(t, self.SELECT, 0.5)))
         if came > 0 and out < 1:
             with faded(p, came * (1 - out)):
                 clips_b.draw_result(p, self.after, 1 - ramp(t, self.DONE + 0.5, 1.0))
-        if back > 0 and t > self.BACK:
+        if back > 0:
             with faded(p, back):
                 demo.draw_text(p, paragraph)
-        if t < self.SELECT or t > self.BACK + 0.3:
+        if t < self.SELECT or t > self.BACK + 0.6:
             clips_a.caret(p, demo.caret_at(paragraph, len(paragraph)), clips_a.blink(t, self.duration),
                           self.stage.text_px + 8)
         pressed = ramp(t, self.DOWN, 0.12) * (1 - ramp(t, self.UP, 0.12))
@@ -335,7 +344,18 @@ class Transform(Gif):
 
 
 class Concise(Transform):
-    name, KEY, COUNT = "2-make-it-concise.gif", "concise", True
+    """A rambling message about moving a meeting, about a third as long after "make it concise": its name, day and time
+    kept."""
+    name, KEY, COUNT, SHADOWS = "2-make-it-concise.gif", "concise", True, True
+    checks = (0.3, 1.9, 3.1, 4.2, 5.75)
+    TOP = 140  # a longer paragraph: the window a little higher, its text a little smaller
+    stage = replace(Transform.stage, editor=QRectF(20, TOP, 500, 300), text_px=18, line=28)
+    BEFORE = ("Hey team, so, um, I just wanted to quickly mention that, basically, we need to kind of move tomorrow's design "
+              "review, because Maya is actually going to be out in the morning, so, like, the plan is that we push the design "
+              "review to Thursday at 3:30 PM instead, which honestly works better for everyone anyway, so yeah, please, you "
+              "know, just update your calendars and sort of let me know that you saw this, thanks.")
+    AFTER = ("Maya is out tomorrow morning, so the design review moves to Thursday at 3:30 PM. Please update your calendars "
+             "and confirm you saw this.")
 
 
 class Bullets(Transform):
@@ -618,18 +638,27 @@ def palette_for(frames: list[np.ndarray]) -> list[int]:
     return colours + [255, 0, 255] * (256 - len(colours) // 3)
 
 
-def write_gif(path: Path, frames: list[np.ndarray], ground: np.ndarray) -> tuple[float, int]:
+BAYER = (np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]) + 0.5) / 16 - 0.5
+
+
+def write_gif(path: Path, frames: list[np.ndarray], ground: np.ndarray, shadows: bool = False) -> tuple[float, int]:
     """The frames as a looping GIF: indexed without dithering (crisp text), except the backdrop's soft glows, which would
     band: where a frame shows the bare backdrop (`ground`), its pixels come from one dithered copy of it, the same in
-    every frame. Still frames are merged, and each frame stores only what moved."""
+    every frame. With `shadows` (a window that moves, its soft shadow over the glows), the dark parts get a faint ordered
+    dither too: the same pattern in every frame, so nothing shimmers. Still frames are merged, and each frame stores only
+    what moved."""
     colours = palette_for(frames)
     palette = Image.new("P", (1, 1))
     palette.putpalette(colours)
     dithered = np.asarray(Image.fromarray(ground).quantize(palette=palette, dither=Image.Dither.FLOYDSTEINBERG))
     indexed = []
     for f in frames:
-        index = np.asarray(Image.fromarray(f).quantize(palette=palette, dither=Image.Dither.NONE)).copy()
         bare = (f == ground).all(axis=2)
+        if shadows:
+            dark = (f.max(axis=2) < 72)[..., None]
+            noise = np.tile(BAYER, (f.shape[0] // 4 + 1, f.shape[1] // 4 + 1))[:f.shape[0], :f.shape[1], None] * 5
+            f = np.where(dark, np.clip(f + noise, 0, 255), f).astype(np.uint8)
+        index = np.asarray(Image.fromarray(f).quantize(palette=palette, dither=Image.Dither.NONE)).copy()
         index[bare] = dithered[bare]
         indexed.append(index)
     ticks = [round(n * 100 / FPS) for n in range(len(frames) + 1)]  # centiseconds: GIF's own unit
@@ -692,7 +721,8 @@ def main() -> None:
                 check_caption(text)
             frames = [gif.frame(n / FPS) for n in range(round(gif.duration * FPS))]
             path = args.out / gif.name
-            seconds, kept = write_gif(path, frames, np.ascontiguousarray(demo.pixels(demo.backdrop())[..., 2::-1]))
+            seconds, kept = write_gif(path, frames, np.ascontiguousarray(demo.pixels(demo.backdrop())[..., 2::-1]),
+                                      gif.SHADOWS)
             print(f"Wrote {path.name}: {seconds:.1f} s, {kept} of {len(frames)} frames, {path.stat().st_size / 1e6:.2f} MB")
             if args.frames:
                 export_frames(path, args.frames, (0.0, *gif.checks, gif.duration - 0.5 / FPS))  # (the last: it meets the first)
