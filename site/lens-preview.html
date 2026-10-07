@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Rflow lens preview</title>
+<!-- For checking the hero animation: ?theme=light|dark, ?w=320 (one width), ?seek=3500 (a still moment, in ms),
+     ?start=2 (the example to begin with), ?motion=reduce (as with reduced motion), ?nojs (the state without JavaScript),
+     ?timer (the loop on a timer, for headless screenshots with --virtual-time-budget). -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="lens.css">
+<style>
+  /* the page's tokens (index.html), dark first */
+  :root, :root[data-theme="dark"] {
+    --base: #191C22; --well: #101216; --cx-a: #1E2128; --cx-b: #15171C; --line: rgba(255,255,255,.06);
+    --text: #ECEEF3; --text-2: #A6ACBA; --text-3: #8A91A1; --rim: #6B7386;
+    --iris: #8C9DFF; --violet: #B48CFF; --live: #FF6B6B; --ok: #5BE3A6; --warn: #FFC56B;
+    --key: #22252C; --key-lip: rgba(0,0,0,.45); --edge: rgba(255,255,255,.06);
+    --sh-1: -6px -6px 16px rgba(255,255,255,.05), 8px 8px 20px rgba(0,0,0,.6);
+    --sh-2: -4px -4px 10px rgba(255,255,255,.045), 5px 5px 12px rgba(0,0,0,.55);
+    --sh-3: -2px -2px 6px rgba(255,255,255,.04), 3px 3px 7px rgba(0,0,0,.5);
+    --in-2: inset 2px 2px 6px rgba(0,0,0,.58), inset -2px -2px 5px rgba(255,255,255,.045);
+  }
+  :root[data-theme="light"] {
+    --base: #E8EBF1; --well: #DFE3EA; --cx-a: #F3F5F9; --cx-b: #E0E4EB; --line: rgba(22,25,32,.08);
+    --text: #161920; --text-2: #3A4050; --text-3: #5E6575; --rim: #787F91;
+    --iris: #3F4ACB; --violet: #6A3ED4; --live: #B42F2F; --ok: #0B6B42; --warn: #8A4E00;
+    --key: #F6F7FA; --key-lip: rgba(136,146,170,.45); --edge: rgba(255,255,255,.7);
+    --sh-1: -8px -8px 20px rgba(255,255,255,.95), 10px 10px 24px rgba(136,146,170,.42);
+    --sh-2: -5px -5px 12px rgba(255,255,255,.9), 6px 6px 14px rgba(136,146,170,.4);
+    --sh-3: -3px -3px 7px rgba(255,255,255,.85), 3px 3px 8px rgba(136,146,170,.38);
+    --in-2: inset 2px 2px 6px rgba(136,146,170,.45), inset -2px -2px 5px rgba(255,255,255,.9);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; background: var(--base); color: var(--text);
+         font: 16px/1.6 "Geist", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  .row { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; }
+  .frame { flex: none; }
+  .frame small { display: block; margin: 0 0 10px 4px; color: var(--text-3); font: 500 12px "Geist Mono", monospace; }
+</style>
+</head>
+<body>
+<div class="row" id="row"></div>
+<script>
+  (function () {
+    var q = new URLSearchParams(location.search), html = document.documentElement;
+    var theme = q.get("theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    html.dataset.theme = theme;
+    var widths = q.get("w") ? [+q.get("w")] : [620, 527, 420, 320];
+    widths.forEach(function (w) {
+      var f = document.createElement("div"), d = document.createElement("div");
+      f.className = "frame";
+      f.style.width = w + "px";
+      f.innerHTML = "<small>" + w + " px · " + theme + "</small>";
+      d.className = "lens";
+      d.setAttribute("data-lens", "");
+      d.setAttribute("role", "img");
+      d.setAttribute("aria-label", "Rflow turns what you say into clean text: fillers removed, your words spelled right, numbers formatted, names kept.");
+      ["seek", "start", "motion"].forEach(function (k) { if (q.has(k)) d.dataset[k] = q.get(k); });
+      f.appendChild(d);
+      document.getElementById("row").appendChild(f);
+    });
+    if (q.has("timer")) {  // headless browsers run one animation frame only: drive the loop with a timer instead
+      window.requestAnimationFrame = function (cb) { return setTimeout(function () { cb(performance.now()); }, 16); };
+      window.cancelAnimationFrame = clearTimeout;
+    }
+    if (!q.has("nojs")) {
+      var s = document.createElement("script");
+      s.src = "lens.js";
+      document.body.appendChild(s);
+    }
+  })();
+</script>
+</body>
+</html>

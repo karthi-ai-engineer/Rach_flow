@@ -1,0 +1,156 @@
+/* The Rflow lens: the hero's animation (lens.js builds it inside #lens). Colours come from the page's tokens, so it
+   follows the page in dark and light; the fallbacks are the dark theme's. */
+.lens { --t1: var(--text, #ECEEF3); --t2: var(--text-2, #A6ACBA); --t3: var(--text-3, #8A91A1); --ln: var(--line, rgba(255,255,255,.06));
+  --ir: var(--iris, #8C9DFF); --vi: var(--violet, #B48CFF); --lv: var(--live, #FF6B6B); --okc: var(--ok, #5BE3A6); --wr: var(--warn, #FFC56B);
+  --wl: var(--well, #101216); --in: var(--in-2, inset 2px 2px 6px rgba(0,0,0,.58), inset -2px -2px 5px rgba(255,255,255,.045));
+  --sf: linear-gradient(145deg, var(--cx-a, #1E2128), var(--cx-b, #15171C)); --eg: inset 0 1px 0 var(--edge, rgba(255,255,255,.06));
+  --s3: var(--sh-3, 3px 3px 7px rgba(0,0,0,.5)); --ease: cubic-bezier(.45,0,.2,1);
+  container-type: inline-size; position: relative; color: var(--t1); text-align: left; background: var(--sf); border-radius: 24px;
+  box-shadow: var(--sh-1, 8px 8px 20px rgba(0,0,0,.6)), var(--eg); }
+.lens *, .lens *::before, .lens *::after { box-sizing: border-box; }
+.lens p { margin: 0; }
+
+/* Without JavaScript the div stays empty: a still card with the first example, before and after. */
+.lens:empty { display: grid; gap: 14px; padding: 26px; font-size: 15px; line-height: 1.6; }
+.lens:empty::before { content: "\201Cum so tell Priya the post grass migration is uh done and like twenty five percent of the users are on it\201D";
+  color: var(--t3); font-style: italic; }
+.lens:empty::after { content: "Tell Priya the PostgreSQL migration is done, and 25% of the users are on it.";
+  padding: 14px 16px; border-radius: 14px; background: var(--wl); box-shadow: var(--in); }
+
+/* Every example's text is in place at once, stacked, so the card keeps one size; only the playing one shows */
+.lens-view { padding: 20px 22px 6px; }
+.lens-stack { display: grid; }
+.lens-stack > * { grid-area: 1 / 1; visibility: hidden; opacity: 0; transition: opacity .45s var(--ease), visibility 0s .45s; }
+.lens-stack > .on { visibility: visible; opacity: 1; transition: opacity .45s var(--ease); }
+
+.lens-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; min-height: 26px; }
+.lens-mode, .lens-cap { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--t3); white-space: nowrap; }
+.lens-mode span, .lens-hint span { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.lens-mode i { width: 7px; height: 7px; border-radius: 50%; background: var(--vi); box-shadow: 0 0 6px var(--vi); }
+.lens-hint { font-size: 13px; color: var(--t2); justify-items: end; }
+.lens-hint span { gap: 3px; }
+.lens-hint b { font-weight: 500; color: var(--t1); }
+.lens kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 22px; padding: 0 6px; margin: 0 1px;
+  border-radius: 6px; background: var(--key, #22252C); color: var(--t1); font: 500 11px/1 "Geist Mono", ui-monospace, monospace;
+  box-shadow: var(--s3), inset 0 -2px 0 var(--key-lip, rgba(0,0,0,.45)), var(--eg); }
+
+.lens-stage { display: grid; grid-template-columns: 1fr auto 1fr; grid-template-areas: "in mid out" "chips chips chips"; gap: 0 4px; }
+.lens-in { grid-area: in; } .lens-out { grid-area: out; }
+.lens-cap { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 22px; margin-bottom: 8px; font-size: 11.5px; }
+
+/* What was said: words drift in from the left, a little messy; fillers dimmed, then struck */
+.lens-say, .lens-box { font-size: 14px; line-height: 1.65; }
+.lens-say { color: var(--t2); align-items: center; }
+.lens-say [lang="ja"] { font-family: "Geist", "Yu Gothic UI", "Yu Gothic", Meiryo, "Hiragino Sans", "Noto Sans JP", sans-serif; line-height: 1.8; }
+.lens .w { display: inline-block; position: relative; margin: 0 .07em; opacity: 0; transform: translate(-16px, var(--dy)) rotate(var(--r));
+  text-decoration: underline 1.5px transparent; text-underline-offset: 4px;
+  transition: opacity .7s var(--ease), transform .9s var(--ease), color .6s var(--ease), text-decoration-color .6s var(--ease); }
+.lens .w.in { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(var(--r)); }
+.lens .w.f { color: var(--t3); font-style: italic; }
+.lens .w.f.in { opacity: .6; }
+.lens .w::after { content: ""; position: absolute; left: -1px; right: -1px; top: 54%; height: 1.5px; background: var(--t3);
+  transform: scaleX(0); transform-origin: left; transition: transform .5s var(--ease); }
+.lens.is-proc .w.f::after { transform: scaleX(1); }
+.lens.is-proc .w.f.in { opacity: .38; }
+.lens.is-proc .w.x { text-decoration-color: var(--wr); text-decoration-style: wavy; }
+.lens.is-proc .w.n { text-decoration-color: color-mix(in srgb, var(--ir) 70%, transparent); }
+.lens.is-proc .w.k { color: var(--t1); }
+/* text that was selected or copied, not spoken: steady, with a selection behind it */
+.lens .w.s { display: inline; margin: 0; padding: 2px 1px; border-radius: 3px; color: var(--t1); background-color: transparent;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; transition: opacity .7s var(--ease), background-color .8s var(--ease) .5s; }
+.lens .w.s.in { background-color: color-mix(in srgb, var(--ir) 22%, transparent); }
+
+/* The live waveform, like Rflow's pill */
+.lens-wave { display: flex; align-items: center; gap: 2px; height: 20px; padding: 0 8px; border-radius: 99px; background: var(--wl); box-shadow: var(--in);
+  opacity: 0; transition: opacity .4s var(--ease); }
+.lens.is-wave .lens-wave { opacity: 1; }
+.lens-wave i, .lens-bars i { width: 2px; height: 3px; border-radius: 1px; background: var(--lv); opacity: .55; }
+.lens.is-live .lens-wave i, .lens.is-live .lens-bars i { opacity: 1; animation: lens-bar .8s var(--ease) infinite alternate; }
+@keyframes lens-bar { from { height: 3px; } to { height: var(--h); } }
+
+/* The lens: a raised orb whose ring glows coral while it listens, iris to violet while it works, mint when it's done */
+.lens-mid { grid-area: mid; display: flex; align-items: center; align-self: center; padding: 0 2px; }
+.lens-pipe { position: relative; width: 22px; height: 2px; overflow: hidden; background: var(--ln); }
+.lens-pipe::after { --a: translateX(-10px); --b: translateX(24px); content: ""; position: absolute; inset: 0; width: 8px; opacity: 0;
+  background: linear-gradient(90deg, transparent, var(--ir), transparent); }
+.lens.is-proc .lens-pipe:first-child::after, .lens.is-type .lens-pipe:last-child::after { opacity: 1; animation: lens-flow 1.1s linear infinite; }
+@keyframes lens-flow { from { transform: var(--a); } to { transform: var(--b); } }
+.lens-orb { position: relative; width: 84px; height: 84px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  background: var(--sf); box-shadow: var(--sh-2, 5px 5px 12px rgba(0,0,0,.55)), var(--eg); }
+.lens-orb::before { content: ""; position: absolute; inset: -18px; border-radius: 50%; opacity: 0; transition: opacity .8s var(--ease);
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--vi) 34%, transparent), color-mix(in srgb, var(--ir) 14%, transparent) 60%, transparent); }
+.lens.is-proc .lens-orb::before { opacity: 1; animation: lens-breathe 2.6s var(--ease) infinite alternate; }
+@keyframes lens-breathe { from { transform: scale(.92); } to { transform: scale(1.06); } }
+.lens-ring, .lens-ring::after { position: absolute; inset: 8px; border-radius: 50%; }
+.lens-ring { padding: 2px; background: var(--ln);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+.lens-ring::after { content: ""; inset: 0; opacity: 0; transition: opacity .6s var(--ease); }
+.lens.is-live .lens-ring::after { opacity: 1; background: var(--lv); }
+.lens.is-proc .lens-ring::after { opacity: 1; background: conic-gradient(from 200deg, var(--ir), var(--vi), var(--ir)); }
+.lens.is-done .lens-ring::after { background: var(--okc); }
+.lens-core { width: 55px; height: 55px; border-radius: 50%; background: var(--wl); box-shadow: var(--in); display: grid; place-items: center; }
+.lens-core > * { grid-area: 1 / 1; display: flex; align-items: center; gap: 3px; opacity: 0; transition: opacity .4s var(--ease); }
+.lens.is-live .lens-bars, .lens.is-proc:not(.is-done) .lens-dots, .lens.is-done .lens-check { opacity: 1; }
+.lens-bars i { width: 3px; }
+.lens-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--vi); animation: lens-dot 1.2s var(--ease) infinite; }
+.lens-dots i:nth-child(2) { animation-delay: .15s; } .lens-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes lens-dot { 0%, 100% { opacity: .3; } 40% { opacity: 1; } }
+.lens svg { width: 24px; height: 24px; fill: none; stroke: var(--okc); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* The clean text, typed into a box */
+.lens-box { padding: 12px 14px; border-radius: 14px; background: var(--wl); box-shadow: var(--in); min-height: 4.95em; }
+.lens-text b { font-weight: 500; transition: color .8s var(--ease); }
+.lens.is-done .lens-text b { color: var(--ir); }
+.lens-text s { text-decoration: none; visibility: hidden; }
+.lens-caret { display: inline-block; width: 2px; height: 1.15em; margin-right: -2px; vertical-align: -.2em; background: var(--ir); opacity: 0; }
+.lens.is-type .lens-caret { opacity: 1; }
+.lens.is-done .lens-caret { animation: lens-blink 1.1s steps(1) infinite; }
+@keyframes lens-blink { 50% { opacity: 0; } }
+.lens-done { margin-top: 8px; font-size: 12.5px; color: var(--t2); height: 20px; }
+.lens-done > span { display: flex; align-items: center; gap: 6px; }
+.lens-done svg { width: 15px; height: 15px; stroke-width: 2.4; }
+.lens .lens-done > .on { opacity: 0; transform: translateY(4px); transition: opacity .5s var(--ease), transform .5s var(--ease); }
+.lens.is-done .lens-done > .on { opacity: 1; transform: none; }
+
+/* The steps Rflow takes, popping out of the lens one by one */
+.lens-chips { grid-area: chips; margin-top: 16px; min-height: 28px; }
+.lens-chips > div { display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: 8px; }
+.lens .c { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 12px; border-radius: 99px; font-size: 12.5px; font-weight: 500;
+  white-space: nowrap; background: var(--sf); box-shadow: var(--s3), var(--eg);
+  opacity: 0; transform: translateY(-12px) scale(.7); transition: opacity .55s var(--ease), transform .7s cubic-bezier(.3,1.35,.5,1); }
+.lens .c.in { opacity: 1; transform: none; }
+.lens .c::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--k); box-shadow: 0 0 5px var(--k); }
+
+/* Which example is playing: tabs with a thin progress line */
+.lens-tabs { display: flex; justify-content: center; gap: 4px; padding: 12px 14px 16px; }
+.lens-tabs button { position: relative; height: 28px; padding: 0 11px; border: 0; border-radius: 99px; background: none; cursor: pointer;
+  font: inherit; font-size: 12.5px; font-weight: 500; line-height: 1; color: var(--t3); transition: color .3s; }
+.lens-tabs button:hover, .lens-tabs button[aria-pressed="true"] { color: var(--t1); }
+.lens-tabs button:focus-visible { outline: 2px solid var(--ir); outline-offset: 1px; }
+.lens-tabs button[aria-pressed="true"] { background: var(--wl); box-shadow: var(--in); }
+.lens-tabs i { position: absolute; left: 12px; right: 12px; bottom: 3px; height: 2px; background: var(--ir); opacity: .8; transform: scaleX(0); transform-origin: left; }
+
+/* Narrow columns: the flow goes top to bottom */
+@container (max-width: 499px) {
+  .lens-view { padding: 16px 16px 4px; }
+  .lens-head { flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 12px; }
+  .lens-hint { justify-items: start; }
+  .lens-stage { grid-template-columns: 1fr; grid-template-areas: "in" "mid" "chips" "out"; }
+  .lens-box { min-height: 0; }
+  .lens-mid { flex-direction: column; justify-self: center; padding: 6px 0; }
+  .lens-pipe { width: 2px; height: 14px; }
+  .lens-pipe::after { --a: translateY(-8px); --b: translateY(16px); width: auto; height: 6px; background: linear-gradient(transparent, var(--ir), transparent); }
+  .lens-orb { width: 68px; height: 68px; }
+  .lens-ring { inset: 6px; }
+  .lens-core { width: 44px; height: 44px; }
+  .lens-chips { margin: 2px 0 14px; }
+  .lens-chips > div { gap: 6px; }
+  .lens .c { height: 26px; padding: 0 10px; gap: 6px; font-size: 12px; }
+  .lens-tabs { gap: 2px; padding: 10px 8px 12px; }
+  .lens-tabs button { padding: 0 9px; font-size: 12px; }
+}
+
+/* Still (reduced motion): nothing moves; each example shows before and after, and the tabs switch them */
+.lens.lens--still *, .lens.lens--still *::before, .lens.lens--still *::after { animation: none !important; transition: none !important; }
+.lens.is-paused *, .lens.is-paused *::before, .lens.is-paused *::after { animation-play-state: paused !important; }
+.lens.is-out .lens-stack > .on { opacity: 0; }  /* last, so it wins over the states above */
