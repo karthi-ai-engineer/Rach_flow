@@ -125,6 +125,95 @@ def pills(name: str) -> None:
     image.save(str(OUT / name))
 
 
+# A meeting in Japanese, translated into English; with Both, the user's own words go into Japanese, marked "You".
+LIVE_LINES = [  # (way, words heard, translation)
+    ("system", "皆さん、おはようございます。それでは定例会議を始めます。",
+     "Good morning, everyone. Let's start the weekly meeting."),
+    ("system", "新しいリリースは来週の木曜日に予定しています。", "The new release is planned for next Thursday."),
+    ("mic", "Testing will be finished by Wednesday.", "テストは水曜日までに終わります。"),
+]
+LIVE_SPEAKING = ("ありがとうございます。では、資料は金曜日までに共有フォルダへ",  # the line being spoken
+                 "Thank you. Then please put the materials in the shared folder by Friday")
+
+
+def live_example(name: str) -> None:
+    """The translation bar as it floats over an online meeting: the real CaptionBar with a few lines, over an abstract
+    call (soft tiles and initials, no faces, no real product's look)."""
+    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtGui import QColor, QLinearGradient, QRadialGradient
+
+    from sst import theme
+    from sst.live.captions import CaptionBar
+    from sst.live.contracts import MIC, SYSTEM, Kind, LiveConfig, LiveEvent
+    bar = CaptionBar(LiveConfig(target="en", source="both", mic_target="ja", speak=True))
+    bar.resize(760, 256)
+    bar.status = "Listening"
+    bar._update_title()
+    bar.set_speaking(True)
+    for way, heard, said in LIVE_LINES:
+        bar.show_event(LiveEvent(Kind.LINE, said, source=heard, lane=MIC if way == "mic" else SYSTEM))
+    heard, said = LIVE_SPEAKING
+    bar.show_event(LiveEvent(Kind.SOURCE, heard))
+    bar.show_event(LiveEvent(Kind.TRANSLATION, said))
+    bar.layout().activate()
+    for _ in range(3):
+        QApplication.processEvents()
+    bar._to_bottom()
+    caption = bar.grab()
+    dpr = caption.devicePixelRatio()
+
+    width, height = 1200, 720  # logical pixels; the image keeps the screen's scale
+    image = QImage(round(width * dpr), round(height * dpr), QImage.Format.Format_ARGB32_Premultiplied)
+    image.setDevicePixelRatio(dpr)
+    image.fill(Qt.GlobalColor.transparent)
+    p = QPainter(image)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor("#0E1014"))
+    p.drawRoundedRect(QRectF(0, 0, width, height), 22, 22)
+    tiles = [("SK", "Sato", "#3B4A7A", "#1E2540"), ("TM", "Tanaka", "#4A3B6E", "#251E3A"),
+             ("YN", "Yamada", "#2F5A5A", "#17302F"), ("AL", "Alex", "#5A4A30", "#2E2618")]
+    gap, top, bottom = 14, 18, 84
+    tile_w, tile_h = (width - 3 * gap - 4) / 2, (height - top - bottom - gap) / 2
+    for i, (initials, who, light, dark) in enumerate(tiles):
+        rect = QRectF(gap + 2 + (i % 2) * (tile_w + gap), top + (i // 2) * (tile_h + gap), tile_w, tile_h)
+        fill = QLinearGradient(rect.topLeft(), rect.bottomRight())
+        fill.setColorAt(0, QColor(dark).lighter(115))
+        fill.setColorAt(1, QColor(dark).darker(130))
+        p.setBrush(fill)
+        p.drawRoundedRect(rect, 16, 16)
+        glow = QRadialGradient(rect.center() + QPointF(rect.width() * .18, -rect.height() * .1), rect.width() * .55)
+        soft = QColor(light)
+        soft.setAlpha(70)
+        glow.setColorAt(0, soft)
+        glow.setColorAt(1, QColor(0, 0, 0, 0))
+        p.setBrush(glow)
+        p.drawRoundedRect(rect, 16, 16)
+        disc = QRectF(0, 0, 92, 92)
+        disc.moveCenter(rect.center() - QPointF(0, 10))
+        p.setBrush(QColor(light))
+        p.drawEllipse(disc)
+        p.setPen(QColor("#ECEEF3"))
+        p.setFont(theme.font(28, 600))
+        p.drawText(disc, Qt.AlignmentFlag.AlignCenter, initials)
+        p.setFont(theme.font(13, 500))
+        label = QRectF(rect.left() + 14, rect.bottom() - 40, 110, 28)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 0, 0, 110))
+        p.drawRoundedRect(label, 8, 8)
+        p.setPen(QColor("#DDE1EA"))
+        p.drawText(label.adjusted(10, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter, who)
+        p.setPen(Qt.PenStyle.NoPen)
+    for i, colour in enumerate(["#2A2D35", "#2A2D35", "#2A2D35", "#2A2D35", "#C23B3B"]):  # the call's buttons
+        size = 44
+        x = width / 2 - (5 * size + 4 * 14) / 2 + i * (size + 14)
+        p.setBrush(QColor(colour))
+        p.drawEllipse(QRectF(x, height - bottom / 2 - size / 2 - 4, size, size))
+    p.drawPixmap(QPointF((width - caption.width() / dpr) / 2, height - bottom - caption.height() / dpr - 6), caption)
+    p.end()
+    image.save(str(OUT / name))
+
+
 def main() -> None:
     QApplication([])
     parakeet.find_model = lambda: Path(".")  # as if Parakeet were downloaded: the screenshots show Rflow ready
@@ -140,6 +229,7 @@ def main() -> None:
     shot("welcome.png", "welcome", app=app)
     popups("popups.png")
     pills("pill.png")
+    live_example("live-example.png")
     print("Wrote", ", ".join(sorted(p.name for p in OUT.glob("*.png"))))
 
 
