@@ -126,10 +126,7 @@
   .points .lamp { margin-top: 6px; }
   .keys-line { margin: 26px 0 0 56px; color: var(--text-2); font-size: 15px; line-height: 2.1; }
 
-  /* Live translation: the example over a meeting, then what it does */
-  .wide { padding: 10px; border-radius: 26px; }
-  .wide img { display: block; width: 100%; border-radius: 18px; }
-  .wide figcaption { padding: 14px 12px 6px; color: var(--text-2); font-size: 14.5px; }
+  /* What a feature does, point by point (its clip plays in "See it work") */
   .list { display: grid; gap: 20px; margin: 0; padding: 0; list-style: none; }
   .list li { display: flex; gap: 16px; align-items: flex-start; }
   .list .icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; color: var(--text-2); flex: none; }
@@ -323,11 +320,6 @@
     <h2>Follow the meeting<br>in your own language.</h2>
     <p class="sub">Press <kbd>Ctrl</kbd><span class="plus">+</span><kbd>Alt</kbd><span class="plus">+</span><kbd>L</kbd> in a Teams or Zoom call, a video, or a room full of
       people: what they say appears in a bar over any app, the words heard above their translation.</p>
-    <figure class="card wide" style="margin:0">
-      <img src="img/live-example.png" width="1500" height="900" loading="lazy" alt="Rflow's translation bar over an online meeting: Japanese lines with their English translations, and the user's own line marked You">
-      <figcaption>A meeting in Japanese, translated into English as people speak. With <b>Both</b>, your own words are translated for
-        the others and marked "You".</figcaption>
-    </figure>
     <div class="two live-grid">
       <ul class="list">
         <li><span class="icon well violet"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 11h4M13 11h4M7 15h7"/></svg></span>
@@ -412,10 +404,9 @@
 <section id="demo">
   <div class="wrap">
     <div class="caps">See it in action</div>
-    <h2>A minute with Rflow.</h2>
-    <p class="sub">Dictation, a rewrite and a translation, in real apps.</p>
+    <h2>Rflow in 40 seconds.</h2>
+    <p class="sub">Dictation, a rewrite and a translation, one after another, in real apps.</p>
     <div class="card video">
-      <!-- The demo video and its poster are added before this is merged: site/media/demo.mp4 and site/img/demo-poster.png. -->
       <video src="media/demo.mp4" poster="img/demo-poster.png" controls muted playsinline preload="none"></video>
     </div>
   </div>
