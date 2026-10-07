@@ -1,0 +1,132 @@
+/* "See it work": the feature clips under the hero (showcase.js plays them), and the demo's lightbox. Colours come from
+   the page's tokens; the clips themselves are dark, so their screen is dark in both themes, like a laptop's. */
+.showcase { padding-top: 64px; }
+.sc-head { text-align: center; margin-bottom: 34px; }
+.sc-head h2, .sc-head .sub { text-wrap: balance; }
+.sc-head .sub { margin: 0 auto; max-width: 34em; }
+.sc { position: relative; isolation: isolate; max-width: 1040px; margin: 0 auto; }
+
+/* The tabs: a well, the playing one raised out of it, with a thin line filling as its clip plays */
+.sc-tabs { position: relative; display: flex; gap: 4px; width: max-content; max-width: 100%; margin: 0 auto 28px; padding: 5px;
+  border-radius: 17px; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; overscroll-behavior-x: contain; isolation: isolate; }
+.sc-tabs::-webkit-scrollbar { display: none; }
+/* when the tabs don't fit (phones), the edge with more of them fades out */
+.sc-tabs.more-right { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent); }
+.sc-tabs.more-left { -webkit-mask-image: linear-gradient(90deg, transparent, #000 44px); mask-image: linear-gradient(90deg, transparent, #000 44px); }
+.sc-tabs.more-left.more-right { -webkit-mask-image: linear-gradient(90deg, transparent, #000 44px, #000 calc(100% - 44px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 44px, #000 calc(100% - 44px), transparent); }
+.sc-tab { position: relative; flex: none; display: inline-flex; align-items: center; gap: 9px; height: 42px; padding: 0 17px 0 15px;
+  border: 0; border-radius: 12px; background: transparent; color: var(--text-3); font: inherit; font-size: 14.5px; font-weight: 500;
+  line-height: 1; white-space: nowrap; cursor: pointer; scroll-snap-align: center; -webkit-tap-highlight-color: transparent;
+  transition: color .25s; }
+.sc-tab::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; opacity: 0; transition: opacity .3s;
+  background: linear-gradient(145deg, var(--cx-a), var(--cx-b)); box-shadow: var(--sh-3), inset 0 1px 0 var(--edge); }
+.sc-tab:hover { color: var(--text-2); }
+.sc-tab[aria-selected="true"] { color: var(--text); }
+.sc-tab[aria-selected="true"]::before { opacity: 1; }
+.sc-tab:focus-visible { outline: 2px solid var(--iris); outline-offset: -2px; }
+.sc-tab svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round;
+  flex: none; transition: color .25s; }
+.sc-tab[aria-selected="true"] svg { color: var(--iris); }
+.sc-tab .bar { position: absolute; left: 15px; right: 15px; bottom: 5px; height: 2px; border-radius: 1px; overflow: hidden; opacity: 0;
+  background: color-mix(in srgb, var(--iris) 16%, transparent); transition: opacity .3s; }
+.sc-tab .bar > span { display: block; height: 100%; background: var(--iris); transform: scaleX(0); transform-origin: left; }
+.sc-tab[aria-selected="true"] .bar { opacity: 1; }
+.sc.is-held .sc-tab .bar { opacity: 0; }
+
+/* The player: a raised frame around a dark screen, a soft iris light behind it */
+.sc-player { position: relative; padding: 10px; border-radius: 28px; }
+.sc-player::before { content: ""; position: absolute; z-index: -1; inset: 6% 4% -4%; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--iris) 20%, transparent), color-mix(in srgb, var(--violet) 8%, transparent) 60%, transparent);
+  filter: blur(48px); }
+.sc-screen { position: relative; aspect-ratio: 16 / 9; border-radius: 19px; overflow: hidden; background: #14161B; }
+.sc-screen::after { content: ""; position: absolute; inset: 0; z-index: 3; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.05); }
+.sc-screen video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .6s cubic-bezier(.45,0,.2,1); }
+.sc-screen video.was { z-index: 1; opacity: 1; transition: none; }
+.sc-screen video.on { z-index: 2; opacity: 1; }
+
+/* Play (reduced motion, or after a pause) in the middle; pause and play in the corner while the pointer is over it */
+.sc-play, .sc-toggle, .lb-close { display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; cursor: pointer; color: #fff;
+  background: rgba(20,22,27,.55); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12), 0 8px 24px rgba(0,0,0,.35);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); transition: transform .25s, background-color .25s, opacity .25s; }
+.sc-play:focus-visible, .sc-toggle:focus-visible, .lb-close:focus-visible { outline: 2px solid #8C9DFF; outline-offset: 3px; }
+.sc-play { position: absolute; z-index: 4; left: 50%; top: 50%; width: 76px; height: 76px; margin: -38px 0 0 -38px; color: #0B0D13;
+  background: #8C9DFF; box-shadow: 0 0 0 8px rgba(140,157,255,.16), 0 10px 30px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.35); }
+.sc-play:hover { transform: scale(1.06); background: #9AA9FF; }
+.sc-play[hidden] { display: none; }
+.sc-play svg { width: 26px; height: 26px; margin-left: 4px; fill: currentColor; }
+.sc-screen::before { content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none; opacity: 0; transition: opacity .4s;
+  background: radial-gradient(closest-side, rgba(10,11,14,.45), rgba(10,11,14,.15)); }
+.sc.is-held .sc-screen::before { opacity: 1; }  /* the poster dims a little under the play button */
+.sc-toggle { position: absolute; z-index: 4; right: 14px; bottom: 14px; width: 38px; height: 38px; opacity: 0; }
+.sc-screen:hover .sc-toggle, .sc-toggle:focus-visible { opacity: 1; }
+.sc.is-held .sc-toggle { display: none; }
+.sc-toggle svg { width: 16px; height: 16px; fill: currentColor; }
+@media (hover: none) { .sc-toggle { opacity: .8; } }
+
+/* What you do, then what happens: one line under the player, the playing clip's */
+.sc-caps { display: grid; margin-top: 24px; text-align: center; }
+.sc-cap { grid-area: 1 / 1; margin: 0 auto; max-width: 46em; color: var(--text-2); font-size: 16.5px; line-height: 1.75;
+  opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity .2s, transform .2s, visibility 0s .2s; }
+.sc-cap.on { opacity: 1; visibility: visible; transform: none; transition: opacity .45s .2s, transform .6s .2s cubic-bezier(.45,0,.2,1); }
+.sc-cap b { color: var(--text); font-weight: 600; }
+.sc-cap .to { display: inline-block; width: 16px; height: 16px; margin: 0 9px; vertical-align: -2px; color: var(--iris);
+  fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* The hero's second button: a play button and words, no frame (narrow enough to sit beside Download) */
+.cta { column-gap: 12px; }
+.cta .button.primary { padding: 0 20px; }
+.button.watch { padding: 0 4px 0 0; background: none; box-shadow: none; gap: 10px; font-size: 15.5px; }
+.watch .play { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 50%; color: var(--iris);
+  background: linear-gradient(145deg, var(--cx-a), var(--cx-b)); box-shadow: var(--sh-3), inset 0 1px 0 var(--edge); transition: box-shadow .3s; }
+.watch .play svg { width: 14px; height: 14px; margin-left: 2px; fill: currentColor; }
+.watch:hover .play { box-shadow: var(--sh-3), var(--glow), inset 0 1px 0 var(--edge); }
+/* The demo's lightbox: a dark theatre in both themes */
+html.lb-open { overflow: hidden; padding-right: var(--sbw, 0px); }
+.lb { width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 24px; border: 0; background: transparent;
+  color: #ECEEF3; overflow: hidden; }
+.lb[open] { display: grid; place-items: center; }
+.lb::backdrop { background: rgba(7,8,11,.78); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.lb-panel { width: min(1180px, 100%, calc((100vh - 150px) * 16 / 9)); }
+.lb-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 4px 14px 8px; }
+.lb-title { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.lb-title span { margin-left: 10px; color: #8A91A1; font-weight: 500; font-size: 15px; }
+.lb-close { width: 40px; height: 40px; flex: none; }
+.lb-close:hover { background: rgba(40,43,52,.8); }
+.lb-close svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.lb-frame { padding: 8px; border-radius: 26px; background: linear-gradient(145deg, #1E2128, #15171C);
+  box-shadow: 0 40px 100px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06); }
+.lb-frame video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 19px; background: #14161B; }
+@media (prefers-reduced-motion: no-preference) {
+  .lb[open], .lb[open]::backdrop { animation: lb-in .3s ease-out; }
+  .lb[open] .lb-panel { animation: lb-rise .45s cubic-bezier(.2,.8,.2,1); }
+  .lb.closing, .lb.closing::backdrop { animation: lb-out .18s ease-in forwards; }
+}
+@keyframes lb-in { from { opacity: 0; } }
+@keyframes lb-out { to { opacity: 0; } }
+@keyframes lb-rise { from { opacity: 0; transform: translateY(14px) scale(.97); } }
+
+@media (max-width: 900px) {
+  .showcase { padding-top: 56px; }
+}
+@media (max-width: 560px) {
+  .showcase { padding-top: 48px; }
+  .sc-head { margin-bottom: 24px; }
+  .sc-tabs { margin-bottom: 18px; }
+  .sc-tab { height: 40px; padding: 0 14px 0 13px; font-size: 14px; gap: 8px; }
+  .sc-player { margin: 0 -16px; padding: 0; border-radius: 0; background: none; box-shadow: none; }  /* phones: the clip edge to edge */
+  .sc-player::before { display: none; }
+  .sc-screen { border-radius: 0; }
+  .sc-cap { padding: 0 4px; }
+  .sc-cap b { display: block; }  /* what you do on one line, what happens under it */
+  .sc-cap .to { margin: 0 6px 0 0; }
+  .sc-play { width: 60px; height: 60px; margin: -30px 0 0 -30px; }
+  .sc-play svg { width: 22px; height: 22px; }
+  .sc-toggle { right: 10px; bottom: 10px; width: 34px; height: 34px; }
+  .sc-cap { font-size: 15px; line-height: 1.7; }
+  .lb { padding: 12px; }
+  .lb-frame { padding: 5px; border-radius: 18px; }
+  .lb-frame video { border-radius: 14px; }
+  .lb-title span { display: none; }
+}
