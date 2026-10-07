@@ -12,6 +12,14 @@ _Last updated: 2026-10-06_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-07):**
+- **Phase 38: a website that shows what Rflow does** (the owner's request, issue #121): the hero's **Rflow lens**
+  (`site/lens.js`, `site/lens.css`; spoken words → the orb with a label per real step → clean text; four examples;
+  check it with `site/lens-preview.html`), sections by example instead of a gallery of settings screens (dictation,
+  live translation with `img/live-example.png` drawn from the real caption bar, rewrite and translate, setups with
+  costs), and the demo video (`scripts/make_demo_video.py`: `docs/media/demo.mp4`, the LinkedIn cut
+  `demo-linkedin.mp4`, `demo.gif`; the site plays `site/media/demo.mp4`). Parts: #122 lens, #123 page, #106 video.
+  The owner's LinkedIn post (one post: voice typing + live translation, the 4:5 video, the link in the first
+  comment) is drafted in the session, not in git.
 - **Rflow 2.4.0** (2026-10-07): live translation at any volume, and the voice speaks like an interpreter (phase 37,
   issue #108): the computer's sound captured as 32-bit float and brought up to a normal level, so turning the sound
   down no longer stops the translation (measured: an app at 0.03 % volume, nothing heard before, every word after);

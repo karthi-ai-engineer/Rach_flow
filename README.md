@@ -53,6 +53,8 @@ Rflow is free. Cloud models use **your own key**, and every model shows what it 
 ## 🎬 See it in action
 
 <div align="center">
+<img src="docs/media/demo.gif" width="800" alt="Rflow in action: hold Ctrl+Win, speak, and the text is typed in a Notes window while the pill shows your voice, then Typed">
+<br><br>
 <img src="docs/media/tour.gif" width="860" alt="A tour of Rflow's window: Home, Live translation, Text Transform, AI & models with the setups, Formatting and Snippets">
 <br><br>
 <img src="docs/media/pill.gif" width="280" alt="The recording pill: your voice as a waveform while you speak, then Typed">
