@@ -113,11 +113,16 @@ html.lb-open { overflow: hidden; padding-right: var(--sbw, 0px); }
 @media (max-width: 560px) {
   .showcase { padding-top: 48px; }
   .sc-head { margin-bottom: 24px; }
-  .sc-tabs { margin-bottom: 18px; }
-  .sc-tab { height: 40px; padding: 0 14px 0 13px; font-size: 14px; gap: 8px; }
-  .sc-player { margin: 0 -16px; padding: 0; border-radius: 0; background: none; box-shadow: none; }  /* phones: the clip edge to edge */
-  .sc-player::before { display: none; }
-  .sc-screen { border-radius: 0; }
+  /* phones: the five tabs as a list, all visible at once, instead of a strip to scroll sideways */
+  .sc-tabs { flex-direction: column; gap: 2px; width: 100%; margin-bottom: 16px; padding: 4px; overflow: visible;
+    scroll-snap-type: none; }
+  .sc-tabs, .sc-tabs.more-left, .sc-tabs.more-right, .sc-tabs.more-left.more-right { -webkit-mask-image: none; mask-image: none; }
+  .sc-tab { width: 100%; height: 42px; padding: 0 14px; font-size: 15px; gap: 11px; }
+  .sc-tab .bar { left: 14px; right: 14px; bottom: 4px; }
+  /* and the clip inside the page's margins, in a smaller frame */
+  .sc-player { padding: 6px; border-radius: 20px; }
+  .sc-player::before { inset: 10% 8% -6%; }
+  .sc-screen { border-radius: 14px; }
   .sc-cap { padding: 0 4px; }
   .sc-cap b { display: block; }  /* what you do on one line, what happens under it */
   .sc-cap .to { margin: 0 6px 0 0; }
