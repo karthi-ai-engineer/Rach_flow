@@ -79,6 +79,15 @@
   nav { display: flex; align-items: center; gap: 26px; }
   nav a { color: var(--text-2); font-size: 15px; font-weight: 500; }
   nav a:hover { color: var(--text); text-decoration: none; }
+  /* the owner's "Buy me a coffee", the same link as on their GitHub profile */
+  nav a.coffee { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 15px 0 12px;
+    border-radius: 999px; background: #FFDD00; color: #1A1A1A; font-weight: 600; font-size: 14.5px;
+    box-shadow: 0 6px 18px rgba(255, 221, 0, .18); transition: transform .2s, box-shadow .2s; }
+  nav a.coffee:hover { color: #1A1A1A; transform: translateY(-1px); box-shadow: 0 8px 22px rgba(255, 221, 0, .28); }
+  nav a.coffee:focus-visible { outline: 2px solid var(--iris); outline-offset: 3px; }
+  nav a.coffee svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round; }
+  nav a.coffee .short { display: none; }
 
   .button { display: inline-flex; align-items: center; gap: 10px; height: 48px; padding: 0 22px; border-radius: 14px; font-weight: 600; font-size: 16px;
             color: var(--text); background: linear-gradient(145deg, var(--cx-a), var(--cx-b)); box-shadow: var(--sh-3), inset 0 1px 0 var(--edge); }
@@ -187,6 +196,9 @@
     .points { grid-template-columns: 1fr; }
     .points > div + div { border-left: 0; border-top: 1px solid var(--line); }
     nav a:not(.keep) { display: none; }
+    nav { gap: 16px; }
+    nav a.coffee .long { display: none; }  /* phones: "Coffee" alone, with its cup */
+    nav a.coffee .short { display: inline; }
     section { padding-top: 88px; }
     .final { margin-top: 88px; padding: 36px 28px; }
   }
@@ -208,7 +220,8 @@
   <header>
     <a class="brand" href="#"><img class="mark" src="img/logo.png" width="34" height="34" alt="">Rflow</a>
     <nav><a href="#see">See it work</a><a href="#dictation">Dictation</a><a href="#live">Live translation</a><a href="#rewrite">Rewrite</a><a href="#private">Pricing</a><a href="#faq">FAQ</a>
-      <a class="keep" href="https://github.com/karthi-ai-engineer/rflow-ai">GitHub</a></nav>
+      <a class="keep" href="https://github.com/karthi-ai-engineer/rflow-ai">GitHub</a>
+      <a class="keep coffee" href="https://buymeacoffee.com/karthiaienq" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h13v5a6 6 0 0 1-6 6h-1a6 6 0 0 1-6-6V8Z"/><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17M8 3.5c0 1 1 1.5 1 2.5M12 3.5c0 1 1 1.5 1 2.5"/></svg><span class="long">Buy me a coffee</span><span class="short">Coffee</span></a></nav>
   </header>
 
   <div class="hero">
