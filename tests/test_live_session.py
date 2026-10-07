@@ -69,6 +69,16 @@ def test_a_way_that_cant_start_leaves_nothing_running_and_the_other_goes_on():
     assert made[0].stopped and list(session.lanes) == [SYSTEM]
 
 
+def test_why_a_capture_hears_nothing_is_shown_like_an_engines_problem():
+    shown = []
+    session = LiveSession(LiveConfig(), on_event=shown.append)
+    capture = FakeCapture()
+    capture.on_problem = None  # a real Capture has it: Windows' sound muted
+    session.add(SYSTEM, capture, FakeEngine)
+    capture.on_problem("Windows' sound is muted")
+    assert [(e.kind, e.text, e.lane) for e in shown] == [(Kind.ERROR, "Windows' sound is muted", SYSTEM)]
+
+
 def test_each_way_stops_alone():
     session = LiveSession(LiveConfig(source="both"))
     them, me = FakeCapture(), FakeCapture()

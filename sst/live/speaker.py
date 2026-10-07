@@ -8,7 +8,7 @@ nothing has come for SETTLE seconds: so "It costs 3." isn't said before ".5 mill
 before a pause isn't held until the line ends (1.5 s later). An interpreter mustn't fall behind for good: with
 sentences waiting it speaks faster (up to MAX_SPEED), and one older than STALE seconds is skipped while newer ones wait
 (it stays on screen and in the transcript). Only translations are spoken: speech already in the voice's language is
-heard as it is.
+heard as it is. Like an interpreter, it lowers the other apps while it speaks, if given a Ducker (sst.live.ducking).
 """
 import logging
 import os
@@ -63,10 +63,12 @@ class Speaker:
     synthesize(text, speed); `player` has play(samples, rate), interrupt(), close() and `private`."""
 
     def __init__(self, voice_loader: Callable, player, lanes: Iterable[str], language: str = "en", speed: float = 1.0,
-                 on_problem: Callable[[str], None] = lambda message: None, clock: Callable[[], float] = time.monotonic):
+                 on_problem: Callable[[str], None] = lambda message: None, clock: Callable[[], float] = time.monotonic,
+                 ducker=None):
         self._load, self.player, self.language, self.speed = voice_loader, player, language, speed
         self.lanes = set(lanes)
         self._problem, self._clock = on_problem, clock
+        self.ducker = ducker  # lowers the other apps while the voice speaks (sst.live.ducking), if given
         self._lines: dict[str, _Line] = {}
         self._queue: deque[tuple[float, str, str]] = deque()  # (when it was complete, way, sentence)
         self._lock = threading.Condition()
@@ -90,6 +92,8 @@ class Speaker:
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="live-voice", daemon=True)
         self._thread.start()
+        if self.ducker is not None:
+            self.ducker.start(lambda: self.speaking)
 
     def stop(self) -> None:
         self._stop.set()
@@ -99,6 +103,8 @@ class Speaker:
         self.player.interrupt()
         if self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(3)
+        if self.ducker is not None:
+            self.ducker.stop()  # the other apps back to their own volume
 
     def set_lanes(self, lanes: Iterable[str]) -> None:
         with self._lock:

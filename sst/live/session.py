@@ -44,6 +44,8 @@ class LiveSession:
             return
         engine = engine_factory(self._event)
         engine.start()
+        if hasattr(capture, "on_problem"):  # why it hears nothing (Windows' sound muted), shown like the engine's
+            capture.on_problem = lambda message: self._event(LiveEvent(Kind.ERROR, message, lane=lane))
         try:
             capture.start(self._feed(lane, capture, engine))
         except Exception:

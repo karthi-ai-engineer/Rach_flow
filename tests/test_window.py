@@ -1750,6 +1750,25 @@ def test_hearing_the_translation_is_switched_on_in_the_section():
     assert page.speak_caption.text().startswith("Downloading the voice Danny: 37%")
 
 
+def test_how_low_the_other_apps_go_while_it_speaks_is_a_slider():
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+    window, app = _live_window(live_speak=True)
+    window.show_page("live")
+    page = window.pages["live"]
+    assert page.duck.value() == 30 and page.duck_value.text() == "30%" and "get quieter" in page.duck_caption.text()
+    page.duck.setFocus()
+    QTest.keyClick(page.duck, Qt.Key.Key_Right)  # the arrow keys: a step, chosen at once
+    assert page.duck.value() == 35 and app.settings.live_duck == 0.35
+    page.duck.resize(160, 24)
+    QTest.mousePress(page.duck, Qt.MouseButton.LeftButton, pos=QPoint(150, 12))  # a drag: chosen when let go
+    assert page.duck_value.text() == "Unchanged" and app.settings.live_duck == 0.35
+    QTest.mouseRelease(page.duck, Qt.MouseButton.LeftButton, pos=QPoint(150, 12))
+    assert ("set_live_duck", 1.0) in app.calls and app.settings.live_duck == 1.0
+    assert "speaks over it" in page.duck_caption.text()
+    assert page.duck.value_at(0) == 10 and page.duck.value_at(80) == 55  # whole steps where the pointer is
+
+
 def test_the_section_says_when_the_voice_cant_speak_the_language_chosen():
     window, _ = _live_window(live_target="ja")
     window.show_page("live")

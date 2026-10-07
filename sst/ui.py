@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -429,6 +430,75 @@ class Toggle(QCheckBox):
             p.setPen(QPen(_t(self, "iris"), 2))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRoundedRect(track.adjusted(-2, -2, 2, 2), 14, 14)
+        p.end()
+
+    def focusInEvent(self, event):
+        self._keyboard_focus = event.reason() in (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason)
+        super().focusInEvent(event)
+
+
+class Slider(QSlider):
+    """The design's slider, kin to the switch: an inset track filled with Iris up to a round knob. A click or a drag puts
+    the knob where the pointer is, in whole steps; the arrow keys move it a step."""
+
+    KNOB = 18
+
+    def __init__(self, minimum: int = 0, maximum: int = 100, step: int = 5, parent=None):
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self.setRange(minimum, maximum)
+        self.setSingleStep(step)
+        self.setPageStep(step * 2)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(24)
+        self.setMinimumWidth(140)
+
+    def sizeHint(self) -> QSize:
+        return QSize(200, 24)
+
+    def value_at(self, x: float) -> int:
+        """The value a pointer at `x` chooses: the nearest whole step."""
+        span, step = self.maximum() - self.minimum(), self.singleStep() or 1
+        part = min(max((x - self.KNOB / 2) / max(self.width() - self.KNOB, 1), 0.0), 1.0)
+        return self.minimum() + round(part * span / step) * step
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setSliderDown(True)
+            self.setValue(self.value_at(event.position().x()))
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self.isSliderDown():
+            self.setValue(self.value_at(event.position().x()))
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self.isSliderDown():
+            self.setSliderDown(False)  # sliderReleased: the value is chosen
+            event.accept()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        enabled, k = self.isEnabled(), self.KNOB
+        track = QRectF(k / 2, (self.height() - 6) / 2, self.width() - k, 6)
+        span = (self.maximum() - self.minimum()) or 1
+        x = track.x() + track.width() * (self.value() - self.minimum()) / span
+        p.fillPath(theme.rounded(track, 3), _t(self, "well"))
+        p.setPen(QPen(_t(self, "rim") if enabled else _t(self, "line"), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(track.adjusted(.5, .5, -.5, -.5), 2.5, 2.5)
+        if x > track.x():
+            p.fillPath(theme.rounded(QRectF(track.x(), track.y(), x - track.x(), track.height()), 3),
+                       _t(self, "primary") if enabled else _t(self, "line"))
+        knob = QRectF(x - k / 2, (self.height() - k) / 2, k, k)
+        p.setPen(QPen(_t(self, "primary") if enabled else _t(self, "line"), 2))
+        p.setBrush(_t(self, "knob_on") if enabled else _t(self, "well"))
+        p.drawEllipse(knob.adjusted(1, 1, -1, -1))
+        if self.hasFocus() and getattr(self, "_keyboard_focus", False):
+            p.setPen(QPen(_t(self, "iris"), 2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(knob.adjusted(-2, -2, 2, 2))
         p.end()
 
     def focusInEvent(self, event):

@@ -472,6 +472,13 @@ class LiveCaptions(QObject):
         if self.session is not None and self.session.speaker is not None:
             self.session.speaker.set_speed(speed)
 
+    def set_duck(self, depth: float) -> None:
+        """How loud the other apps stay while the voice speaks: at once, while it speaks, and for the next start."""
+        self.config = dataclasses.replace(self.config, duck=depth)
+        ducker = getattr(self.session.speaker, "ducker", None) if self.session is not None else None
+        if ducker is not None:
+            ducker.set_depth(depth)
+
     def set_voice_note(self, note: str) -> None:
         """The voice's state in the bar's title (downloading, loading), or "" when it's simply on or off."""
         if self.bar is not None:

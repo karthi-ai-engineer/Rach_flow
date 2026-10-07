@@ -271,6 +271,28 @@ def test_speaking_lasts_while_the_voice_can_be_heard():
     speaker.stop()
 
 
+def test_the_other_apps_are_lowered_while_it_speaks_and_put_back_when_it_stops():
+    class FakeDucker:
+        def __init__(self):
+            self.watching, self.stopped = None, False
+
+        def start(self, speaking):
+            self.watching = speaking
+
+        def stop(self):
+            self.stopped = True
+    clock, ducker = Clock(), FakeDucker()
+    speaker, said = speaker_with(clock=clock, ducker=ducker)
+    speaker.start()
+    assert not ducker.watching()  # it watches the voice: quiet now
+    speaker.hear(LiveEvent(Kind.LINE, "Hello."))
+    assert wait_until(lambda: said) and wait_until(ducker.watching)
+    clock.now += 1
+    assert not ducker.watching()
+    speaker.stop()
+    assert ducker.stopped
+
+
 def test_a_voice_that_cant_load_says_so_once():
     problems = []
 

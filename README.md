@@ -1,258 +1,331 @@
-# Rflow
+<div align="center">
 
-[![CI](https://github.com/karthi-ai-engineer/Rach_flow/actions/workflows/ci.yml/badge.svg)](https://github.com/karthi-ai-engineer/Rach_flow/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<img src="sst/static/brand/rflow-mark-256.png" width="112" alt="Rflow logo">
 
-**Speak anywhere, Rflow types it.** Hold **Ctrl+Win** in any Windows app, speak, let go: your words are typed where
-your cursor is. Speech is recognised **on your laptop** by NVIDIA Parakeet (English), so your voice never leaves it;
-or choose Whisper (99 languages), a cloud model with your own key, or your own server. Optionally, an AI model you
-choose cleans up the text (punctuation, fillers, your own words).
+# rflow-ai
 
-Rflow is **free and open source** ([MIT License](LICENSE)): no account, no subscription, no telemetry. Bug reports,
-ideas and pull requests are welcome; see [Contributing](#contributing).
+### **Rflow** · speak anywhere, it types
 
-## Install
+Free, open-source dictation for Windows. Hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> in any app, speak, let go:<br>
+your words are typed where your cursor is. Speech is recognised **on your laptop**.
 
-Download **`Rflow-Setup.exe`** (the latest version:
-[releases/latest](https://github.com/karthi-ai-engineer/Rach_flow/releases/latest), about 90 MB) and run it. It
-needs no administrator rights and no Python. Windows 10/11, 64-bit: Intel and AMD laptops, and ARM laptops (such
-as Snapdragon) through Windows 11's x64 emulation. The first time, Rflow asks how to recognise your
-speech: download NVIDIA Parakeet once (about 660 MB; offline from then on), or use a cloud model or your own server.
+[![Release](https://img.shields.io/github/v/release/karthi-ai-engineer/rflow-ai?label=release&color=8C9DFF)](https://github.com/karthi-ai-engineer/rflow-ai/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/karthi-ai-engineer/rflow-ai/total?color=5BE3A6)](https://github.com/karthi-ai-engineer/rflow-ai/releases)
+[![CI](https://github.com/karthi-ai-engineer/rflow-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/karthi-ai-engineer/rflow-ai/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/karthi-ai-engineer/rflow-ai?color=B48CFF)](LICENSE)
+[![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#-quick-start)
 
-- Windows may say *"Windows protected your PC"*, because the installer isn't code-signed yet. Click **More info → Run anyway**.
-- Rflow then opens its window. The first time, a welcome helps you choose how it recognises your speech, choose your
-  microphone (with a live level) and try your first dictation. Closing the window keeps Rflow running in the tray (the icon near the clock), so dictation
-  keeps working; it also starts when you sign in. Open the window again from the Start menu or by clicking the tray
-  icon; **right-click** the icon for the menu (Quit is there).
-- **Updates:** when a new version is published, Rflow shows a banner in its window and a notification. **Update now**
-  downloads it, checks it against its published SHA-256, installs it and restarts Rflow.
-- Settings and history live in `%APPDATA%\sst`, recordings in `%LOCALAPPDATA%\sst\recordings`, reading tests in
-  `%LOCALAPPDATA%\sst\bench`, logs in `%LOCALAPPDATA%\sst\logs`. Uninstall from *Settings → Apps*.
-- `rflow-cli.exe` next to it is the command-line tool, e.g. `rflow-cli devices`, `rflow-cli file x.wav` or
-  `rflow-cli eval` (score your reading tests).
+[![Download for Windows](https://img.shields.io/badge/Download%20for%20Windows-Rflow--Setup.exe-8C9DFF?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/karthi-ai-engineer/rflow-ai/releases/latest/download/Rflow-Setup.exe)
+[![Website](https://img.shields.io/badge/Website-rflow--ai.vercel.app-191C22?style=for-the-badge)](https://rflow-ai.vercel.app)
 
-## Use
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="site/img/app-light.png">
+  <img src="site/img/app.png" width="860" alt="Rflow's Home: the voice orb, how to dictate, your stats and your recent dictations">
+</picture>
 
-Click in any text box (Notepad, Chrome, Slack, Teams, VS Code...) and:
+</div>
+
+<br>
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🔒 Private by default
+NVIDIA Parakeet turns speech into text **on your own PC**. With it, your voice never leaves the laptop. No account, no telemetry.
+
+</td>
+<td width="33%" valign="top">
+
+### ⚡ Fast, everywhere
+Works in every app: Teams, Slack, Outlook, Word, VS Code, the browser. A 7-second sentence is typed about **a second** after you let go.
+
+</td>
+<td width="33%" valign="top">
+
+### 💸 Free, and honest about costs
+Rflow is free. Cloud models use **your own key**, and every model shows what it costs a month **before** you pick it.
+
+</td>
+</tr>
+</table>
+
+## 🎬 See it in action
+
+<div align="center">
+<img src="docs/media/tour.gif" width="860" alt="A tour of Rflow's window: Home, Live translation, Text Transform, AI & models with the setups, Formatting and Snippets">
+<br><br>
+<img src="docs/media/pill.gif" width="280" alt="The recording pill: your voice as a waveform while you speak, then Typed">
+<br>
+<sub>While you speak, a small pill shows your voice, then "Typed". It never takes the keyboard from your app.</sub>
+</div>
+
+## ✨ What it does
+
+| | Feature | What you get |
+|:-:|---|---|
+| 🎙️ | **Dictation anywhere** | Hold <kbd>Ctrl</kbd>+<kbd>Win</kbd> and talk, or tap it to go hands-free. Your clipboard is left as it was. |
+| 🧠 | **Speech on your PC, or in the cloud** | NVIDIA Parakeet (English, fast, offline), Whisper large-v3 turbo (99 languages), OpenAI, Groq or Gemini with your key, or your own server. |
+| 🧭 | **Ready-made setups** | Recommended, Fastest, Multilingual or Local: each picks the cheapest model that does the job well. |
+| 🌐 | **Live translation** | A meeting, a video or the people in the room, translated while they speak, in a bar you can move anywhere, however low the sound is turned. A voice can speak it too, with the original lowered like an interpreter's. |
+| ✍️ | **Text Transform** | Say *"make it concise"*, *"professional"*, *"bullet points"* or *"action items"*, or double-tap <kbd>Ctrl</kbd> for a menu. |
+| 🔤 | **Translate** | Select text in any app, press <kbd>Ctrl</kbd>+<kbd>C</kbd> twice: the translation appears at the pointer. |
+| 📚 | **Your words and snippets** | Names spelled your way, sound-alikes fixed (*"post grass"* → PostgreSQL), and *"my email"* typing your email. |
+| 🔢 | **Formatting** | *"twenty five percent"* → 25%, money as $25,000, times as 3:30 PM, dates and email addresses. |
+| ✨ | **AI cleanup (optional)** | Punctuation and no "um"s, by OpenAI, Anthropic, Gemini, Groq, Ollama or vLLM. Only text is sent, never audio. |
+| 🛡️ | **Never loses your words** | A guard keeps numbers, names and meaning; if anything fails, the text is still typed or kept on Home. |
+
+## 🖼️ A look inside
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="site/img/models.png" alt="AI & models: the setups with what each costs a month, and your API keys"><br>
+<b>Setups and costs.</b> Pick a setup and see what it costs a month. All your API keys live in one place.
+</td>
+<td width="50%" valign="top">
+<img src="site/img/live.png" alt="Live translation: a big Start button and Speak the translation"><br>
+<b>Live translation.</b> One big Start; while it runs, a red Stop and a blinking light. The voice can read it out.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="site/img/transform.png" alt="Text Transform: how to use it, with before-and-after examples"><br>
+<b>Text Transform.</b> How to use it in three steps, and what each mode does, with before-and-after examples.
+</td>
+<td width="50%" valign="top">
+<img src="site/img/welcome.png" alt="The first run: how should Rflow work? Recommended, Fastest, Multilingual, Local or Custom"><br>
+<b>A first run that decides for you.</b> Choose a setup, paste one key (or none), try your first dictation.
+</td>
+</tr>
+</table>
+
+<div align="center">
+<img src="site/img/popups.png" width="760" alt="The Translate popup with Copy and Replace, and the Text Transform menu"><br>
+<sub>Translate (<kbd>Ctrl</kbd>+<kbd>C</kbd><kbd>C</kbd>) and Text Transform's menu (double-tap <kbd>Ctrl</kbd>) float over any app and never take its focus.</sub>
+</div>
+
+## 🚀 Quick start
+
+1. **[Download `Rflow-Setup.exe`](https://github.com/karthi-ai-engineer/rflow-ai/releases/latest/download/Rflow-Setup.exe)** (about 90 MB) and run it. No administrator rights, no Python. Windows 10 or 11, 64-bit; ARM laptops (Snapdragon) run it through Windows 11's emulation.
+2. **Pick a setup.** *Recommended* hears you on this PC (a one-time 663 MB download, then offline) and polishes the text with a low-cost AI.
+3. **Click in any text box, hold <kbd>Ctrl</kbd>+<kbd>Win</kbd> and speak.** Let go, and your words appear.
+
+> [!NOTE]
+> Windows may say *"Windows protected your PC"* because the installer isn't code-signed yet. Click **More info → Run anyway**. Rflow updates itself: when a new version is out, a banner offers it, and the download is checked against its published checksum before it's installed.
+
+### ⌨️ Keys
 
 | Keys | What happens |
 |---|---|
-| hold **Ctrl+Win** while speaking | push-to-talk: types the text when you let go |
-| tap **Ctrl+Win**, speak, tap again | hands-free: records until the second tap, then types the text |
-| **Ctrl+Win+Space**, speak, Ctrl+Win | hands-free too |
-| **Esc** while recording | cancels; nothing is typed |
+| hold <kbd>Ctrl</kbd>+<kbd>Win</kbd> | talk while holding; let go to type |
+| tap <kbd>Ctrl</kbd>+<kbd>Win</kbd>, speak, tap again | hands-free |
+| <kbd>Ctrl</kbd>+<kbd>Win</kbd>+<kbd>Space</kbd> | hands-free as well |
+| <kbd>Esc</kbd> while recording | cancel: nothing is typed |
+| <kbd>Ctrl</kbd>+<kbd>C</kbd> twice | translate the selected text |
+| double-tap <kbd>Ctrl</kbd> | Text Transform's menu (<kbd>1</kbd>–<kbd>4</kbd>, <kbd>U</kbd> to undo) |
+| <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>L</kbd> | start or stop live translation |
+| <kbd>Ctrl</kbd>+<kbd>K</kbd> | search your dictations in Rflow |
 
-Windows' own Ctrl+Win shortcuts still work: Ctrl+Win+D (new desktop), Ctrl+Win+←/→ and so on simply drop the recording.
-Releasing Win doesn't open the Start menu. The key can be changed in Settings (e.g. the Menu key).
+### 🧭 Setups and what they cost
 
-While you speak, a small pill near the bottom of the screen shows your voice as a coral waveform with the time; then
-"Typing" (or "Cleaning up" in violet while the AI polishes it), and "Typed" when it's done. It never takes the keyboard
-focus. A recording stops by itself after 3 minutes and is typed as usual. The text is pasted where your cursor is, and
-whatever you had copied is put back on the clipboard afterwards. Dictated text is kept out of Windows clipboard history
-(Win+V).
+| Setup | Speech | AI cleanup | Key | About a month* |
+|---|---|---|---|---|
+| ⭐ **Recommended** | Parakeet, on your PC | Gemini 3.5 Flash-Lite | Gemini (free to start) | **$1.05** |
+| ⚡ **Fastest** | Whisper large-v3 turbo, on Groq | GPT-OSS 20B, on Groq | Groq (free to start) | **$0.70** |
+| 🌍 **Multilingual** | Gemini 3.5 Transcribe | Gemini 3.5 Flash-Lite | Gemini | **$3.58** |
+| 💻 **Local** | Parakeet or Whisper, on your PC | AI on your PC: coming soon | none | **free** |
+| 🎛️ **Custom** | any model | any model | yours | shown as you choose |
 
-After a dictation, the microphone stays ready for 5 minutes (Windows shows its microphone icon meanwhile). The next
-dictation then starts at once and keeps the moment before you pressed the key, so first words aren't cut off; nothing
-is recorded or sent until you press the key. It records a moment after you let go too, for the last word. Change this
-in Settings ("Microphone stays ready"); a Bluetooth headset's microphone is never kept open.
+<sub>* For typical use, 20 minutes of dictation a day, paid to the provider with your own key, at the providers' prices of October 2026. Free keys cost nothing within their limits; Google may use free-tier text to improve its models. Expensive models are marked in red before you choose them.</sub>
 
-**The window** (Rflow 2.0's "Obsidian Signal" design: soft depth on graphite, light and dark, one job per colour) has
-ten sections, each one explaining itself:
+## 🔐 What leaves your PC
+
+| Feature | What is sent | To whom |
+|---|---|---|
+| Dictation with Parakeet or Whisper | **nothing** | — |
+| Dictation with a cloud model | the recording | the provider you chose, with your key |
+| AI cleanup (optional) | the finished text, never audio | the provider you chose |
+| Text Transform and Translate | the text you select | the provider you chose |
+| Live translation | what it listens to (the computer's sound, the microphone, or both) | Google Gemini, with your key, after it asks |
+| Updates | a version check | GitHub |
+
+Your API keys are encrypted for your Windows account (DPAPI). Settings, words, history and recordings stay in `%APPDATA%\sst` and `%LOCALAPPDATA%\sst`; **Settings → Start over** deletes them all.
+
+## ⚙️ How it works
+
+```mermaid
+flowchart LR
+    A["Hold Ctrl+Win<br/>and speak"] --> B["Speech to text<br/>Parakeet on your PC,<br/>Whisper or a cloud model"]
+    B --> C["Your words<br/>known fixes"]
+    C --> D["Formatting<br/>25% · $25,000 · 3:30 PM"]
+    D --> E["AI cleanup<br/>optional"]
+    E --> F["Guard<br/>numbers, names,<br/>meaning kept"]
+    F --> G["Typed where<br/>your cursor is"]
+```
+
+Long dictations are cut at your pauses and transcribed **while you speak**, so the text is ready moments after you stop. Live translation is a pipeline of its own (`sst/live/`) and never shares dictation's code.
+
+## 📖 The full guide
+
+<details>
+<summary><b>The window's ten sections</b></summary>
+<br>
 
 | Section | What it's for |
 |---|---|
-| **Home** | the voice orb and how to dictate (drawn as keys), a stats strip (this week, words per minute, days in a row, all time), and your dictations by day, searchable with **Ctrl+K**, with Correct and Copy under the pointer. While Parakeet downloads, it shows the progress and says the key isn't ready yet |
-| **Live translation** | speech translated while people speak, in a bar you can **move, resize and scroll back through** (it never takes the keyboard from your app; **✕** stops it). A big green **Start**; while it runs, a red **Stop** with a blinking "Live" light and what it's translating into what. **Speak the translation**, right under it: an English voice on the laptop (Piper's Danny, downloaded once, 64 MB) reads each sentence out as it's translated, never heard and translated again. Listen to the **Computer** (a meeting, a video), the **Microphone** (people in the room) or **Both** (an online meeting: your own words marked "You"). Start and stop it with **Ctrl+Alt+L** in any app; the bar stays out of screen shares unless you let colleagues read it; each session's transcript is listed to open. Google Gemini 3.5 Live Translate with your Gemini key (about $2.20 an hour per source) |
-| **Words** | *Your words*: names, products and terms that speech recognition listens for and the AI cleanup spells your way (type to find one, Enter to add, a chip's ✕ to remove with Undo); sound-alikes ("post grass" -> PostgreSQL) and corrections you made twice, to learn |
-| **Snippets** | say a short phrase, get your own text (**"my email"** types your email address), alone or inside a sentence, typed exactly as written and never sent to the AI |
-| **Text Transform** | rewrite text you already have: hold Ctrl+Win and say **"make it concise"**, "make it professional", "bullet points" or "action items" (your own phrases too), or **double-tap Ctrl** for a menu (1-4, U to undo). It works on the selected text in any app, or else your last dictation, checked so no number, name, date, "not" or "maybe" is lost or invented. The section shows what each one does, with before-and-after examples, and a box to try it |
-| **Translate** | select text in any app and press **Ctrl+C twice**: a window at the pointer shows it translated, with the language at the top; **C** copies it, **Enter** replaces the text. Steps, examples and a box to try it |
-| **Formatting** | **Write numbers as numbers**: "twenty five percent" is typed as 25%, money as $25,000, times as 3:30 PM, dates, e-mail addresses. The section shows real examples of what changes and what stays as you said it, and a box to try it |
-| **AI & models** | **Your API keys** in one place (each provider's key, masked, with Edit; adding a key never changes what the AI cleanup uses), how Rflow hears you, the AI connection and the **Clean up dictation** switch, and the **microphone** with a live meter. One level down: **How Rflow hears you**, in two groups: **On this PC**, NVIDIA Parakeet (English, fast; downloaded once when chosen, 663 MB) and OpenAI Whisper large-v3 turbo (99 languages, downloaded when chosen, slow without an NVIDIA card), with **Scan this PC**; and the **Cloud**: OpenAI, Groq, Google Gemini (your own key, after a warning that your voice goes to the provider; Parakeet takes over if the provider can't be reached) or **your own server** (Whisper on vLLM, a company AI gateway, any server with OpenAI's transcription API). And **AI connection**: the provider, model and backup model (below) |
-| **Settings** | the dictation key, sounds, starting with Windows, keeping recordings, keeping the microphone ready, updates, the **Reading test** (below). **Advanced**: the voice pipeline, troubleshooting steps, Windows' voice effects, **Profiles** (below), the logs, the source code. At the end, **Start over**: deletes everything Rflow keeps on this PC (you can keep the downloaded speech models) and restarts it like a new install |
-| **Report a problem** | opens a bug report on GitHub, copies the version information (no dictated text), and opens the logs folder, with a reminder that logs can hold text you dictated |
+| **Home** | the voice orb and how to dictate, a stats strip (this week, words per minute, days in a row, all time), and your dictations by day, searchable with **Ctrl+K**, with Correct and Copy under the pointer |
+| **Live translation** | a big green **Start**; while it runs, a red **Stop**, a blinking "Live" light and what it's translating into what. **Speak the translation**: an English voice on the laptop (Piper's Danny, 64 MB, downloaded once) reads each sentence out, and like an interpreter Rflow lowers the other apps while it speaks (a slider says how much; they come back after each sentence). It keeps translating however low the sound is turned. Listen to the **Computer** (a meeting, a video), the **Microphone** (the room) or **Both** (an online meeting: your words marked "You"). The bar stays out of screen shares unless you let colleagues read it; each session's transcript is listed. Google Gemini 3.5 Live Translate with your Gemini key (about $2.20 an hour per source) |
+| **Words** | *Your words*: names, products and terms that speech recognition listens for and the AI cleanup spells your way; sound-alikes and corrections you made twice, to learn |
+| **Snippets** | say a short phrase, get your own text (**"my email"** types your email address), typed exactly as written and never sent to the AI |
+| **Text Transform** | rewrite text you already have: hold Ctrl+Win and say **"make it concise"**, "make it professional", "bullet points" or "action items" (your own phrases too), or **double-tap Ctrl** for a menu. It works on the selected text in any app, or else your last dictation, checked so no number, name, date, "not" or "maybe" is lost or invented |
+| **Translate** | select text and press **Ctrl+C twice**: a window at the pointer shows it translated; **C** copies it, **Enter** replaces the text |
+| **Formatting** | **Write numbers as numbers**, with real examples of what changes and what stays as you said it |
+| **AI & models** | the **setups**, **Your API keys** (adding a key never changes what the AI cleanup uses), how Rflow hears you (**On this PC**: Parakeet, Whisper, Scan this PC; **Cloud**: OpenAI, Groq, Gemini, or your own server), the AI connection with a backup model, and the microphone with a live meter |
+| **Settings** | the dictation key, sounds, starting with Windows, keeping recordings, keeping the microphone ready, updates, the Reading test. **Advanced**: the voice pipeline, troubleshooting steps, Windows' voice effects, Profiles, logs, source code. **Start over** deletes everything and restarts Rflow like a new install |
+| **Report a problem** | a bug report on GitHub, the version information to copy (no dictated text), and the logs folder |
 
-The **voice pipeline** cuts long dictations at your pauses (or at 20 s) and transcribes them while you speak; the parts
-are merged, then your dictionary fixes known mishearings, numbers, dates, times and money are written as such ("25%",
-"3:30 PM"), the AI cleanup polishes the text, and a guard keeps it from changing numbers, names or meaning.
+</details>
 
-The first run takes three steps: how Rflow should hear you (Parakeet on this PC, or a cloud model), a first dictation,
-and an optional AI connection (paste a key; Rflow picks the provider's fast model). The window follows Windows' light
-or dark mode. Changes in Settings apply at once; the AI connection has a Save button.
+<details>
+<summary><b>AI cleanup: providers and models</b></summary>
+<br>
 
-**AI cleanup (optional):**
+| Provider | What to enter |
+|---|---|
+| OpenAI, Anthropic, Google Gemini, Groq | an **API key** ("Get a key" opens the provider's page) |
+| Ollama (on this computer) | nothing: it uses `http://localhost:11434/v1` |
+| vLLM or another OpenAI-compatible server | its **address** (e.g. `http://localhost:8000/v1`, LM Studio, a company AI gateway) and a key if it needs one |
 
-1. Choose a **provider** and give it what it needs:
+Fast, cheap models suit dictation (claude-haiku-4-5, gemini-3.5-flash-lite, openai/gpt-oss-20b on Groq, gpt-4o-mini). Models that "think" first are asked to think as little as they allow; the big ones (Pro, Opus, the largest GPT) are slow and costly for dictation, and Rflow marks them. Each provider gets the request it understands (`sst/modelrules.py`). If the model fails or its answer is cut off, the backup model is used; if the provider is slow or unreachable, the text is typed as heard and the pill says so. Home keeps both versions.
 
-   | Provider | What to enter |
-   |---|---|
-   | OpenAI, Anthropic, Google Gemini, Groq | an **API key** ("Get a key" opens the provider's page) |
-   | Ollama (on this computer) | nothing: it uses `http://localhost:11434/v1` (change it if yours runs elsewhere) |
-   | vLLM or another OpenAI-compatible server | its **address** (e.g. `http://localhost:8000/v1`, LM Studio, a company AI gateway) and a key if it needs one |
+Add **your words** (names, company, products, tech terms) so they come out spelled right: speech recognition listens for them too, even with cleanup off. On the owner's reading test, errors on names and terms fell from 40% to 24.5%.
 
-2. **Load models**, choose a **model** and optionally a **backup model**, click **Test**, then **Save**. Fast, cheap
-   models suit dictation (e.g. gpt-4o-mini, claude-haiku-4-5, gemini-3.5-flash-lite, openai/gpt-oss-20b on Groq).
-   Models that "think" first are asked to think as little as they allow; the big ones (Pro, Opus, the largest GPT)
-   are slow and costly for dictation.
-3. Add **your words** in the Dictionary (names, company, products, tech terms), so they come out spelled right.
-   Speech recognition listens for them too, even with AI cleanup off: on the owner's reading test, errors on names and
-   terms fell from 40% to 24.5%. Add names and terms, not everyday words, which would be heard where you didn't say them.
+</details>
 
-Each provider gets the request it understands: Anthropic its own Messages API, OpenAI without the options only
-self-hosted models need, Claude 4.7 and later and Gemini 3 no temperature, which they refuse or advise against, and so
-on (`sst/modelrules.py` says what each model accepts). Switching the provider back and forth keeps each one's key and
-address. Only the finished text goes to the provider, never audio. If the model fails or its answer is cut off at the
-token limit, the backup is used; if the provider is slow or unreachable, the text is typed as heard at once and the pill
-says "Typed as heard". Home keeps both versions (hover a dictation). Keys are stored in `gateway.json`, encrypted for
-your Windows account (DPAPI).
+<details>
+<summary><b>Profiles</b></summary>
+<br>
 
-**Profiles:** several people on one computer, or a work and a private setup, each get a profile (the button under the
-logo, or the *Profiles* page). Each profile has its own dictation key, microphone, words, AI provider and keys,
-dictations, stats and reading tests; a new one starts with the welcome. The first profile keeps its files in
-`%APPDATA%\sst`, the others in `%APPDATA%\sst\profiles\<name>`.
+Several people on one computer, or a work and a private setup, each get a profile (the button under the logo). Each has its own dictation key, microphone, words, AI provider and keys, dictations, stats and reading tests. The first profile keeps its files in `%APPDATA%\sst`, the others in `%APPDATA%\sst\profiles\<name>`.
 
-**Reading test:** the *Reading test* page measures how well Rflow understands *your* voice, microphone and words. There
-are 5 sets of 30 short sentences; each test is one set (Record / Stop, or Space; about 6 minutes; you can leave and
-continue later), and **New test** moves on to the next set. Sets A and B are for practice: the words Rflow suggests for
-Your words come from them. Sets C to E are the real test, so a better score there isn't just learned by heart. **Score**
-scores this test; **Score all tests** scores every test together, which gives a much surer answer. Rflow shows:
+</details>
 
-- the share of words it got wrong with speech recognition alone and with your cleanup model and backup model, with a 95%
-  range, and whether a setup is really better than the first one or just lucky
-- errors on names and terms apart, the time per sentence, and the words it misheard most
-- a warning when a microphone sounds like a phone call (a Bluetooth headset while its microphone is on), clips or is very
-  quiet
+<details>
+<summary><b>Reading test: measure accuracy on your own voice</b></summary>
+<br>
 
-Tick the suggested words and click **Add to Your words**, then **Score again** to see the difference. Recordings and
-results (`report.md`, `results.json`, and `session.json` with the set and microphone) stay in
-`%LOCALAPPDATA%\sst\bench\<date>`, and results for all tests go to `bench\summary`. `rflow-cli eval` scores every test
-again from the command line: `--model <name>` tries another cleanup model, `--no-cleanup` skips cleanup,
-`--words "A,B"` tries other words instead of Your words (`--no-words`: none), and
-`--degrade narrowband` (or `gain:-20`) shows what a worse microphone would do to the same recordings. How this feeds the
-accuracy work is in [docs/accuracy.md](docs/accuracy.md).
+Five sets of 30 short sentences measure how well Rflow understands *your* voice, microphone and words (about 6 minutes a set). Sets A and B are practice (the words Rflow suggests come from them); C to E are the real test. Rflow shows the share of words it got wrong with speech recognition alone and with your cleanup models, with a 95% range and whether a setup is really better or just lucky; errors on names and terms; the time per sentence; and warnings when a microphone sounds like a phone call, clips or is very quiet. `rflow-cli eval` scores every test from the command line (`--model`, `--no-cleanup`, `--words`, `--degrade narrowband`). See [docs/accuracy.md](docs/accuracy.md).
 
-- Using Wispr Flow too? Quit it first: it also listens to Ctrl+Win, and both would type. Rflow warns you if it's running.
-- Nothing typed into one particular app? That app is probably running as administrator; Windows doesn't let normal
-  programs type into those.
+</details>
 
-**From the source** (developers): `uv run sst app` starts the app (window and tray; quit the installed Rflow first:
-only one can dictate); `dictate.cmd` / `uv run sst dictate` is the same
-in a console window, without cleanup. Also `uv run sst web` (a Record button in the browser, served on 127.0.0.1 only),
-`uv run sst start` (record in the terminal), `uv run sst file x.wav`, `uv run sst devices` and
-`uv run sst eval [<folder>...]` (score reading tests).
+<details>
+<summary><b>Troubleshooting</b></summary>
+<br>
 
-## Setup (from source)
+- **Nothing typed in one particular app?** It probably runs as administrator; Windows doesn't let normal programs type into those.
+- **Using Wispr Flow too?** Quit it first: it also listens to Ctrl+Win, and both would type. Rflow warns you if it's running.
+- **Windows' own Ctrl+Win shortcuts** (Ctrl+Win+D, Ctrl+Win+←/→) still work; they simply drop the recording.
+- **The microphone icon stays on** for 5 minutes after a dictation, so the next one starts at once; change it in Settings ("Microphone stays ready"). Nothing is recorded or sent until you press the key.
+- **Where things are:** settings and history in `%APPDATA%\sst`, recordings in `%LOCALAPPDATA%\sst\recordings`, logs in `%LOCALAPPDATA%\sst\logs` (they can hold dictated text: check before sharing them). `rflow-cli.exe` next to `Rflow.exe` is the command-line tool.
 
-Needs Windows 10/11 and [uv](https://docs.astral.sh/uv/).
+</details>
 
-```
-git clone https://github.com/karthi-ai-engineer/Rach_flow.git
-cd Rach_flow
-uv sync                                          # install dependencies into .venv
-uv run python scripts/download_model.py parakeet # ~630 MB model into models/, and its bpe.vocab for Your words
+## 🛠️ Build from source
+
+Needs Windows 10/11 (x64 Python, also on ARM laptops) and [uv](https://docs.astral.sh/uv/).
+
+```bash
+git clone https://github.com/karthi-ai-engineer/rflow-ai.git
+cd rflow-ai
+uv sync                                          # the app and the dev tools
+uv run python scripts/download_model.py parakeet # the speech model (~630 MB) into models/
+uv run sst app                                   # the tray app (quit an installed Rflow first)
+uv run pytest                                    # tests: fakes only, no keys pressed, no network
+uv run ruff check .                              # lint
 ```
 
-## Development
+<details>
+<summary><b>Installer, releases and the website</b></summary>
+<br>
+
+**Build the installer** with `build_installer.cmd` (needs the model in `models/` and [Inno Setup 6](https://jrsoftware.org/isinfo.php)). It builds `Rflow.exe` and `rflow-cli.exe` with PyInstaller, checks with the model that they really transcribe and open their windows, then takes the model out again and writes `dist\Rflow-Setup-<version>.exe`.
+
+**Release:** raise `__version__` in `sst/__init__.py` in the pull request, merge it, tag `main` with `vX.Y.Z`. The Release workflow publishes `Rflow-Setup.exe` and `Rflow-Setup.exe.sha256`; the website's download button and every installed Rflow see it right away.
+
+**Website:** `site/` is a static page on Vercel. Its screenshots are drawn from the real window by `scripts/make_site_screenshots.py`; this README's animations by `uv run --with pillow python scripts/make_readme_media.py`.
+
+Work happens phase by phase: an issue, a branch and a pull request into `main`, checked by CI (tests and app builds on x64 and Windows on ARM, lint, CodeQL). [`CLAUDE.md`](CLAUDE.md) has the working rules and [`HANDOFF.md`](HANDOFF.md) says where things stand.
+
+</details>
+
+<details>
+<summary><b>Project layout</b></summary>
+<br>
 
 ```
-uv run pytest           # tests (they use fakes: no keys pressed, no microphone, model or network needed)
-uv run ruff check .     # lint
-```
-
-**Build the installer** with **`build_installer.cmd`** (needs the model in `models/` and
-[Inno Setup 6](https://jrsoftware.org/isinfo.php): `winget install JRSoftware.InnoSetup`). It builds `Rflow.exe` and
-`rflow-cli.exe` with PyInstaller, checks with the model that they really transcribe and open their windows, then takes
-the model out again and writes `dist\Rflow-Setup-<version>.exe` (Rflow downloads Parakeet when the user chooses it).
-
-**Release** (this is what users' Update button picks up):
-
-1. Raise `__version__` in `sst/__init__.py` (e.g. `1.1.0`) in the phase's pull request, and merge it.
-2. Tag `main` with `v1.1.0` and push the tag.
-3. The Release workflow builds the installer and publishes a GitHub Release with `Rflow-Setup.exe` and
-   `Rflow-Setup.exe.sha256`. The website's download button and every installed Rflow see it right away.
-
-**Website:** `site/` is a static page for Vercel (Root Directory `site`, no build step). Its download button links to
-`releases/latest/download/Rflow-Setup.exe`, so it never needs changing for a new version.
-
-Work happens phase by phase: an issue, a branch and a pull request into `main`, checked by CI.
-`CLAUDE.md` has the working rules, and `HANDOFF.md` says where things stand and what comes next.
-
-## Layout
-
-```
-Rach_flow/
+rflow-ai/
 ├─ site/                      the download website (Vercel): index.html, screenshots, icon
-├─ dictate.cmd                double-click: dictate in a console window (from source)
-├─ web.cmd                    double-click: web page
-├─ start.cmd                  double-click: terminal version
-├─ build_installer.cmd        double-click: build dist\Rflow-Setup-<version>.exe
-├─ LICENSE                    MIT
-├─ CONTRIBUTING.md            how to report, set up, test and send a pull request
-├─ SECURITY.md                how to report a security flaw privately
-├─ CODE_OF_CONDUCT.md         the Contributor Covenant
-├─ CLAUDE.md                  working rules (branches, PRs, authorship)
-├─ HANDOFF.md                 current state and next steps, to resume on any device
-├─ .github/                   CI, CodeQL, Release, Dependabot, issue and PR templates
-├─ docs/accuracy.md           the accuracy plan: research summary, target pipeline, phases
-├─ docs/research/             the full accuracy research: report with sources, and the detailed notes
+├─ docs/                      accuracy plan and research, the design, the README's animations (media/)
+├─ scripts/                   models, installer build, logo, screenshots and README media
+├─ packaging/                 installer recipe: entry points, sst.spec, installer.iss, notices, images
 ├─ tests/                     pytest suite
-├─ scripts/download_model.py  fetches models into models/
-├─ scripts/build_installer.py PyInstaller -> model in -> smoke tests -> model out -> Inno Setup
-├─ scripts/make_*.py          the logo files from docs/brand (make_brand), the window's small images, the
-│                             installer's pictures, the website's screenshots
-├─ packaging/                 installer recipe: sst_gui.py / sst_app.py (entry points), sst.spec, installer.iss,
-│                             notices, images/ (the setup wizard's pictures)
-├─ models/                    downloaded models (git-ignored)
-├─ recordings/                your recordings + transcripts (git-ignored)
 └─ sst/                       the Python package (the app's internal name)
-   ├─ app.py                  the app: tray icon, recording pill, dictation, updates; "open Rflow again" (Qt)
-   ├─ window.py               the window: its ten sections (Home, Live translation, Words, Snippets, Text Transform,
-   │                          Translate, Formatting, AI & models, Settings, Report a problem), the first run; light/dark
-   ├─ theme.py                the look (Obsidian Signal): colours, Geist fonts, icons, the soft depth Qt paints
-   ├─ ui.py                   the window's widgets: buttons with keycaps, toggles, lamps, keycaps, the voice orb
-   ├─ bench.py                the reading test's sets of sentences, test sessions, the fair word comparison
-   ├─ evaluate.py             `sst eval`: replays the tests through setups; error rates, 95% ranges, microphones
-   ├─ updates.py              in-app updates from GitHub Releases (checksum-verified)
-   ├─ settings.py             profiles, settings, history, stats and "start with Windows" (%APPDATA%\sst)
-   ├─ gateway.py              AI cleanup: the providers and their request formats, backup model, timeouts, keys (DPAPI)
-   ├─ modelrules.py           what each provider's models accept: how little they can think, whether they take a temperature
-   ├─ cli.py                  the `sst` command
-   ├─ dictate.py              Dictation: hotkey events -> record -> transcribe -> clean up -> type
-   ├─ hotkey.py               global hotkeys (low-level keyboard hook) and sending keys
-   ├─ paste.py                paste text into the focused app, then restore the clipboard
-   ├─ live/                   live translation, a pipeline of its own: what the laptop plays (WASAPI loopback) or the
-   │                          microphone -> Gemini Live Translate -> the translation bar, a transcript, and a voice
-   │                          on the laptop that speaks it (Piper via sherpa-onnx); never imports dictation's code
-   ├─ web.py                  local server for the web page (127.0.0.1 only)
-   ├─ static/                 the Record / Stop page (index.html), the app icon (sst.ico), the logo (brand/), the window's images (ui/), Geist (fonts/)
-   ├─ audio.py                microphone recording, WAV read/write, measuring a recording, splitting long audio
-   └─ engines/
-      ├─ __init__.py          the speech model catalog (SPEECH_MODELS: where it runs, languages, size) + load_engine()
-      └─ parakeet.py          Parakeet via sherpa-onnx (CPU); audio over 3 minutes is split at pauses
+   ├─ app.py                  the app: tray icon, recording pill, dictation, updates, Start over (Qt)
+   ├─ window.py               the window's ten sections and the first run; light/dark
+   ├─ theme.py, ui.py         the look (Obsidian Signal) and its widgets
+   ├─ setups.py, costs.py     the ready-made setups, and what each model costs a month
+   ├─ gateway.py              AI cleanup: providers, request formats, backup model, keys (DPAPI)
+   ├─ modelrules.py           what each provider's models accept (temperature, thinking)
+   ├─ dictate.py, pipeline/   dictation: record → transcribe → your words → formatting → cleanup → guard → type
+   ├─ hotkey.py, paste.py     global hotkeys, and pasting where the cursor is
+   ├─ commands.py, transform*.py, textaccess.py   Text Transform
+   ├─ translate*.py, snippets.py                  Translate and Snippets
+   ├─ live/                   live translation, a pipeline of its own (WASAPI, Gemini, the bar, the voice)
+   ├─ engines/                speech models: Parakeet, Whisper, the cloud, your own server
+   ├─ bench.py, evaluate.py   the reading test and `sst eval`
+   ├─ settings.py, updates.py profiles and settings, in-app updates
+   └─ static/                 icon, logo, fonts, the window's images
 ```
 
-## Adding another engine
+</details>
 
-Speech recognition is a building block: any engine works with any AI cleanup model. Create `sst/engines/<name>.py` with
-a class that has `name` (its catalog key), `title` (what reports call it), `signature` (what its text depends on;
-`sst eval` caches by it), an optional `words` list (Your words) and `transcribe(audio, sample_rate) -> str`. Then add it
-to `SPEECH_MODELS` and `load_engine()` in `sst/engines/__init__.py`. It shows up on AI & models (How Rflow hears you), the app
-loads it in the background when chosen, and `uv run sst --engine <name> start` or `sst eval --engine <name>` use it.
+<details>
+<summary><b>Adding another speech engine</b></summary>
+<br>
 
-## Contributing
+Speech recognition is a building block: any engine works with any AI cleanup model. Create `sst/engines/<name>.py` with a class that has `name`, `title`, `signature` (what its text depends on; `sst eval` caches by it), an optional `words` list and `transcribe(audio, sample_rate) -> str`. Add it to `SPEECH_MODELS` and `load_engine()` in `sst/engines/__init__.py`. It shows up on AI & models, the app loads it in the background when chosen, and `sst eval --engine <name>` uses it.
 
-Bug reports, feature requests and pull requests are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) says how to set up, what
-the tests must never do, and how a pull request is reviewed. Security flaws are reported privately
-([SECURITY.md](SECURITY.md)). Everyone follows the [code of conduct](CODE_OF_CONDUCT.md).
+</details>
 
-## Who makes it
+## 🗺️ What's next
 
-Rflow is made by [karthi-ai-engineer](https://github.com/karthi-ai-engineer), AI Application Engineer @ Tokyo, Japan.
+- [ ] Privacy controls: recordings kept 30 days, delete one or all, transcripts with an on/off switch
+- [ ] A smoother first run and shortcuts that wait until their feature is set up
+- [ ] Layout, keyboard access and speed fixes
+- [ ] A code-signed installer and update controls
+- [ ] Moving to a new PC: export and import your setup
+- [ ] An AI model on your PC, for a setup where nothing leaves it
 
-## License
+Ideas and votes are welcome in [Discussions](https://github.com/karthi-ai-engineer/rflow-ai/discussions).
 
-Rflow is released under the [MIT License](LICENSE). The files it builds on keep their own licenses, listed in
-[packaging/NOTICES.txt](packaging/NOTICES.txt): NVIDIA Parakeet's tokenizer vocabulary (`sst/static/parakeet/bpe.vocab`,
-NVIDIA Open Model License), the Geist fonts (SIL Open Font License), the sample sentence (`sst/static/sample.wav`,
-CC BY 4.0), and the models and voice Rflow downloads when you choose them. The Rflow name and logo are not covered by
-the MIT License: a fork is welcome, under its own name.
+## 🤝 Contributing
+
+Bug reports, feature requests and pull requests are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) says how to set up, what the tests must never do, and how a pull request is reviewed. Security flaws are reported privately ([SECURITY.md](SECURITY.md)). Everyone follows the [code of conduct](CODE_OF_CONDUCT.md).
+
+## 🙏 Built on
+
+[NVIDIA Parakeet](https://huggingface.co/nvidia) · [OpenAI Whisper](https://github.com/openai/whisper) · [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) · [faster-whisper](https://github.com/SYSTRAN/faster-whisper) · [Piper voices](https://huggingface.co/rhasspy/piper-voices) · [Qt for Python](https://doc.qt.io/qtforpython-6/) · [Geist](https://github.com/vercel/geist-font). Their licenses are in [packaging/NOTICES.txt](packaging/NOTICES.txt).
+
+## 📄 License
+
+Rflow is released under the [MIT License](LICENSE). The files it builds on keep their own licenses, listed in [packaging/NOTICES.txt](packaging/NOTICES.txt): NVIDIA Parakeet's tokenizer vocabulary (NVIDIA Open Model License), the Geist fonts (SIL Open Font License), the sample sentence (CC BY 4.0), and the models and voice Rflow downloads when you choose them. The Rflow name and logo are not covered by the MIT License: a fork is welcome, under its own name.
+
+<div align="center">
+<br>
+
+Made by **[karthi-ai-engineer](https://github.com/karthi-ai-engineer)**, AI Application Engineer @ Tokyo, Japan
+
+<sub>If Rflow saves you some typing, a ⭐ helps others find it.</sub>
+
+</div>
