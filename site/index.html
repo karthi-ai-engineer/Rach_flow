@@ -20,6 +20,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="lens.css">
+<link rel="stylesheet" href="showcase.css">
 <style>
   /* Obsidian Signal, as in the app: one surface colour, depth from light and shadow, one job per colour. */
   :root {
@@ -85,7 +86,7 @@
   .button.primary { background: var(--primary); color: var(--on-primary); box-shadow: var(--glow), inset 0 1px 0 rgba(255,255,255,.3); }
 
   /* Hero: the words on the left, the lens (lens.js, its own files) on the right */
-  .hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr); gap: 56px; align-items: center; padding: 48px 0 40px; }
+  .hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr); gap: 44px; align-items: center; padding: 48px 0 40px; }
   .hero-lens { min-width: 0; max-width: 620px; width: 100%; justify-self: end; }
   .eyebrow { display: inline-flex; align-items: center; gap: 10px; color: var(--text-2); font-size: 14px; font-weight: 500;
              padding: 8px 14px; border-radius: 999px; }
@@ -209,7 +210,7 @@
 <div class="wrap">
   <header>
     <a class="brand" href="#"><img class="mark" src="img/logo.png" width="34" height="34" alt="">Rflow</a>
-    <nav><a href="#dictation">Dictation</a><a href="#live">Live translation</a><a href="#rewrite">Rewrite</a><a href="#private">Pricing</a><a href="#faq">FAQ</a>
+    <nav><a href="#see">See it work</a><a href="#dictation">Dictation</a><a href="#live">Live translation</a><a href="#rewrite">Rewrite</a><a href="#private">Pricing</a><a href="#faq">FAQ</a>
       <a class="keep" href="https://github.com/karthi-ai-engineer/rflow-ai">GitHub</a></nav>
   </header>
 
@@ -222,7 +223,7 @@
         <a class="button primary" id="download" href="https://github.com/karthi-ai-engineer/rflow-ai/releases/latest/download/Rflow-Setup.exe">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.5 10.5 4.5v7H3v-6Zm0 13 7.5 1v-7H3v6Zm8.5 1.1L21 21v-8.5h-9.5v7.1Zm0-15.2v7.1H21V3l-9.5 1.4Z"/></svg>
           Download for Windows</a>
-        <a class="button" href="#demo">See it in action</a>
+        <a class="button watch" href="#demo" data-watch aria-haspopup="dialog"><span class="play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4.8v14.4a1 1 0 0 0 1.5.9l11.3-7.2a1 1 0 0 0 0-1.7L8.5 3.9A1 1 0 0 0 7 4.8Z"/></svg></span>Watch the 40-second demo</a>
       </div>
       <p class="release" id="release">Windows 10 and 11, 64-bit · free and open source</p>
     </div>
@@ -231,6 +232,48 @@
     </div>
   </div>
 </div>
+
+<section id="see" class="showcase">
+  <div class="wrap">
+    <div class="sc-head">
+      <div class="caps">See it work</div>
+      <h2>Talk, transform, translate.</h2>
+      <p class="sub">Five things Rflow does, a few seconds each, in the apps you already use. Pick one, or let them play.</p>
+    </div>
+    <div class="sc" data-showcase>
+      <div class="sc-tabs well" role="tablist" aria-label="Rflow's features">
+        <button class="sc-tab" role="tab" type="button" id="sc-tab-dictation" aria-controls="sc-panel" aria-selected="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>Dictation<span class="bar"><span></span></span></button>
+        <button class="sc-tab" role="tab" type="button" id="sc-tab-transform" aria-controls="sc-panel" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 4.5 12 9l4.5 1.5L12 12l-1.5 4.5L9 12l-4.5-1.5L9 9z"/><path d="M17.5 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>Text Transform<span class="bar"><span></span></span></button>
+        <button class="sc-tab" role="tab" type="button" id="sc-tab-formatting" aria-controls="sc-panel" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 4 7.5 20M16.5 4l-2 16M4.5 9h15M4 15h15"/></svg>Formatting<span class="bar"><span></span></span></button>
+        <button class="sc-tab" role="tab" type="button" id="sc-tab-translate" aria-controls="sc-panel" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 5.5h9M8 3.5v2M10.5 5.5c-.9 3.8-3.3 6.8-6.5 8.3M6 8.5c1.2 2 2.9 3.5 4.8 4.4"/><path d="M12.5 20.5l4-9 4 9M13.9 17.5h5.2"/></svg>Translate<span class="bar"><span></span></span></button>
+        <button class="sc-tab" role="tab" type="button" id="sc-tab-live" aria-controls="sc-panel" aria-selected="false" tabindex="-1">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 11h4M13 11h4M7 15h7"/></svg>Live translation<span class="bar"><span></span></span></button>
+      </div>
+      <div class="card sc-player" id="sc-panel" role="tabpanel" aria-labelledby="sc-tab-dictation" aria-describedby="sc-cap-dictation">
+        <div class="sc-screen">
+          <video class="on" width="1920" height="1080" muted playsinline preload="none" poster="img/clip-dictation-poster.png" data-src="media/clip-dictation.mp4"></video>
+          <video width="1920" height="1080" muted playsinline preload="none" data-poster="img/clip-transform-poster.png" data-src="media/clip-transform.mp4"></video>
+          <video width="1920" height="1080" muted playsinline preload="none" data-poster="img/clip-formatting-poster.png" data-src="media/clip-formatting.mp4"></video>
+          <video width="1920" height="1080" muted playsinline preload="none" data-poster="img/clip-translate-poster.png" data-src="media/clip-translate.mp4"></video>
+          <video width="1920" height="1080" muted playsinline preload="none" data-poster="img/clip-live-poster.png" data-src="media/clip-live.mp4"></video>
+          <button class="sc-play" type="button" aria-label="Play the clip" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.8v14.4a1 1 0 0 0 1.5.9l11.3-7.2a1 1 0 0 0 0-1.7L8.5 3.9A1 1 0 0 0 7 4.8Z"/></svg></button>
+          <button class="sc-toggle" type="button" aria-label="Pause the clips"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4.5" width="4" height="15" rx="1.2"/><rect x="14" y="4.5" width="4" height="15" rx="1.2"/></svg></button>
+        </div>
+      </div>
+      <div class="sc-caps">
+        <p class="sc-cap on" id="sc-cap-dictation"><b>Hold <kbd>Ctrl</kbd><span class="plus">+</span><kbd>Win</kbd> and speak</b><svg class="to" viewBox="0 0 24 24" role="img" aria-label="then"><path d="M5 12h14M13 6l6 6-6 6"/></svg>clean text is typed where your cursor is, in any app.</p>
+        <p class="sc-cap" id="sc-cap-transform"><b>Say "make it concise" or "bullet points"</b><svg class="to" viewBox="0 0 24 24" role="img" aria-label="then"><path d="M5 12h14M13 6l6 6-6 6"/></svg>the selected text is rewritten in place.</p>
+        <p class="sc-cap" id="sc-cap-formatting"><b>Say "three thirty pm" or "twenty five percent"</b><svg class="to" viewBox="0 0 24 24" role="img" aria-label="then"><path d="M5 12h14M13 6l6 6-6 6"/></svg>Rflow writes 3:30 PM and 25%.</p>
+        <p class="sc-cap" id="sc-cap-translate"><b>Select text and press <span class="nowrap"><kbd>Ctrl</kbd><kbd>C</kbd><kbd>C</kbd></span></b><svg class="to" viewBox="0 0 24 24" role="img" aria-label="then"><path d="M5 12h14M13 6l6 6-6 6"/></svg>the translation pops up: copy it, or replace the text.</p>
+        <p class="sc-cap" id="sc-cap-live"><b>Press <kbd>Ctrl</kbd><span class="plus">+</span><kbd>Alt</kbd><span class="plus">+</span><kbd>L</kbd> in a meeting</b><svg class="to" viewBox="0 0 24 24" role="img" aria-label="then"><path d="M5 12h14M13 6l6 6-6 6"/></svg>each line is translated as people speak, and read aloud.</p>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section id="dictation">
   <div class="wrap">
@@ -429,6 +472,16 @@
   </div>
 </footer>
 
+<dialog class="lb" id="watch" aria-labelledby="watch-title">
+  <div class="lb-panel">
+    <div class="lb-bar">
+      <div class="lb-title" id="watch-title">Rflow in 40 seconds<span>Dictation, a rewrite and a translation</span></div>
+      <button class="lb-close" type="button" data-close aria-label="Close the demo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+    <div class="lb-frame"><video width="1920" height="1080" controls muted playsinline preload="none" poster="img/demo-poster.png" data-src="media/demo.mp4"></video></div>
+  </div>
+</dialog>
+
 <script>
   // Show the newest version, its size and date under the download button.
   document.getElementById("year").textContent = new Date().getFullYear();
@@ -445,5 +498,6 @@
     .catch(() => {});
 </script>
 <script src="lens.js" defer></script>
+<script src="showcase.js" defer></script>
 </body>
 </html>
