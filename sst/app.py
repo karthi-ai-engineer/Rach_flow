@@ -63,9 +63,10 @@ from sst.pipeline.session import LazyBackend, Stages, VoicePipeline
 from sst.settings import CONFIG_DIR, LOAD_PROBLEMS, Profiles, Settings, Stats, add_to_history, read_history
 from sst.snippets import Snippet
 from sst.snippets import load as load_snippets
+from sst.transform import Context as TransformContext
 from sst.transform import Transformer
 from sst.transformui import TransformController
-from sst.translate import Translator
+from sst.translate import Translator, system_language
 from sst.translateui import TranslateController
 from sst.window import APP_NAME, ICON_FILE, LOG_DIR, MainWindow, PreviewApp
 
@@ -1215,7 +1216,9 @@ class TrayApp:
         def complete(prompt: str, message: str) -> str:
             return Polisher(self.gateway, s.cleanup_model, [], fallback=s.cleanup_fallback or None,
                             system_prompt=prompt).complete(message)
-        result = Transformer(complete).transform(text, key, terms)
+        # The user's name for Japanese emails, Translate's languages (as the Translate popup has them)
+        context = TransformContext.of(s, system_language())
+        result = Transformer(complete, context=context).transform(text, key, terms)
         log.info("Text Transform %s: %s in %.1f s after %d attempt(s)%s", key, "done" if result.accepted else "kept the text",
                  result.seconds, result.attempts, f" ({'; '.join(result.reasons)})" if result.reasons else "")
         return result
