@@ -21,6 +21,7 @@ logged.
 """
 import base64
 import contextlib
+import difflib
 import json
 import logging
 import queue
@@ -340,9 +341,23 @@ _POSSESSIVE_GAP = re.compile(r"s['’]$")
 
 
 def _join(text: str, piece: str) -> str:
-    """The pieces arrive as the model hears them; a piece that repeats the whole line so far replaces it."""
-    if text and piece.startswith(text):
+    """The pieces arrive as the model hears them; a piece that repeats the whole line so far replaces it, also when the
+    model revised it meanwhile (a word, a comma made a full stop): appended, the line would say it all twice."""
+    if text and (piece.startswith(text) or piece.lstrip().startswith(text.lstrip()) or _resends(text, piece)):
         return piece
     if _POSSESSIVE_GAP.search(text) and piece[:1].isalpha() and piece[:1].isascii():
         return f"{text} {piece}"  # Google's pieces drop the space after a plural possessive: "parents'" + "house"
     return text + piece
+
+
+RESENT = 0.85  # a piece whose start has this much of the line in it (their words without case or punctuation) re-sends it
+
+
+def _resends(text: str, piece: str) -> bool:
+    """A piece that is the line so far again, revised: about as long as the line, and its start has nearly all of the
+    line in it, in order. The model's own pieces are a few words that go on from the line, never most of it again."""
+    line, sent = (" ".join(re.findall(r"\w+", t.lower())) for t in (text, piece))
+    if line.count(" ") < 2 or len(sent) < 0.9 * len(line):
+        return False
+    blocks = difflib.SequenceMatcher(None, line, sent[:round(1.2 * len(line))], autojunk=False).get_matching_blocks()
+    return sum(block.size for block in blocks) >= RESENT * len(line)
