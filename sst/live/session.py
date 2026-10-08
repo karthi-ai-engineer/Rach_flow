@@ -4,9 +4,12 @@ one transcript, the log and whoever shows them (the caption bar). Qt-free: the a
     SYSTEM  what the laptop plays (a meeting, a video)       -> target
     MIC     what the microphone hears (the room, or the user)  -> mic_target (Japanese)
 
-The microphone's lines that come back untranslated (speech already in mic_target: a meeting's Japanese from the
-speakers when there are no headphones, or someone speaking Japanese) are dropped, never shown or saved: with Both they
-are echo, and with the microphone alone they need no translation.
+The microphone's lines that come back untranslated (speech already in mic_target) depend on the source. With Both they
+are dropped, never shown or saved: they are the meeting's own words from the speakers when there are no headphones
+(echo, already shown and translated by the SYSTEM way), or the user speaking the language their words are translated
+into, which the bar never shows for the user anyway (it shows the user's lines by their translation only). With the
+microphone alone they are the room's words: shown and saved as heard (the bar marks them as already in the target
+language), never spoken, since the voice says translations only.
 
 With speaking on, the translation also goes to a Speaker (sst.live.speaker), and a way that could hear the voice gets
 silence while it speaks: the microphone near speakers (not headphones), and what the laptop plays where Windows can't
@@ -94,7 +97,7 @@ class LiveSession:
 
     def _event(self, event: LiveEvent) -> None:
         if event.kind is Kind.LINE:
-            if event.lane == MIC and not event.text:
+            if event.lane == MIC and not event.text and self.config.source == "both":
                 log.debug("Live captions: an untranslated line from the microphone dropped (echo): %s", event.source)
                 return
             self.lines[event.lane] = self.lines.get(event.lane, 0) + 1

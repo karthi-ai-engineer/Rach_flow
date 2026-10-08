@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 import sst.live
-from sst.live.contracts import MIC, SYSTEM, Kind, LiveConfig, LiveEvent, language_name
+from sst.live.contracts import MIC, SYSTEM, Kind, LiveConfig, LiveEvent, already_in, language_name
 from sst.live.session import LiveSession
+from sst.live.speaker import Speaker
 from sst.live.transcript import Transcript
 
 
@@ -98,6 +99,30 @@ def test_untranslated_lines_from_the_microphone_are_echo_and_dropped(tmp_path):
     mic.on_event(LiveEvent(Kind.LINE, "予算は来週決めましょう。", source="Let's set the budget next week.", lane=MIC))
     assert [e.text for e in shown] == ["予算は来週決めましょう。"] and session.lines == {MIC: 1}
     assert "本日" not in session.transcript.path.read_text(encoding="utf-8")
+
+
+def test_with_the_microphone_alone_lines_already_in_its_language_are_shown_and_kept_but_not_spoken(tmp_path):
+    shown = []
+    config = LiveConfig(source="microphone", mic_target="en")
+    session = LiveSession(config, Transcript(tmp_path, config), shown.append)
+    session.add(MIC, FakeCapture(), FakeEngine)
+    speaker = Speaker(lambda: None, player=None, lanes=config.spoken_lanes("en"), language="en")
+    session.speaker = speaker  # not started: what it would say waits in its queue
+    mic = engine(session, MIC)
+    mic.on_event(LiveEvent(Kind.SOURCE, "Let's set the budget", language="en", lane=MIC))
+    mic.on_event(LiveEvent(Kind.LINE, "", source="Let's set the budget next week.", language="en", lane=MIC))
+    assert [e.kind for e in shown] == [Kind.SOURCE, Kind.LINE] and session.lines == {MIC: 1}
+    assert "Let's set the budget next week." in session.transcript.path.read_text(encoding="utf-8")
+    assert not speaker._queue  # the voice says translations only
+    mic.on_event(LiveEvent(Kind.LINE, "Thank you.", source="ありがとう。", language="ja", lane=MIC))
+    assert [sentence for _, _, sentence in speaker._queue] == ["Thank you."]
+
+
+def test_a_line_already_in_the_target_language_is_told_from_one_whose_translation_didnt_come():
+    assert already_in(LiveEvent(Kind.LINE, "", source="Let's start.", language="en-US"), "en")
+    assert already_in(LiveEvent(Kind.LINE, "", source="Let's start."), "en")  # the engine didn't say: as heard
+    assert not already_in(LiveEvent(Kind.LINE, "", source="始めましょう。", language="ja"), "en")
+    assert not already_in(LiveEvent(Kind.LINE, "Let's start.", source="始めましょう。"), "en")
 
 
 def test_the_settings_of_each_way():

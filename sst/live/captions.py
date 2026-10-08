@@ -7,7 +7,9 @@ keyboard from the app in front (WS_EX_NOACTIVATE: clicks move, resize and scroll
 default it isn't in screen shares or recordings (SetWindowDisplayAffinity); a switch shows it, for colleagues to read.
 
 With Both (an online meeting) the microphone's lines are the user's own: marked "You" in the accent colour, without the
-words heard (the user knows what they said). The speaker button turns the spoken translation on and off.
+words heard (the user knows what they said). With the microphone alone, words already in the language they'd be
+translated into are shown as heard, marked "already English" in the small line. The speaker button turns the spoken
+translation on and off.
 """
 import ctypes
 import dataclasses
@@ -20,7 +22,7 @@ from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QTextBlockFo
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QTextBrowser, QToolButton, QVBoxLayout, QWidget
 
 from sst import theme
-from sst.live.contracts import MIC, SYSTEM, Kind, LiveConfig, LiveEvent, language_name
+from sst.live.contracts import MIC, SYSTEM, Kind, LiveConfig, LiveEvent, already_in, language_name
 
 EDGE = 8  # px along the border where a drag resizes instead of moving
 MIN_SIZE, DEFAULT_SIZE = QSize(360, 140), QSize(760, 240)
@@ -154,7 +156,9 @@ class CaptionBar(QWidget):
             self.problems.pop(lane, None)
         elif event.kind is Kind.LINE:
             self.current.pop(lane, None)
-            self._add_finished(lane, event.source, event.text or event.source)  # in the target language: as heard
+            target = self.config.for_lane(lane).target
+            note = f"already {language_name(target)}" if lane == MIC and already_in(event, target) else ""
+            self._add_finished(lane, event.source, event.text or event.source, note)  # in the target language: as heard
             return
         elif event.kind is Kind.STATUS:
             if lane == self.config.lanes[0]:  # the main way's: connecting, listening, reconnecting
@@ -205,11 +209,11 @@ class CaptionBar(QWidget):
             parts.append(self.voice_note)
         self.title.setText("  ·  ".join(parts))
 
-    def _add_finished(self, lane: str, heard: str, said: str) -> None:
+    def _add_finished(self, lane: str, heard: str, said: str, note: str = "") -> None:
         follow = self._at_bottom()
         self.finished.append((lane, heard, said))
         cursor = self._clear_tail()
-        entry = self._entry(lane, heard, said, live=False)
+        entry = self._entry(lane, heard, said, live=False, note=note)
         if entry:
             if self._tail_at:
                 cursor.insertBlock()
@@ -255,12 +259,15 @@ class CaptionBar(QWidget):
             self._to_bottom()
             QTimer.singleShot(0, self._to_bottom)  # again once the document's new size is laid out
 
-    def _entry(self, lane: str, heard: str, said: str, live: bool) -> str:
+    def _entry(self, lane: str, heard: str, said: str, live: bool, note: str = "") -> str:
+        """A line: the words heard (small) above their translation; `note` instead of the words heard says why there's
+        no translation ("already English": the words heard are shown as they are)."""
         you = lane == MIC and self.config.marks_mine
         parts = []
-        if heard and not you and heard != said:
+        small = note or (heard if heard and not you and heard != said else "")
+        if small:
             muted = theme.tok("text3", popup=True).name()
-            parts.append(f'<span style="color:{muted}; font-size:12px; font-weight:400">{html.escape(heard)}</span>')
+            parts.append(f'<span style="color:{muted}; font-size:12px; font-weight:400">{html.escape(small)}</span>')
         if said and you:
             accent = theme.tok("primary", popup=True)
             colour = accent.name() if live else _mix(accent, theme.tok("base", popup=True), 0.75)

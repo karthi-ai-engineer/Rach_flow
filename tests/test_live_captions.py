@@ -62,6 +62,16 @@ def test_with_both_the_users_own_lines_are_marked_and_their_words_left_out():
     assert "Yes, let's start." not in text and "The budget" not in text
 
 
+def test_with_the_microphone_alone_words_already_in_its_language_are_shown_as_heard_and_marked():
+    bar = CaptionBar(LiveConfig(source="microphone", mic_target="en"))
+    bar.show_event(line("", "Let's set the budget next week.", lane=MIC))
+    bar.show_event(LiveEvent(Kind.LINE, "", source="来週にしましょう。", language="ja", lane=MIC))  # translation late
+    assert bar.text() == "already English\nLet's set the budget next week.\n来週にしましょう。"
+    computer = CaptionBar(LiveConfig(target="en"))  # what the laptop plays: as before, unmarked
+    computer.show_event(line("", "Let's start."))
+    assert computer.text() == "Let's start."
+
+
 def test_with_the_microphone_alone_nothing_is_marked():
     bar = CaptionBar(LiveConfig(source="microphone"))
     bar.show_event(line("Shall we start?", "始めましょうか。", lane=MIC))

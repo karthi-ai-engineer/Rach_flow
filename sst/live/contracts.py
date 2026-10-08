@@ -89,3 +89,11 @@ LANGUAGES: dict[str, str] = {
 
 def language_name(code: str) -> str:
     return next((name for name, c in LANGUAGES.items() if c == code), code)
+
+
+def already_in(event: LiveEvent, target: str) -> bool:
+    """A finished line that came back untranslated because it's in `target` already: words heard, no translation, and
+    the engine says they're in the target's language (or doesn't say). Words in another language without a translation
+    are a line cut before its translation came, not this."""
+    same = not event.language or event.language.split("-")[0].lower() == target.split("-")[0].lower()
+    return event.kind is Kind.LINE and not event.text and bool(event.source) and same
