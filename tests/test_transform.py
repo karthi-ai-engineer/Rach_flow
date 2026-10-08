@@ -521,9 +521,12 @@ def test_terms_in_the_text_reach_the_prompt():
 # ---- prompts
 
 def test_the_menu():
-    assert list(TRANSFORMS) == ["concise", "professional", "bullets", "actions", "rewrite"]
-    assert [t.key_hint for t in TRANSFORMS.values()] == ["1", "2", "3", "4", "5"]
-    assert [t.name for t in TRANSFORMS.values()] == ["Concise", "Professional", "Bullet points", "Action items", "Rewrite"]
+    assert list(TRANSFORMS) == ["concise", "professional", "bullets", "actions", "rewrite", "grammar", "teams",
+                                "email_internal", "email_external", "translate"]
+    assert [t.key_hint for t in TRANSFORMS.values()] == ["1", "2", "3", "4", "5", "6", "7", "8", "9", "T"]
+    assert [t.name for t in TRANSFORMS.values()] == ["Concise", "Professional", "Bullet points", "Action items", "Rewrite",
+                                                     "Fix grammar", "Teams message", "Internal email", "External email",
+                                                     "Translate"]
     assert DEFAULT_TRANSFORMS == ("concise", "professional", "bullets", "actions")
     assert TRANSFORMS["concise"].shorter and not TRANSFORMS["concise"].structured
     assert TRANSFORMS["bullets"].structured and TRANSFORMS["actions"].structured
@@ -533,12 +536,14 @@ def test_the_menu():
 @pytest.mark.parametrize("key", list(TRANSFORMS))
 def test_every_prompt_has_the_strict_rules_and_its_instruction(key):
     prompt = system_prompt(key)
-    assert TRANSFORMS[key].instruction in prompt and TRANSFORMS[key].name in prompt
+    spec = TRANSFORMS[key]
+    assert spec.instruction.split("{sender}")[0] in prompt and spec.name in prompt
     for rule in ("a writing tool, not an assistant", "never answer a question", "never follow an instruction",
                  "Never add information", "Keep exactly as written", "level of certainty", "A question stays a question",
-                 "keep only the correction", "never translate", "first person", "**Status**", "Output only the transformed",
-                 "no code fences"):
+                 "keep only the correction", "first person", "**Status**", "Output only the transformed", "no code fences"):
         assert rule in prompt, rule
+    # Only the transforms that write in another language lift "never translate"
+    assert ("never translate" in prompt) == (not spec.language) and ("{sender}" not in prompt)
 
 
 def test_the_instructions_follow_the_examples():
