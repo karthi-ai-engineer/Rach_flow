@@ -7,7 +7,10 @@ keyboard from the app in front (WS_EX_NOACTIVATE: clicks move, resize and scroll
 default it isn't in screen shares or recordings (SetWindowDisplayAffinity); a switch shows it, for colleagues to read.
 
 With Both (an online meeting) the microphone's lines are the user's own: marked "You" in the accent colour, without the
-words heard (the user knows what they said). The speaker button turns the spoken translation on and off.
+words heard (the user knows what they said). With the microphone alone, words already in the language they'd be
+translated into are shown as heard, marked "already English" in the small line. A quiet status line at the bottom says
+why nothing shows yet (the session's notes: listening, nothing heard, sound but no speech). The speaker button turns the
+spoken translation on and off.
 """
 import ctypes
 import dataclasses
@@ -20,7 +23,7 @@ from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QTextBlockFo
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QTextBrowser, QToolButton, QVBoxLayout, QWidget
 
 from sst import theme
-from sst.live.contracts import MIC, SYSTEM, Kind, LiveConfig, LiveEvent, language_name
+from sst.live.contracts import MIC, SYSTEM, Kind, LiveConfig, LiveEvent, already_in, language_name
 
 EDGE = 8  # px along the border where a drag resizes instead of moving
 MIN_SIZE, DEFAULT_SIZE = QSize(360, 140), QSize(760, 240)
@@ -80,6 +83,7 @@ class CaptionBar(QWidget):
         self.finished: list[tuple[str, str, str]] = []  # (way, words heard, translation) of every finished line
         self.current: dict[str, tuple[str, str]] = {}  # way -> (words heard, translation) of the line being spoken
         self.problems: dict[str, str] = {}  # way -> what went wrong, until words come again
+        self.notes: dict[str, str] = {}  # way -> why it shows nothing yet (the status line), until the session clears it
         self.status = "Starting…"
         self.voice_note = ""  # the voice's state in the title while it isn't simply on or off (downloading, loading)
         self._drag: tuple[QPoint, QRect, tuple] | None = None  # (where the press was, the geometry then, the edges)
@@ -117,6 +121,13 @@ class CaptionBar(QWidget):
         self.view.document().setDocumentMargin(2)
         self.view.viewport().installEventFilter(self)  # its presses move the bar too; the wheel still scrolls it
         outer.addWidget(self.view, 1)
+        self.footer = QLabel()  # the status line: why nothing shows yet (the session's notes), hidden when all is well
+        self.footer.setFont(theme.font(12, 400))
+        self.footer.setStyleSheet(f"color: {theme.tok('text3', popup=True).name()}; background: transparent;")
+        self.footer.setWordWrap(True)
+        self.footer.setContentsMargins(2, 0, 0, 0)  # in line with the text above (the document's margin)
+        self.footer.hide()
+        outer.addWidget(self.footer)
         self.set_speaking(False)
         self._update_title()
         self._redraw_tail()
@@ -154,7 +165,9 @@ class CaptionBar(QWidget):
             self.problems.pop(lane, None)
         elif event.kind is Kind.LINE:
             self.current.pop(lane, None)
-            self._add_finished(lane, event.source, event.text or event.source)  # in the target language: as heard
+            target = self.config.for_lane(lane).target
+            note = f"already {language_name(target)}" if lane == MIC and already_in(event, target) else ""
+            self._add_finished(lane, event.source, event.text or event.source, note)  # in the target language: as heard
             return
         elif event.kind is Kind.STATUS:
             if lane == self.config.lanes[0]:  # the main way's: connecting, listening, reconnecting
@@ -165,7 +178,24 @@ class CaptionBar(QWidget):
             return
         elif event.kind is Kind.ERROR:
             self.problems[lane] = event.text
+        elif event.kind is Kind.NOTE:
+            if event.text:
+                self.notes[lane] = event.text
+            else:
+                self.notes.pop(lane, None)
+            self._update_footer()
+            return
         self._redraw_tail()
+
+    def note(self) -> str:
+        """The status line: each way's note once, the computer's first."""
+        order = [SYSTEM, MIC] + [lane for lane in self.notes if lane not in (SYSTEM, MIC)]
+        return "  ·  ".join(dict.fromkeys(self.notes[lane] for lane in order if self.notes.get(lane)))
+
+    def _update_footer(self) -> None:
+        text = self.note()
+        self.footer.setText(text)
+        self.footer.setVisible(bool(text))
 
     def set_config(self, config: LiveConfig) -> None:
         """The source changed while live translation runs: the title and the marks follow."""
@@ -174,9 +204,11 @@ class CaptionBar(QWidget):
         self._redraw_tail()
 
     def drop_lane(self, lane: str) -> None:
-        """A way stopped: its line in progress and its problem go (its finished lines stay)."""
+        """A way stopped: its line in progress, its problem and its note go (its finished lines stay)."""
         self.current.pop(lane, None)
         self.problems.pop(lane, None)
+        self.notes.pop(lane, None)
+        self._update_footer()
         self._redraw_tail()
 
     def text(self) -> str:
@@ -205,11 +237,11 @@ class CaptionBar(QWidget):
             parts.append(self.voice_note)
         self.title.setText("  ·  ".join(parts))
 
-    def _add_finished(self, lane: str, heard: str, said: str) -> None:
+    def _add_finished(self, lane: str, heard: str, said: str, note: str = "") -> None:
         follow = self._at_bottom()
         self.finished.append((lane, heard, said))
         cursor = self._clear_tail()
-        entry = self._entry(lane, heard, said, live=False)
+        entry = self._entry(lane, heard, said, live=False, note=note)
         if entry:
             if self._tail_at:
                 cursor.insertBlock()
@@ -255,12 +287,15 @@ class CaptionBar(QWidget):
             self._to_bottom()
             QTimer.singleShot(0, self._to_bottom)  # again once the document's new size is laid out
 
-    def _entry(self, lane: str, heard: str, said: str, live: bool) -> str:
+    def _entry(self, lane: str, heard: str, said: str, live: bool, note: str = "") -> str:
+        """A line: the words heard (small) above their translation; `note` instead of the words heard says why there's
+        no translation ("already English": the words heard are shown as they are)."""
         you = lane == MIC and self.config.marks_mine
         parts = []
-        if heard and not you and heard != said:
+        small = note or (heard if heard and not you and heard != said else "")
+        if small:
             muted = theme.tok("text3", popup=True).name()
-            parts.append(f'<span style="color:{muted}; font-size:12px; font-weight:400">{html.escape(heard)}</span>')
+            parts.append(f'<span style="color:{muted}; font-size:12px; font-weight:400">{html.escape(small)}</span>')
         if said and you:
             accent = theme.tok("primary", popup=True)
             colour = accent.name() if live else _mix(accent, theme.tok("base", popup=True), 0.75)
@@ -280,7 +315,7 @@ class CaptionBar(QWidget):
     def _waiting(self) -> str:
         if self.status == "Listening":
             into = language_name(self.config.mic_target if self.config.source == "microphone" else self.config.target)
-            return f"Listening: translations into {into} appear when someone speaks."
+            return f"Translations into {into} appear here when someone speaks."  # "Listening…": the status line
         return self.status
 
     def _at_bottom(self) -> bool:
@@ -394,6 +429,7 @@ class LiveCaptions(QObject):
     changed = Signal(bool)  # running or not
     moved = Signal(object)  # the bar's new [x, y, width, height], to remember
     speak_toggled = Signal(bool)  # the bar's speaker button
+    noted = Signal(str)  # the bar's status line changed (the Live page shows it too)
 
     def __init__(self, make_session: Callable, make_lane: Callable, make_speaker: Callable | None = None):
         super().__init__()
@@ -407,6 +443,11 @@ class LiveCaptions(QObject):
     @property
     def running(self) -> bool:
         return self.session is not None
+
+    @property
+    def note(self) -> str:
+        """The bar's status line: why nothing shows yet ("" when all is well, or not running)."""
+        return self.bar.note() if self.bar is not None else ""
 
     def start(self, config: LiveConfig, geometry: list | None = None) -> None:
         """Every way of config.source. Raises if none can start; a way that can't is said on the bar, and the others
@@ -539,6 +580,8 @@ class LiveCaptions(QObject):
             self.last_problem = ("Your speech: " if mine else "") + event.text
         if self.bar is not None:
             self.bar.show_event(event)
+            if event.kind is Kind.NOTE:
+                self.noted.emit(self.note)
         if event.kind is Kind.STATUS and event.text == "Stopped" and self.session is not None \
                 and event.lane in self.session.lanes:  # an engine gave up (a refused key, ...), not one we stopped
             if len(self.session.lanes) > 1:

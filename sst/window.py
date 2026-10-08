@@ -4218,6 +4218,9 @@ class LivePage(Page):
         words.addLayout(status)
         self.doing = label("", tone="2")
         words.addWidget(self.doing)
+        self.hearing = caption("", "3")  # the bar's status line while it runs: why nothing shows yet
+        self.hearing.hide()
+        words.addWidget(self.hearing)
         words.addStretch()
         top = QHBoxLayout()
         top.setSpacing(20)
@@ -4343,6 +4346,9 @@ class LivePage(Page):
         set_tone(self.state, "live" if running else None)
         self.doing.setText(f"Translating {doing}" if running else "Add a Gemini key to start it" if problem
                            else f"Ready to translate {doing}")
+        hearing = app.live_note() if running else ""
+        self.hearing.setText(hearing)
+        self.hearing.setVisible(bool(hearing))
         clash = app.live_shortcut_clash()
         clear(self.how)
         if s.live_shortcut and not clash:
@@ -6865,7 +6871,12 @@ class PreviewApp:
     def live_running(self) -> bool:
         return self._live
 
-    _live_languages = ("", "")  # what the session running translates into (a language changed meanwhile waits)
+    _live_note = ""  # the bar's status line while it runs, for screenshots and tests
+
+    def live_note(self) -> str:
+        return self._live_note if self._live else ""
+
+    _live_languages =("", "")  # what the session running translates into (a language changed meanwhile waits)
 
     def live_languages(self) -> tuple[str, str]:
         s = self.settings

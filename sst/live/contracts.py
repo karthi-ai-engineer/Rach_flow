@@ -8,6 +8,9 @@ the same stream of events, so the caption bar, the transcript and the measuremen
     LINE        the line is finished: its source and translation are final, and the next line starts
     STATUS      connecting, listening, reconnecting, stopped
     ERROR       something went wrong; the text says what, in plain words
+    NOTE        why a way shows nothing yet, in plain words (the bar's quiet status line): listening, nothing heard,
+                speech already in the target language, a capture's own finding; "" clears it. Made by the session
+                (LiveSession.note), never by an engine
 """
 import dataclasses
 import enum
@@ -27,6 +30,7 @@ class Kind(enum.Enum):
     LINE = "line"
     STATUS = "status"
     ERROR = "error"
+    NOTE = "note"
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,12 @@ class LiveConfig:
     speak: bool = False  # the translation spoken aloud too, by a voice on the laptop (sst.live.speaker)
     speak_speed: float = 1.0
     duck: float = 0.3  # how loud the other apps stay while the voice speaks (1.0: as they are; sst.live.ducking)
+    # Why the bar is still empty (its status line, sst.live.session), judged on the last note_after_s seconds heard: a
+    # frame quieter than quiet_dbfs is near silence (a muted microphone is all zeros, a quiet room about -60 dBFS); with
+    # sound in sound_share of those seconds or more, it's sound without speech, else nothing heard
+    note_after_s: float = 8.0
+    quiet_dbfs: float = -55.0
+    sound_share: float = 0.25
 
     @property
     def lanes(self) -> tuple[str, ...]:
@@ -89,3 +99,11 @@ LANGUAGES: dict[str, str] = {
 
 def language_name(code: str) -> str:
     return next((name for name, c in LANGUAGES.items() if c == code), code)
+
+
+def already_in(event: LiveEvent, target: str) -> bool:
+    """A finished line that came back untranslated because it's in `target` already: words heard, no translation, and
+    the engine says they're in the target's language (or doesn't say). Words in another language without a translation
+    are a line cut before its translation came, not this."""
+    same = not event.language or event.language.split("-")[0].lower() == target.split("-")[0].lower()
+    return event.kind is Kind.LINE and not event.text and bool(event.source) and same
