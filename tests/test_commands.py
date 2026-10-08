@@ -81,3 +81,65 @@ def test_normalize():
     assert normalize("Um, so make THIS shorter, please!") == "make it shorter"
     assert normalize("Make it a to-do list") == "make it a to do list"
     assert normalize("Hey Rflow, rewrite that for me, thanks.") == "rewrite it"
+
+
+@pytest.mark.parametrize("said, normal", [
+    ("英語にしてください。", "英語にして"),
+    ("えっと、英語にしてくれる？", "英語にして"),
+    ("えっと英語にしてね", "英語にして"),
+    ("校正お願いします", "校正して"),
+    ("翻訳をお願いします。", "翻訳して"),
+    ("Teams 用に して ください", "teams用にして"),
+    ("英語に直して", "英語にして"),
+    ("簡潔にしてもらえますか", "簡潔にして"),
+])
+def test_normalize_japanese(said, normal):
+    assert normalize(said) == normal
+
+
+# ---- phase 40: Fix grammar, the Japanese Teams message and emails, Translate (with a language and a register)
+
+@pytest.mark.parametrize("said, command", [
+    ("Fix the grammar.", "grammar"), ("fix grammar", "grammar"), ("Proofread it, please.", "grammar"),
+    ("Fix the typos.", "grammar"), ("校正して", "grammar"), ("校正してください。", "grammar"), ("誤字を直して", "grammar"),
+    ("Make it a Teams message.", "teams"), ("Make it a Japanese Teams message.", "teams"),
+    ("Translate to Japanese for Teams.", "teams"), ("Teams用にして", "teams"), ("チャット用にしてください", "teams"),
+    ("Make it an internal email.", "email_internal"), ("Make it a Japanese email.", "email_internal"),
+    ("社内メールにして", "email_internal"),
+    ("Make it an external email.", "email_external"), ("make it a client email", "email_external"),
+    ("社外メールにしてください", "email_external"), ("取引先向けにして", "email_external"),
+    ("Translate it.", "translate"), ("Translate this.", "translate"), ("翻訳して", "translate"),
+    ("翻訳お願いします", "translate"),
+    ("Translate it to Japanese.", "translate:Japanese"), ("Translate this into English.", "translate:English"),
+    ("Translate into English, formally.", "translate:English:formal"),
+    ("translate to japanese casually", "translate:Japanese:casual"),
+    ("Make it Japanese.", "translate:Japanese"), ("In English, please.", "translate:English"),
+    ("Translate to Chinese.", "translate:Chinese (Simplified)"), ("translate into traditional chinese",
+                                                                 "translate:Chinese (Traditional)"),
+    ("英語にして", "translate:English"), ("英訳して", "translate:English"), ("日本語にしてください", "translate:Japanese"),
+    ("和訳して", "translate:Japanese"), ("日本語に訳して", "translate:Japanese"), ("英語に翻訳して", "translate:English"),
+    ("英語で丁寧に", "translate:English:formal"), ("丁寧な英語にして", "translate:English:formal"),
+    ("英語でお願いします", "translate:English"), ("韓国語にして", "translate:Korean"),
+    ("元に戻して", UNDO),
+])
+def test_phase_40_phrases(said, command):
+    assert match_command(said, DEFAULTS) == command
+
+
+@pytest.mark.parametrize("said", [
+    "Translate the report into Japanese before Friday.",  # more than the command
+    "Make it a Teams message for the whole team about Friday.",
+    "Translate to Klingon.",  # no such language
+    "英語",  # a word, not a command
+    "日本語で",
+    "Make it formal in a way.",
+    "I need to fix the grammar in the report.",
+])
+def test_phase_40_dictation_is_not_a_command(said):
+    assert match_command(said, DEFAULTS) is None
+
+
+def test_translate_with_a_language_needs_translate_on():
+    phrases = phrases_for({"translate": ""})  # no phrase: Translate is off, languages too
+    assert match_command("Translate it to Japanese.", phrases) is None and match_command("英語にして", phrases) is None
+    assert match_command("Make it a Teams message.", phrases) == "teams"
