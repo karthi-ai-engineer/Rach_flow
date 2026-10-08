@@ -1,9 +1,10 @@
 """Read and replace the text selected in whichever app has keyboard focus (Text Transform).
 
 Apps don't share their text with other programs in one common way, so this does what the user would do: Ctrl+C copies
-the selection, Shift+Left selects what Rflow has just typed, and Ctrl+V pastes the result over the selection, as
-formatted HTML too for the editors that take it. The user's clipboard is put back every time, except by set_clipboard:
-when the result can't go back where the text was, it is left on the clipboard for the user to paste.
+the selection, Ctrl+A selects all the text in the field, Shift+Left selects what Rflow has just typed, and Ctrl+V pastes
+the result over the selection, as formatted HTML too for the editors that take it. The user's clipboard is put back
+every time, except by set_clipboard: when the result can't go back where the text was, it is left on the clipboard for
+the user to paste.
 
 Every Windows call sits behind a small module-level function, so the tests replace them with fakes.
 """
@@ -58,7 +59,7 @@ kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
 kernel32.GlobalSize.argtypes = [wintypes.HGLOBAL]
 kernel32.GlobalSize.restype = ctypes.c_size_t
 
-VK_C, VK_LEFT, VK_RIGHT, VK_INSERT = 0x43, 0x25, 0x27, 0x2D
+VK_A, VK_C, VK_HOME, VK_LEFT, VK_RIGHT, VK_INSERT = 0x41, 0x43, 0x24, 0x25, 0x27, 0x2D
 SW_RESTORE = 9
 CF_HTML = user32.RegisterClipboardFormatW("HTML Format")  # where browsers, Office, Teams and Slack look for formatted text
 _NO_HISTORY = (CF_EXCLUDE_FROM_HISTORY, b"\0" * 4)
@@ -217,16 +218,63 @@ def select_back(chars: int) -> None:
         return
     send_keys([(VK_SHIFT, False)])
     try:
-        for done in range(0, chars, _BATCH):
-            send_keys([(VK_LEFT, False), (VK_LEFT, True)] * min(_BATCH, chars - done))
+        _steps(VK_LEFT, chars)
     finally:
         send_keys([(VK_SHIFT, True)])  # never leave Shift held down
 
 
-def collapse_selection() -> None:
-    """Press Right once: standard text boxes, browsers and Word collapse a selection to its end, where the caret was."""
+def _steps(vk: int, count: int) -> None:
+    for done in range(0, count, _BATCH):
+        send_keys([(vk, False), (vk, True)] * min(_BATCH, count - done))
+
+
+def collapse_selection(to_start: bool = False) -> None:
+    """Press Right once: standard text boxes, browsers and Word collapse a selection to its end, where the caret was
+    (Left, with `to_start`: to its start)."""
     _wait_for_modifiers_released()
-    send_keys([(VK_RIGHT, False), (VK_RIGHT, True)])
+    vk = VK_LEFT if to_start else VK_RIGHT
+    send_keys([(vk, False), (vk, True)])
+
+
+# ---------------------------------------------------------------- all the text in the field (nothing selected)
+
+def text_before_caret() -> str | None:
+    """The text from the start of the focused field to the caret: Ctrl+Shift+Home selects it, a copy reads it, and Right
+    puts the caret back where it was (a selection collapses to its end). Read before select_all, so its selection can be
+    undone with the caret where it was. None when nothing was copied (the caret at the start, or an app that doesn't
+    select this way): then nothing more is pressed."""
+    _wait_for_modifiers_released()
+    send_keys([(VK_CONTROL, False), (VK_SHIFT, False), (VK_HOME, False), (VK_HOME, True), (VK_SHIFT, True),
+               (VK_CONTROL, True)])
+    before = copy_selection()
+    if before is not None:
+        collapse_selection()
+    return before
+
+
+def select_all() -> str | None:
+    """Select all the text in the focused field (Ctrl+A) and return it, read with a copy: Text Transform's text when
+    nothing is selected. The copy is Ctrl+Insert alone: with no text known to be selected, Ctrl+C could stop a program in
+    a console Rflow doesn't recognise. None when nothing was copied (an empty field, an app without Ctrl+A or Ctrl+Insert);
+    whatever Ctrl+A selected is still selected then (unselect_all)."""
+    _wait_for_modifiers_released()
+    send_keys([(VK_CONTROL, False), (VK_A, False), (VK_A, True), (VK_CONTROL, True)])
+    return copy_selection()
+
+
+def unselect_all(before: str | None, whole: str | None) -> None:
+    """Undo select_all's selection, with the caret back where it was: `before` is the text that was before it
+    (text_before_caret), `whole` what select_all copied. The caret goes to the end when it was there, or when that isn't
+    known (where a dictation leaves it); else it takes the fewest caret steps from the start or from the end."""
+    after = whole[len(before):] if whole and before and whole.startswith(before) else ""
+    if not after:
+        collapse_selection()
+    elif _clusters(before) <= _clusters(after):
+        collapse_selection(to_start=True)
+        _steps(VK_RIGHT, _clusters(before))
+    else:
+        collapse_selection()
+        _steps(VK_LEFT, _clusters(after))
 
 
 def select_last(text: str) -> str | None:
