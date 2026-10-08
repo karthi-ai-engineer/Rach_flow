@@ -73,6 +73,55 @@ def test_good_results_are_accepted(original, result, transform):
     assert got.accepted, got.reasons
 
 
+PRIYA = "i has finished the report yesterday and send it to Priya, she dont reply yet."
+
+
+@pytest.mark.parametrize("result", [
+    "I finished the report yesterday and sent it to Priya; she hasn't replied yet.",
+    "I finished the report yesterday and sent it to Priya, but she has not replied yet.",
+])
+def test_a_contraction_typed_without_its_apostrophe_is_a_negation(result):  # the owner's real test, 2026-10-08
+    got = check(PRIYA, result, "grammar")
+    assert got.accepted, got.reasons
+    assert "dropped a negation" in check(PRIYA, "I finished the report yesterday and sent it to Priya; she replied.",
+                                         "grammar").reasons
+
+
+@pytest.mark.parametrize("original, result", [
+    ("im not sure it works", "I'm not sure it works."),
+    ("he doesnt know, and we cant wait", "He doesn't know, and we can't wait."),
+    ("it isnt ready and they wont ship", "It isn't ready, and they won't ship."),
+])
+def test_apostrophe_less_contractions(original, result):
+    assert check(original, result, "grammar").accepted
+
+
+def test_a_double_hedge_is_accepted_too():  # たぶん…見込み says it twice, which is fine; 見込み alone is enough
+    assert check(TANAKA, TANAKA_TEAMS.replace("15時頃になる", "たぶん15時頃になる"), "teams").accepted
+
+
+def test_the_texts_apology_stays_and_a_cushion_never_comes_before_the_closing():
+    real = ("田中さん\nお疲れ様です。\n明日の会議の資料がまだできておらず、たぶん15時ぐらいになる見込みです。\n"
+            "恐れ入りますが、よろしくお願いいたします。")  # gemini-3.5-flash-lite, 2026-10-08
+    got = check(TANAKA, real, "teams")
+    assert not got.accepted and "dropped the apology ('ごめん')" in got.reasons
+    assert "put a cushion phrase before the closing ('恐れ入りますが、よろしくお願い')" in got.reasons
+    teams = system_prompt("teams")
+    assert "never before the closing" in teams and "遅くなり申し訳ありません" in teams
+    assert "never before the closing" in system_prompt("email_external")
+    assert check(INVOICE.replace("?", ", sorry for the rush?"),
+                 "急ぎで申し訳ありませんが、金曜日までに請求書を送っていただけますか？", "translate").accepted
+
+
+def test_formal_japanese_is_keigo():
+    prompt = system_prompt("translate:Japanese:formal", target="Japanese")
+    assert "keigo" in prompt and "尊敬語" in prompt and "謙譲語" in prompt and "動かす" in prompt
+    review = "Can we move the review to Thursday at 3 PM? The client asked for more time."
+    formal = ("レビューを木曜日15時に変更していただくことは可能でしょうか。"
+              "クライアントより、もう少しお時間をいただきたいとのご要望がありました。")
+    assert check(review, formal, "translate:Japanese:formal").accepted
+
+
 def test_the_writers_name_from_the_settings_is_allowed():
     email = YAMAMOTO_EMAIL.replace("おります。\n", "おります。\n株式会社ABCの山田です。\n", 1)
     assert check(YAMAMOTO, email, "email_external", context=Context("山田", "株式会社ABC")).accepted

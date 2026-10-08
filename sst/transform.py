@@ -50,7 +50,20 @@ NO_ACTIONS = "NO_ACTIONS"  # what Action items answers when the text states no a
 
 
 GROUPS = ("Tone", "Format", "Language")  # how the menu and the page order the transforms
-REGISTERS = {"formal": "Use a formal, polite register.", "casual": "Use a casual, friendly register."}
+REGISTERS = {  # what "formally" and "casually" ask of the translation
+    "formal": "Use a formal, polite register. In Japanese that is keigo: 丁寧語 (です/ます) throughout, with 尊敬語 for the "
+              "reader's actions and 謙譲語 for the writer's where natural (変更していただくことは可能でしょうか, "
+              "ご要望がありました), and no plain or casual words (動かす, 欲しい, 言っている, ちょっと). In English, formal "
+              "business wording without contractions or slang.",
+    "casual": "Use a casual, friendly register (in Japanese, friendly plain forms).",
+}
+# Contractions typed without their apostrophe ("she dont reply", "im not sure"): read as the words they are.
+_NO_APOSTROPHE = re.compile(r"\b(do|does|did|is|are|was|were|has|have|had|ca|wo|should|could|would|must|need|ai)nt\b", re.I)
+
+
+def _apostrophes(text: str) -> str:
+    """ "dont" as "don't", "im" as "I'm": a correction that writes the apostrophe adds no negation."""
+    return re.sub(r"\bim\b", "I'm", _NO_APOSTROPHE.sub(r"\1n't", text), flags=re.I)
 
 
 @dataclass(frozen=True)
@@ -136,14 +149,17 @@ TRANSFORMS: dict[str, Transform] = _Transforms({t.key: t for t in (
               "the details in one to three short lines, or lines starting with ・ when there are several points or options "
               "(・A案：…);\n"
               "the request and its deadline, only if the text has them, with at most one cushion phrase (お手数ですが, "
-              "恐れ入りますが);\n"
+              "恐れ入りますが) directly before the request itself, never before the closing;\n"
+              "the text's apology, if it has one, in polite form (ごめん as 遅くなり申し訳ありません);\n"
               "よろしくお願いいたします。\n"
+              "Keep every part of the message, its apology and thanks included, in polite form. "
               "Write polite です/ます, with 謙譲語 for the writer's own actions (確認いたします, ご報告します) and "
               "尊敬語 for the "
               "reader's (ご確認いただけますか). Keep it short, not stiff: no お世話になっております (that is for clients), no "
               "ご苦労様です, no 了解しました (write 承知しました), no 拝啓 or 敬具, no stacked cushion phrases, "
               "no させていただきます "
-              "where いたします will do. Uncertainty stays uncertain (たぶん…と思う as 見込みです or かもしれません), and a "
+              "where いたします will do. Uncertainty stays uncertain, said once (たぶん…と思う as 見込みです or かもしれません), "
+              "and a "
               "question stays a question (…いただけますか。).",
               structured=True, group="Format", language="Japanese", template=True),
     Transform("email_internal", "Internal email", "8", "A Japanese email to a colleague, from Japanese or English.",
@@ -154,7 +170,9 @@ TRANSFORMS: dict[str, Transform] = _Transforms({t.key: t for t in (
               "お疲れ様です。{sender}\n"
               "the point in one sentence, then the details in short lines of about 30 to 35 characters, with lines starting "
               "with ・ for dates, amounts or several points;\n"
-              "the request and its deadline, only if the text has them, with at most one cushion phrase;\n"
+              "the request and its deadline, only if the text has them, with at most one cushion phrase directly before the "
+              "request itself, never before the closing;\n"
+              "the text's apology, if it has one, in polite form (申し訳ありません);\n"
               "よろしくお願いいたします。\n"
               "No subject line and no signature block: the mail app adds them. Polite です/ます, 謙譲語 for the writer's actions "
               "and 尊敬語 for the reader's; no お世話になっております (that is for clients), no ご苦労様です, no 了解しました "
@@ -171,7 +189,8 @@ TRANSFORMS: dict[str, Transform] = _Transforms({t.key: t for t in (
               "the point (要旨) in one sentence, then the details in short lines, with lines starting with ・ for dates and "
               "amounts;\n"
               "the request, only if the text makes one, with one cushion phrase (お手数をおかけしますが、…いただけますと幸いで"
-              "す。);\n"
+              "す。) directly before the request itself, never before the closing;\n"
+              "the text's apology, if it has one, in polite form (申し訳ございません);\n"
               "何卒よろしくお願いいたします。\n"
               "No subject line and no signature block: the mail app adds them. Fuller keigo: 謙譲語 for the writer's actions "
               "(ご連絡いたします, 拝見しました) and 尊敬語 for the reader's; no ご苦労様です, no 了解しました "
@@ -637,7 +656,7 @@ class TransformGuard:
             return _result([("error", f"the check failed ({e.__class__.__name__})")], [], 1.0, {})
 
     def _validate(self, original: str, result: str, spec: Transform, terms: list[str]) -> GuardResult:
-        (b_text, _, b_added), (a_text, a_lines, a_added) = _for_check(original), _for_check(result)
+        (b_text, _, b_added), (a_text, a_lines, a_added) = _for_check(_apostrophes(original)), _for_check(_apostrophes(result))
         b, a = _Side(b_text, terms), _Side(a_text, terms)
         ratio = _change_ratio(b_text, a_text)
         if not a.toks or not b.toks:
@@ -1070,6 +1089,8 @@ _ADDED = {"apology": "an apology", "thanks": "thanks", "promise": "a promise", "
 _FIXED = re.compile(r"(?:いつも)?お世話になっております[。、]?|お疲れ(?:様|さま)です[。、]?|"
                     r"(?:何卒|引き続き|ご確認のほど、?)?よろしくお願い(?:いたします|申し上げます|します)[。]?|"
                     r"お手数(?:を(?:お)?かけ(?:いた)?しますが|ですが)、?|恐れ入りますが、?")
+_CUSHION_CLOSING = re.compile(r"(?:恐れ入りますが|お手数(?:を(?:お)?かけ(?:いた)?しますが|ですが)|恐縮ですが)、?\s*"
+                              r"(?:何卒|引き続き)?よろしくお願い")
 _JA_ASKS = re.compile(r"(?:か|かな|かね|でしょうか|ますか|ませんか|ですか)\s*(?:[。.]|$)", re.M)
 _ANSWER = re.compile(r"\W*(?:はい|いいえ|ええ|うん)[、。!]|"
                      r"\W*(?:yes|no|yeah|yep|nope|sure|absolutely|definitely|correct)\b", re.I)
@@ -1137,7 +1158,7 @@ class _Across:
     def __init__(self, original: str, result: str, spec: Transform, terms: list[str], context: Context, target: str):
         self.spec, self.terms, self.context, self.target = spec, terms, context, target
         self.b_raw, self.a_raw = original, result
-        self.b, self.a = _nfkc(original), _nfkc(_BOLD.sub(r"\1", result))
+        self.b, self.a = _apostrophes(_nfkc(original)), _apostrophes(_nfkc(_BOLD.sub(r"\1", result)))
         self.b_lang, self.a_lang = _language(original), _language(result)
         # What a template may add is set aside before looking for what was invented.
         self.a_own = _FIXED.sub("\n", self.a) if spec.template else self.a
@@ -1260,6 +1281,12 @@ class _Across:
             allowed = pattern.search(b) or family == "thanks" and _FAMILIES_ANY["sign-off"].search(b)
             if (m := pattern.search(a)) and not allowed:
                 fired.append(("added_content", f"added {_ADDED[family]} ('{m.group().strip()}')"))
+        # The text's own apology is part of the message: a template or a translation keeps it (ごめん as 申し訳ありません)
+        if spec.language and (m := _FAMILIES_ANY["apology"].search(b)) and not _FAMILIES_ANY["apology"].search(a):
+            fired.append(("apology_dropped", f"dropped the apology ('{m.group().strip()}')"))
+        # A cushion phrase belongs before a request, never before the closing: "恐れ入りますが、よろしくお願いいたします"
+        if spec.template and (m := _CUSHION_CLOSING.search(self.a)):
+            fired.append(("keigo", f"put a cushion phrase before the closing ('{m.group().strip()}')"))
         if spec.template and self.a_lang == "ja":  # what a work message to a superior must never say
             if m := re.search(r"ご苦労(?:様|さま)", self.a):
                 fired.append(("keigo", f"wrote {m.group()} (rude to a superior: お疲れ様です)"))
