@@ -12,7 +12,8 @@ _Last updated: 2026-10-08_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-08):**
-- **Phase 39: live translation fixes** (the owner's report of 2026-10-08, issue #142): found from the log and live
+- **Rflow 2.4.1** (2026-10-08, the owner's "release it"): phase 39. **Phase 39: live translation fixes** (the owner's
+  report of 2026-10-08, issue #142): found from the log and live
   tests on the owner's laptop. (1) Microphone mode dropped lines already in the target language (Microphone → into
   English while speaking English gave an empty bar): now shown with "already English" (#143). (2) The microphone was
   Windows' default *communications* mic with call-style echo cancellation and noise suppression, ignoring the mic
