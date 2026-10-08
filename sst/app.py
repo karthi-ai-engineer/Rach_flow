@@ -1076,7 +1076,8 @@ class TrayApp:
     def _live_lane(self, lane: str, config: LiveConfig) -> tuple:
         """One way of live translation: what the laptop plays, or the microphone; each its own Gemini session."""
         key, lane_config = self.gateway.key_for("gemini"), config.for_lane(lane)
-        capture = Capture.microphone() if lane == MIC else Capture.speakers()
+        # The microphone chosen for dictation (read at each look: a new choice is followed), else Windows' default
+        capture = Capture.microphone(lambda: self.settings.microphone) if lane == MIC else Capture.speakers()
         return capture, lambda emit: GeminiLiveTranslate(key, lane_config, emit, lane=lane)
 
     def start_live(self) -> str:

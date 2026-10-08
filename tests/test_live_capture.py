@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 
 from sst.live import wasapi
-from sst.live.wasapi import FRAME, Capture, Framer, Resampler, decode
+from sst.live.level import Leveler
+from sst.live.wasapi import FRAME, Capture, Downmix, Framer, HighPass, Mixer, Resampler, choose_microphone, decode
 
 
 def sine(freq, seconds, rate):
@@ -122,13 +123,15 @@ def test_an_output_that_cant_be_opened_is_reported_to_the_caller():
     assert not any(t.name == "live-output" and t.is_alive() for t in threading.enumerate())
 
 
-def test_the_speakers_are_heard_without_rflows_own_sound_and_the_microphone_for_calls(monkeypatch):
+def test_the_speakers_are_heard_without_rflows_own_sound_and_the_chosen_microphone(monkeypatch):
     opened = []
-    monkeypatch.setattr(wasapi, "_ProcessLoopback", lambda: opened.append("process loopback") or "excluding Rflow")
-    monkeypatch.setattr(wasapi, "_Stream", lambda flow, role: opened.append((flow, role)) or "a stream")
-    assert Capture.speakers()._opener() == "excluding Rflow"
-    assert Capture.microphone()._opener() == "a stream"
-    assert opened == ["process loopback", (wasapi.E_CAPTURE, wasapi.E_COMMUNICATIONS)]
+    monkeypatch.setattr(wasapi, "_ProcessLoopback", lambda: opened.append("process loopback") or FakeStream())
+    monkeypatch.setattr(wasapi, "_Meters", FakeMeters)
+    monkeypatch.setattr(wasapi, "_Microphone", lambda wanted: opened.append(("microphone", wanted)) or "a microphone")
+    speakers = Capture.speakers()._opener()
+    assert isinstance(speakers, wasapi._Speakers) and isinstance(speakers.main, FakeStream)
+    assert Capture.microphone("Headset Microphone (Jabra)")._opener() == "a microphone"
+    assert opened == ["process loopback", ("microphone", "Headset Microphone (Jabra)")]
     assert (Capture.speakers().what, Capture.microphone().what) == ("output device", "microphone")
 
 
@@ -137,7 +140,7 @@ def test_without_process_loopback_the_whole_output_is_captured(monkeypatch):
         raise OSError("process loopback refused (0x80070057)")  # before Windows 11
     monkeypatch.setattr(wasapi, "_ProcessLoopback", unavailable)
     monkeypatch.setattr(wasapi, "_Stream", lambda flow, role: (flow, role))
-    assert Capture.speakers()._opener() == (wasapi.E_RENDER, wasapi.E_CONSOLE)
+    assert wasapi._speakers() == (wasapi.E_RENDER, wasapi.E_CONSOLE)
 
 
 def test_the_capture_says_whether_rflows_own_voice_is_in_it():
@@ -169,7 +172,9 @@ def test_the_computers_sound_turned_far_down_still_reaches_the_model_at_a_normal
     plain, raised = heard(), heard(level=True)
     assert level_db(plain) < -70 and -26 < level_db(raised) < -20  # its loudest 20 ms at -20 dBFS: a normal level
     assert abs(pitch(np.concatenate([np.frombuffer(f, "<i2") for f in raised]).astype(np.float32), 16_000) - 440) < 3
-    assert Capture.speakers().level and not Capture.microphone().level  # the computer's sound only
+    assert Capture.speakers().level is True and not Capture.speakers().highpass  # the computer's sound: as it is
+    mic = Capture.microphone()
+    assert mic.level == Leveler.for_microphone and mic.highpass  # the room: with a noise floor, without its rumble
 
 
 def test_nothing_heard_with_windows_sound_muted_is_said_once():
@@ -202,3 +207,203 @@ def test_sound_coming_through_a_muted_output_is_no_problem():
         time.sleep(0.01)
     capture.stop()
     assert problems == []
+
+
+def db(x):
+    x = np.asarray(x, dtype=np.float64)
+    return 10 * np.log10(np.mean(x ** 2) + 1e-30)
+
+
+# ---- the microphone (#144): the one chosen in Rflow, its channels, its rumble
+
+MICS = [("{mic-array}", "Microphone Array (Realtek(R) Audio)"), ("{jabra}", "Headset Microphone (Jabra Evolve2 65)")]
+
+
+def test_the_microphone_chosen_in_rflow_is_heard_else_windows_default():
+    assert choose_microphone(MICS, "Headset Microphone (Jabra Evolve2 65)", "{mic-array}", "{jabra}") == (
+        "{jabra}", "chosen in Rflow")
+    assert choose_microphone(MICS, "Headset Microphone (Jabra Evol", "{mic-array}", "") == (  # an older Rflow's cut name
+        "{jabra}", "chosen in Rflow")
+    device, why = choose_microphone(MICS, "USB Microphone (Blue Yeti)", "{mic-array}", "{jabra}")
+    assert device == "{mic-array}" and why == "Windows' default (USB Microphone (Blue Yeti) isn't connected)"
+    assert choose_microphone(MICS, "", "{mic-array}", "{jabra}") == ("{mic-array}", "Windows' default")
+    assert choose_microphone(MICS, "", "", "{jabra}") == ("{jabra}", "Windows' default for calls")
+    with pytest.raises(OSError):
+        choose_microphone([], "", "", "")
+
+
+def test_windows_output_muted_isnt_the_microphones_problem():
+    stream = wasapi._Stream.__new__(wasapi._Stream)
+    stream.flow = wasapi.E_CAPTURE
+    assert not stream.muted()  # nothing asked of Windows: a microphone isn't silenced by the output's mute
+
+
+def test_the_raw_client_properties_are_the_documented_size():
+    assert wasapi.ctypes.sizeof(wasapi._ClientProperties) == 16  # AudioClientProperties since Windows 8.1
+
+
+def packets_of(x, size):
+    return [x[i:i + size] for i in range(0, len(x), size)]
+
+
+def test_a_stereo_microphone_wired_out_of_phase_isnt_cancelled_out():
+    voice = sine(300, 1.0, 48_000) * 0.1  # -23 dBFS
+    stereo = np.stack([voice, -0.9 * voice], axis=1)  # the second capsule wired the other way round
+    downmix = Downmix()
+    out = np.concatenate([downmix(p) for p in packets_of(stereo, 480)])  # 10 ms packets, as WASAPI hands them over
+    assert db(stereo.mean(axis=1)) < db(voice) - 18  # their average: the voice nearly gone
+    assert abs(db(out[24_000:]) - db(voice)) < 0.5 and downmix.loudest == 0  # the louder channel: the voice whole
+    raw = stereo.astype("<f4").tobytes()
+    assert abs(db(decode(raw, 2, 32, True, Downmix())[24_000:]) - db(voice)) < 0.5
+
+
+def test_a_stereo_microphone_in_phase_or_just_noisy_is_averaged():
+    voice = sine(300, 1.0, 48_000) * 0.1
+    rng = np.random.default_rng(0)
+    for stereo in (np.stack([voice, 0.9 * voice], axis=1),  # two capsules hearing the same voice
+                   rng.standard_normal((48_000, 2)).astype(np.float32) * 0.01):  # a quiet room: uncorrelated noise
+        downmix = Downmix()
+        out = np.concatenate([downmix(p) for p in packets_of(stereo, 480)])
+        assert np.allclose(out, stereo.mean(axis=1)) and downmix.loudest == -1
+    mono = voice[:, None]
+    assert np.array_equal(Downmix()(mono), voice)
+
+
+def test_a_raw_microphones_rumble_is_taken_out_and_speech_left():
+    def through(freq):
+        x = sine(freq, 1.0, 16_000)
+        high = HighPass()
+        y = np.concatenate([high(p) for p in packets_of(x, 160)])  # 10 ms at a time: no seams
+        assert len(y) == len(x)
+        return db(y[4000:]) - db(x[4000:])  # past the filter's start
+    assert through(50) < -30 and through(30) < -40  # mains hum, a fan, the desk
+    assert abs(through(300)) < 0.5 and abs(through(1000)) < 0.5 and abs(through(150)) < 1.0  # voices
+    x = np.random.default_rng(1).standard_normal(16_000).astype(np.float32)
+    high = HighPass()
+    assert np.allclose(HighPass()(x), np.concatenate([high(p) for p in packets_of(x, 237)]), atol=1e-5)
+
+
+# ---- what the laptop plays (#145): a call on another output device, and saying where the sound is
+
+NAMES = {"speakers": "Speakers (Realtek)", "handsfree": "Headset (WH-1000XM4 Hands-Free)", "hdmi": "Monitor (HDMI)"}
+
+
+class FakeMeters:
+    """Windows' output devices: which are the defaults, and how loud each plays now (the test sets them)."""
+
+    def __init__(self, console="speakers", calls="speakers", peaks=None):
+        self.console, self.calls = console, calls
+        self.peaks = dict(peaks if peaks is not None else {"speakers": 0.0})
+        self.closed = False
+
+    def read(self):
+        return self.console, self.calls, dict(self.peaks)
+
+    def name(self, device_id):
+        return NAMES.get(device_id, device_id)
+
+    def close(self):
+        self.closed = True
+
+
+class Loopback(FakeStream):
+    """Process loopback: already 16 kHz mono."""
+    rate, channels = 16_000, 1
+
+
+def call_device(opened, packets=()):
+    def open_call():
+        stream = Loopback(packets)
+        stream.device_id = "handsfree"
+        opened.append(stream)
+        return stream
+    return open_call
+
+
+def test_a_call_on_the_headsets_hands_free_device_is_heard_too():
+    meters = FakeMeters(console="speakers", calls="handsfree", peaks={"speakers": 0.0, "handsfree": 0.0})
+    opened, main = [], Loopback()
+    speakers = wasapi._Speakers(main, meters=lambda: meters, open_call=call_device(opened, [sine(300, 0.01, 16_000)] * 100))
+    assert speakers.poll(0.0) is None and speakers.call is None  # nothing plays there: not opened (no call mode for it)
+    meters.peaks["handsfree"] = 0.3  # the call starts on the headset
+    speakers.poll(1.0)
+    assert speakers.call is opened[0] and not speakers.hears_self  # Rflow's voice plays on the default output only
+    audio = np.concatenate([np.concatenate(speakers.read() or [np.zeros(0, np.float32)]) for _ in range(200)])
+    assert len(audio) >= 15_000 and abs(pitch(audio, 16_000) - 300) < 3  # the call's sound, mixed in
+    meters.peaks["handsfree"] = 0.0  # a pause in the call: it stays open a while
+    speakers.poll(1.0 + wasapi.CALL_LINGER - 1)
+    assert speakers.call is not None
+    speakers.poll(1.0 + wasapi.CALL_LINGER + 0.5)  # the call is over
+    assert speakers.call is None and opened[0].closed
+    speakers.close()
+    assert main.closed and meters.closed
+
+
+def test_the_call_device_isnt_captured_twice_when_its_the_default_output():
+    meters = FakeMeters(console="speakers", calls="speakers", peaks={"speakers": 0.5})
+    opened = []
+    speakers = wasapi._Speakers(Loopback(), meters=lambda: meters, open_call=call_device(opened))
+    for t in range(5):
+        speakers.poll(float(t))
+    assert opened == [] and speakers.call is None
+
+
+def test_the_whole_mix_still_says_rflows_voice_is_in_it():
+    class Mixed(FakeStream):
+        hears_self = True
+    assert wasapi._Speakers(Mixed(), meters=FakeMeters).hears_self
+
+
+def test_without_meters_the_sound_is_still_captured():
+    def broken():
+        raise OSError("no meters")
+    speakers = wasapi._Speakers(Loopback([np.ones(160, np.float32)]), meters=broken)
+    assert speakers.poll(0.0) is None and len(speakers.read()[0]) == 160
+
+
+def test_two_streams_are_mixed_in_step_and_neither_waits_for_a_silent_one():
+    mix, a, b = Mixer(16_000), np.full(160, 0.1, np.float32), np.full(160, 0.2, np.float32)
+    assert np.allclose(mix(a, b), 0.3)  # added sample by sample
+    assert len(mix(a, None)) == 0  # the other's packet isn't here yet: in step, so it waits
+    assert np.allclose(mix(None, b), 0.3)
+    out = [mix(a, None) for _ in range(Mixer.IDLE)]  # the other device went quiet (Windows sends nothing)
+    assert sum(map(len, out[:-1])) == 0 and np.allclose(out[-1], 0.1) and len(out[-1]) == 160 * Mixer.IDLE
+    assert np.allclose(mix(a, None), 0.1)  # from then on at once
+    mix = Mixer(16_000)
+    assert len(mix(np.zeros(3000, np.float32), np.zeros(10, np.float32))) == 10  # in step
+    assert len(mix(np.zeros(1000, np.float32), None)) == 3990 - 3200  # but never more than LAG (0.2 s) behind
+    assert len(mix.flush()) == 3200
+
+
+def test_nothing_heard_while_another_device_plays_says_where_the_sound_may_be():
+    meters = FakeMeters(peaks={"speakers": 0.0, "hdmi": 0.0})
+    speakers = wasapi._Speakers(Loopback(), meters=lambda: meters)
+    assert [speakers.poll(float(t)) for t in range(4)] == [None] * 4
+    meters.peaks["hdmi"] = 0.2  # the video plays on the monitor's speakers
+    told = {t: speakers.poll(float(t)) for t in range(4, 12)}
+    message = wasapi.ELSEWHERE.format(heard="Speakers (Realtek)", other="Monitor (HDMI)")
+    assert [m for m in told.values() if m is not None] == [message] and told[8] == message  # once, after a few seconds
+    assert "Monitor (HDMI)" in message and "default output" in message
+    meters.peaks["speakers"] = 0.1  # heard again
+    assert speakers.poll(12.0) == "" and speakers.poll(13.0) is None
+
+
+def test_the_capture_passes_the_hint_on_and_takes_it_back_when_it_closes():
+    class Telling(FakeStream):
+        def __init__(self):
+            super().__init__()
+            self.told = 0
+
+        def poll(self, now):
+            self.told += 1
+            return "Nothing heard on Speakers" if self.told == 1 else None
+    notices = []
+    capture = Capture(opener=Telling, clock=Clock())
+    capture.on_note = notices.append
+    capture._stop.wait = lambda s: time.sleep(0.0005)
+    capture.start(lambda frame: None)
+    end = time.monotonic() + 5
+    while time.monotonic() < end and capture._clock.now < 3:
+        time.sleep(0.01)
+    capture.stop()
+    assert notices == ["Nothing heard on Speakers", ""]

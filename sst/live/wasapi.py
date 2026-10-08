@@ -7,11 +7,22 @@ before the 16-bit frames are made: turned far down, it would otherwise be lost i
     Capture.speakers()    everything the laptop plays except Rflow's own sound: Windows' process loopback, leaving out
                           this process, so the spoken translation isn't heard and translated again. Windows without it
                           (before Windows 11 / build 20348) get the default output's whole mix, and `hears_self` says
-                          Rflow's voice is in it
-    Capture.microphone()  the default communications microphone (the one Teams and Zoom use unless told otherwise)
+                          Rflow's voice is in it. Process loopback follows the default output; a call often plays on
+                          another device, Windows' default output for calls (a Bluetooth headset's "Hands-Free"
+                          endpoint): while something plays there, that device is captured too (endpoint loopback) and
+                          mixed in. Rflow's voice plays on the default output, so it isn't in that one
+    Capture.microphone()  the microphone chosen in Rflow (Settings.microphone, by name), else Windows' default one,
+                          else its default for calls; opened raw where the device allows it (no echo cancellation or
+                          noise suppression made for one close talker: a room's voices come through), else in its
+                          default mode, never in communications mode
     -> IAudioClient -> its format (usually 48 kHz float; process loopback is asked for 16 kHz mono and converts) ->
-    mono -> 16 kHz (a box filter, then interpolation; state kept across packets) -> (the computer's sound: its level)
+    mono (the channels' average, or the loudest channel where they cancel out) -> 16 kHz (a box filter, then
+    interpolation; state kept across packets) -> its level (quiet sound raised; the microphone's noise floor kept down)
     -> 100 ms frames
+
+About once a second the output devices' peak meters are read (IAudioMeterInformation, no audio): when nothing has
+been heard on the devices listened to for a while and another device is playing, `on_note` says where the sound
+may be (and "" once it's heard again).
 
 Out: Player, the spoken translation through Windows' default output (16-bit mono at the voice's rate: Windows converts
 it). It also says whether that output is private (headphones, a headset), which a microphone can't hear.
@@ -40,6 +51,7 @@ from sst.live.level import Leveler
 FRAME = RATE * FRAME_MS // 1000  # 1,600 samples
 SILENCE_AFTER = 0.15  # seconds without a packet: nothing is playing, so silence is added
 CHECK_DEVICE_EVERY = 2.0  # seconds between looks at which device is the default
+POLL_EVERY = 1.0  # seconds between looks at the output devices' meters
 MUTED_AFTER = 3.0  # seconds without any sound from the computer before Windows' mute is looked at
 SOUND = 1e-7  # a sample above this (-140 dBFS) is sound, however quiet: float keeps it
 MUTED = "Windows' sound is muted, so live translation hears nothing. Unmute it: a low volume is fine."
@@ -82,8 +94,103 @@ class Resampler:
         return out
 
 
-def decode(data: bytes, channels: int, bits: int, is_float: bool) -> np.ndarray:
-    """A packet in the device's format as mono float in [-1, 1]."""
+class HighPass:
+    """What's below ~`cutoff` Hz taken out: a raw microphone's rumble (a fan, the desk, mains hum), which its own
+    processing used to filter; measured on the owner's laptop, 3/4 of its raw noise. Speech is above it. A linear-phase
+    FIR (a windowed sinc: TAPS long, 32 ms late at 16 kHz), state kept across packets."""
+    TAPS = 1023
+
+    def __init__(self, cutoff: float = 90.0, rate: int = RATE):
+        n = np.arange(self.TAPS) - (self.TAPS - 1) / 2
+        low = np.sinc(2 * cutoff / rate * n) * np.blackman(self.TAPS)
+        self.kernel = (-low / low.sum()).astype(np.float32)
+        self.kernel[(self.TAPS - 1) // 2] += 1.0
+        self._tail = np.zeros(self.TAPS - 1, dtype=np.float32)
+
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        raw = np.concatenate([self._tail, np.asarray(x, dtype=np.float32)])
+        self._tail = raw[len(raw) - (self.TAPS - 1):]
+        return np.convolve(raw, self.kernel, mode="valid").astype(np.float32)
+
+
+class Downmix:
+    """Several channels as one, without losing the sound: their average, unless the channels cancel out in it (a
+    microphone array wired out of phase, or a stereo effect): then the loudest channel. Judged on the last half second
+    or so, with some hysteresis, so it doesn't flip back and forth."""
+    SMOOTH = 0.95  # per packet (~10 ms): about half a second
+    CANCELS, MIXES = 0.25, 0.4  # the average's power against the channels': below, it cancels (correlation < -0.5)
+
+    def __init__(self):
+        self._channels: np.ndarray | None = None  # each channel's power, smoothed
+        self._mixed = 0.0  # the average's power, smoothed
+        self.loudest = -1  # the channel used alone; -1: the average
+
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        """`x`: samples by channels."""
+        if x.shape[1] == 1:
+            return x[:, 0]
+        mean = x.mean(axis=1)
+        if len(x):
+            power = (x.astype(np.float64) ** 2).mean(axis=0)
+            mixed = float((mean.astype(np.float64) ** 2).mean())
+            if self._channels is None or len(self._channels) != len(power):
+                self._channels, self._mixed = power, mixed
+            else:
+                self._channels = self.SMOOTH * self._channels + (1 - self.SMOOTH) * power
+                self._mixed = self.SMOOTH * self._mixed + (1 - self.SMOOTH) * mixed
+            each = float(self._channels.mean())
+            if each > 1e-12:  # digital silence says nothing either way
+                ratio = self._mixed / each
+                if ratio < self.CANCELS:
+                    self.loudest = int(self._channels.argmax())
+                elif ratio > self.MIXES:
+                    self.loudest = -1
+        return mean if self.loudest < 0 else np.ascontiguousarray(x[:, self.loudest])
+
+
+class Mixer:
+    """Two streams at one rate (the default output's and the call device's), added sample by sample as their packets
+    come. Windows sends nothing for a device while nothing plays on it: a stream that sent nothing for IDLE reads
+    counts as silence, so the other isn't held back. One that runs ahead by more than LAG (the devices' clocks drift)
+    is let through, the other padded with silence."""
+    IDLE = 15  # reads (~10 ms apart): 150 ms
+    LAG = 0.2  # seconds
+
+    def __init__(self, rate: int):
+        self.lag = int(self.LAG * rate)
+        self._bufs = [np.zeros(0, np.float32), np.zeros(0, np.float32)]
+        self._quiet = [0, 0]
+
+    def __call__(self, a: np.ndarray | None, b: np.ndarray | None) -> np.ndarray:
+        for i, x in enumerate((a, b)):
+            if x is not None and len(x):
+                self._bufs[i] = np.concatenate([self._bufs[i], np.asarray(x, np.float32)])
+                self._quiet[i] = 0
+            else:
+                self._quiet[i] += 1
+        lengths = [len(buf) for buf in self._bufs]
+        waiting = [n for n, quiet in zip(lengths, self._quiet, strict=True) if quiet < self.IDLE]
+        n = min(waiting) if waiting else max(lengths)
+        n = max(n, max(lengths) - self.lag)
+        return self._take(n)
+
+    def flush(self) -> np.ndarray:
+        """All that's left, mixed."""
+        return self._take(max(len(buf) for buf in self._bufs))
+
+    def _take(self, n: int) -> np.ndarray:
+        if n <= 0:
+            return np.zeros(0, np.float32)
+        out = np.zeros(n, np.float32)
+        for i, buf in enumerate(self._bufs):
+            used = min(n, len(buf))
+            out[:used] += buf[:used]
+            self._bufs[i] = buf[used:]
+        return out
+
+
+def decode(data: bytes, channels: int, bits: int, is_float: bool, downmix: Downmix | None = None) -> np.ndarray:
+    """A packet in the device's format as mono float in [-1, 1] (the channels' average, or as `downmix` makes it)."""
     if is_float and bits == 32:
         x = np.frombuffer(data, dtype="<f4")
     elif bits == 16:
@@ -96,6 +203,8 @@ def decode(data: bytes, channels: int, bits: int, is_float: bool) -> np.ndarray:
     else:
         raise ValueError(f"unsupported audio format: {bits}-bit{' float' if is_float else ''}")
     x = x[: len(x) - len(x) % channels].reshape(-1, channels)
+    if downmix is not None:
+        return downmix(x)
     return x.mean(axis=1) if channels > 1 else x[:, 0]
 
 
@@ -169,9 +278,16 @@ class _LoopbackParams(Structure):
     _fields_ = [("ActivationType", c_int), ("TargetProcessId", wintypes.DWORD), ("ProcessLoopbackMode", c_int)]
 
 
+class _ClientProperties(Structure):
+    """AudioClientProperties (Windows 8.1+), for IAudioClient2::SetClientProperties."""
+    _fields_ = [("cbSize", ctypes.c_uint32), ("bIsOffload", wintypes.BOOL), ("eCategory", c_int), ("Options", c_int)]
+
+
 _CLSID_ENUMERATOR = _GUID.of("BCDE0395-E52F-467C-8E3D-C4579291692E")
 _IID_ENUMERATOR = _GUID.of("A95664D2-9614-4F35-A746-DE8DB63617E6")
 _IID_AUDIO_CLIENT = _GUID.of("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2")
+_IID_AUDIO_CLIENT2 = _GUID.of("726778CD-F60A-4EDA-82DE-E47610CD78AA")
+_IID_METER = _GUID.of("C02216F6-8C67-4B5B-9D00-D008E73E0064")  # IAudioMeterInformation
 _IID_CAPTURE_CLIENT = _GUID.of("C8ADBD64-E71E-48A0-A4DE-185C395CD317")
 _IID_RENDER_CLIENT = _GUID.of("F294ACFC-3146-4483-A7BF-ADDCA7C260E2")
 _IID_ENDPOINT_VOLUME = _GUID.of("5CDF2C82-841E-4546-9722-0CF74078229A")
@@ -180,6 +296,11 @@ _IID_COMPLETION = bytes(_GUID.of("41D949AB-9862-444A-80F6-C261334DA5EB"))  # IAc
 _IID_AGILE = bytes(_GUID.of("94EA2B94-E9CC-49E0-C0FF-EE64CA8F5B90"))  # IAgileObject: Windows calls it from any thread
 _FLOAT = uuid.UUID("00000003-0000-0010-8000-00AA00389B71").bytes_le
 _FORM_FACTOR = (_GUID.of("1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E"), 0)  # PKEY_AudioEndpoint_FormFactor
+_FRIENDLY_NAME = (_GUID.of("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 14)  # PKEY_Device_FriendlyName
+_RAW_SUPPORTED = (_GUID.of("8943B373-388C-4395-B557-BC6DBAFFAFDB"), 2)  # PKEY_Devices_AudioDevice_RawProcessingSupported
+_VT_BOOL, _VT_UI4, _VT_LPWSTR = 11, 19, 31
+_ACTIVE = 0x1  # DEVICE_STATE_ACTIVE
+_RAW = 0x1  # AUDCLNT_STREAMOPTIONS_RAW: none of the device's effects (AudioCategory_Other: no ducking of other apps)
 _PRIVATE = {3, 5, 6}  # Headphones, Headset, Handset: what they play, no microphone hears
 E_RENDER, E_CAPTURE = 0, 1  # EDataFlow: what's played, what's heard
 E_CONSOLE, E_COMMUNICATIONS = 0, 2  # ERole: the default device, the default for calls
@@ -235,11 +356,60 @@ def _default_id(enumerator, flow: int, role: int) -> str:
         _release(device)
 
 
-def _activate(device) -> c_void_p:
+def _device_by_id(enumerator, device_id: str) -> c_void_p:
+    device = c_void_p()
+    _method(enumerator, 5, ctypes.c_wchar_p, POINTER(c_void_p))(device_id, byref(device))  # GetDevice
+    return device
+
+
+def _endpoints(enumerator, flow: int) -> list[str]:
+    """The ids of the active devices of `flow`."""
+    collection, count, out = c_void_p(), wintypes.UINT(), []
+    _method(enumerator, 3, c_int, wintypes.DWORD, POINTER(c_void_p))(flow, _ACTIVE, byref(collection))  # EnumAudioEndpoints
+    try:
+        _method(collection, 3, POINTER(wintypes.UINT))(byref(count))  # GetCount
+        for i in range(count.value):
+            device = c_void_p()
+            _method(collection, 4, wintypes.UINT, POINTER(c_void_p))(i, byref(device))  # Item
+            try:
+                out.append(_device_id(device))
+            finally:
+                _release(device)
+    finally:
+        _release(collection)
+    return out
+
+
+def _activate(device, iid: _GUID = _IID_AUDIO_CLIENT) -> c_void_p:
     client = c_void_p()
     _method(device, 3, POINTER(_GUID), wintypes.DWORD, c_void_p, POINTER(c_void_p))(
-        byref(_IID_AUDIO_CLIENT), _CLSCTX_ALL, None, byref(client))  # IMMDevice::Activate
+        byref(iid), _CLSCTX_ALL, None, byref(client))  # IMMDevice::Activate
     return client
+
+
+def _property(device, key: tuple):
+    """A device property: a number, a bool, a string, or None (not set, or another kind)."""
+    store, value = c_void_p(), _PropVariant()
+    try:
+        _method(device, 4, wintypes.DWORD, POINTER(c_void_p))(0, byref(store))  # OpenPropertyStore(STGM_READ)
+        _method(store, 5, POINTER(_PropertyKey), POINTER(_PropVariant))(byref(_PropertyKey(*key)), byref(value))  # GetValue
+        if value.vt == _VT_UI4:
+            return value.value
+        if value.vt == _VT_BOOL:
+            return bool(value.value & 0xFFFF)
+        if value.vt == _VT_LPWSTR:  # its pointer is the union's first member, at offset 8
+            text = c_void_p.from_buffer(value, 8).value
+            return ctypes.wstring_at(text) if text else ""
+        return None
+    except OSError:
+        return None
+    finally:
+        ctypes.WinDLL("ole32").PropVariantClear(byref(value))
+        _release(store)
+
+
+def _name(device) -> str:
+    return _property(device, _FRIENDLY_NAME) or ""
 
 
 def _output_muted(enumerator) -> bool:
@@ -267,18 +437,7 @@ def _initialize(client, flags: int, fmt) -> None:
 
 def _private(device) -> bool:
     """The device is headphones or a headset (its form factor): a microphone can't hear what it plays."""
-    store = c_void_p()
-    try:
-        _method(device, 4, wintypes.DWORD, POINTER(c_void_p))(0, byref(store))  # OpenPropertyStore(STGM_READ)
-        key, value = _PropertyKey(*_FORM_FACTOR), _PropVariant()
-        _method(store, 5, POINTER(_PropertyKey), POINTER(_PropVariant))(byref(key), byref(value))  # GetValue
-        form = value.value if value.vt == 19 else None  # VT_UI4
-        ctypes.WinDLL("ole32").PropVariantClear(byref(value))
-        return form in _PRIVATE
-    except OSError:
-        return False
-    finally:
-        _release(store)
+    return _property(device, _FORM_FACTOR) in _PRIVATE
 
 
 _QI = ctypes.WINFUNCTYPE(c_long, c_void_p, POINTER(_GUID), POINTER(c_void_p))
@@ -358,6 +517,8 @@ class _Capturing:
     def _prepare(self) -> None:
         self.enumerator, self.device, self.client, self.capture = (c_void_p() for _ in range(4))
         self.event, self._handler = None, None
+        self.downmix = Downmix()
+        self.note = ""  # for the log: which device, in which mode
 
     def _start(self) -> None:
         _method(self.client, 14, POINTER(_GUID), POINTER(c_void_p))(
@@ -371,8 +532,8 @@ class _Capturing:
             return True
 
     def muted(self) -> bool:
-        """Windows' default output is muted (or at zero)."""
-        return _output_muted(self.enumerator)
+        """Windows' default output is muted (or at zero): only what's played can be silenced by it."""
+        return self.flow == E_RENDER and _output_muted(self.enumerator)
 
     def read(self) -> list[np.ndarray]:
         """The packets waiting now, as mono float at the device's rate (silent packets as zeros)."""
@@ -390,7 +551,7 @@ class _Capturing:
                     out.append(np.zeros(frames.value, dtype=np.float32))
                 else:
                     raw = ctypes.string_at(data.value, frames.value * self.block)
-                    out.append(decode(raw, self.channels, self.bits, self.is_float))
+                    out.append(decode(raw, self.channels, self.bits, self.is_float, self.downmix))
             finally:
                 release(frames.value)
             next_size(byref(size))
@@ -421,23 +582,102 @@ class _Stream(_Capturing):
             self.enumerator = _enumerator()
             self.device = _default_device(self.enumerator, flow, role)
             self.device_id = _device_id(self.device)
-            self.client = _activate(self.device)
-            mix = POINTER(_WAVEFORMATEX)()
-            _method(self.client, 8, POINTER(POINTER(_WAVEFORMATEX)))(byref(mix))  # GetMixFormat
-            try:
-                f = mix.contents
-                self.rate, self.channels, self.bits, self.block = f.nSamplesPerSec, f.nChannels, f.wBitsPerSample, f.nBlockAlign
-                if f.wFormatTag == 0xFFFE:  # WAVEFORMATEXTENSIBLE: the real format is its SubFormat
-                    self.is_float = bytes(ctypes.cast(mix, POINTER(_WAVEFORMATEXTENSIBLE)).contents.SubFormat) == _FLOAT
-                else:
-                    self.is_float = f.wFormatTag == 3
-                _initialize(self.client, _LOOPBACK if flow == E_RENDER else 0, mix)
-            finally:
-                ctypes.WinDLL("ole32").CoTaskMemFree(mix)
+            self._open()
             self._start()
         except Exception:
             self.close()
             raise
+
+    def _open(self, properties: _ClientProperties | None = None) -> None:
+        """An audio client on self.device in its mix format; `properties` (raw) are set first, through IAudioClient2."""
+        self.client = _activate(self.device, _IID_AUDIO_CLIENT2 if properties else _IID_AUDIO_CLIENT)
+        if properties is not None:
+            _method(self.client, 16, POINTER(_ClientProperties))(byref(properties))  # SetClientProperties
+        mix = POINTER(_WAVEFORMATEX)()
+        _method(self.client, 8, POINTER(POINTER(_WAVEFORMATEX)))(byref(mix))  # GetMixFormat
+        try:
+            f = mix.contents
+            self.rate, self.channels, self.bits, self.block = f.nSamplesPerSec, f.nChannels, f.wBitsPerSample, f.nBlockAlign
+            if f.wFormatTag == 0xFFFE:  # WAVEFORMATEXTENSIBLE: the real format is its SubFormat
+                self.is_float = bytes(ctypes.cast(mix, POINTER(_WAVEFORMATEXTENSIBLE)).contents.SubFormat) == _FLOAT
+            else:
+                self.is_float = f.wFormatTag == 3
+            _initialize(self.client, _LOOPBACK if self.flow == E_RENDER else 0, mix)
+        finally:
+            ctypes.WinDLL("ole32").CoTaskMemFree(mix)
+
+
+def choose_microphone(available: list[tuple[str, str]], wanted: str, console: str, communications: str) -> tuple[str, str]:
+    """The microphone to listen to, as (its id, why): `wanted` (a name chosen in Rflow; a name cut short by an older
+    Rflow matches the start of the full one), else Windows' default, else its default for calls. `available`: the
+    active microphones as (id, name)."""
+    if wanted:
+        found = next((i for i, name in available if name == wanted), None) or next(
+            (i for i, name in available if name.startswith(wanted)), None)
+        if found:
+            return found, "chosen in Rflow"
+    missing = f" ({wanted} isn't connected)" if wanted else ""
+    if console:
+        return console, "Windows' default" + missing
+    if communications:
+        return communications, "Windows' default for calls" + missing
+    raise OSError("no microphone is connected")
+
+
+class _Microphone(_Stream):
+    """The microphone to listen to (choose_microphone; `wanted` is read at each look, so a new choice is followed),
+    opened raw where the device allows it: without the echo cancellation, noise suppression and gain made for one
+    person close to it, which hear a room's voices weakly. Elsewhere in its default mode (never communications)."""
+
+    def __init__(self, wanted: str | Callable[[], str] = ""):
+        self.flow, self.role, self.hears_self = E_CAPTURE, E_CONSOLE, False
+        self._wanted = wanted if callable(wanted) else (lambda: wanted)
+        self._prepare()
+        try:
+            self.enumerator = _enumerator()
+            self.device_id, why = self._choose()
+            self.device = _device_by_id(self.enumerator, self.device_id)
+            mode = "default mode"
+            if _property(self.device, _RAW_SUPPORTED) is True:
+                try:
+                    self._open(_ClientProperties(ctypes.sizeof(_ClientProperties), 0, 0, _RAW))  # AudioCategory_Other
+                    mode = "raw"
+                except OSError as e:
+                    log.info("Live translation: the microphone refused raw sound (%s): its default mode instead", e)
+                    _release(self.client)
+                    self.client = c_void_p()
+            else:
+                mode += ", raw not supported"
+            if not self.client:
+                self._open()
+            self.note = f"{_name(self.device) or 'unnamed'}, {why}, {mode}"
+            self._start()
+        except Exception:
+            self.close()
+            raise
+
+    def _choose(self) -> tuple[str, str]:
+        available = []
+        for device_id in _endpoints(self.enumerator, E_CAPTURE):
+            device = _device_by_id(self.enumerator, device_id)
+            try:
+                available.append((device_id, _name(device)))
+            finally:
+                _release(device)
+        defaults = []
+        for role in (E_CONSOLE, E_COMMUNICATIONS):
+            try:
+                defaults.append(_default_id(self.enumerator, E_CAPTURE, role))
+            except OSError:  # E_NOTFOUND: none
+                defaults.append("")
+        return choose_microphone(available, self._wanted() or "", *defaults)
+
+    def default_changed(self) -> bool:
+        """Another microphone would be chosen now: the chosen one plugged in or out, or Windows' default changed."""
+        try:
+            return self._choose()[0] != self.device_id
+        except OSError:
+            return True
 
 
 class _ProcessLoopback(_Capturing):
@@ -486,27 +726,206 @@ def _speakers():
         return _Stream(E_RENDER, E_CONSOLE)
 
 
+class _Meters:
+    """The output devices' peak meters (IAudioMeterInformation: no audio, only how loud each plays now), and which
+    devices are Windows' default output and its default for calls. Each meter opened once, kept while its device is."""
+
+    def __init__(self):
+        self.enumerator = _enumerator()
+        self._meters: dict[str, c_void_p] = {}
+
+    def read(self) -> tuple[str, str, dict[str, float]]:
+        """(the default output's id, the default for calls' id, {active output's id: its peak now, 0..1})."""
+        defaults = []
+        for role in (E_CONSOLE, E_COMMUNICATIONS):
+            try:
+                defaults.append(_default_id(self.enumerator, E_RENDER, role))
+            except OSError:
+                defaults.append("")
+        ids, peaks = _endpoints(self.enumerator, E_RENDER), {}
+        for gone in set(self._meters) - set(ids):
+            _release(self._meters.pop(gone))
+        for device_id in ids:
+            try:
+                meter = self._meters.get(device_id)
+                if meter is None:
+                    device, meter = _device_by_id(self.enumerator, device_id), c_void_p()
+                    try:
+                        _method(device, 3, POINTER(_GUID), wintypes.DWORD, c_void_p, POINTER(c_void_p))(
+                            byref(_IID_METER), _CLSCTX_ALL, None, byref(meter))  # IMMDevice::Activate
+                    finally:
+                        _release(device)
+                    self._meters[device_id] = meter
+                peak = ctypes.c_float()
+                _method(meter, 3, POINTER(ctypes.c_float))(byref(peak))  # GetPeakValue
+                peaks[device_id] = peak.value
+            except OSError:  # going away just now
+                _release(self._meters.pop(device_id, c_void_p()))
+        return defaults[0], defaults[1], peaks
+
+    def name(self, device_id: str) -> str:
+        try:
+            device = _device_by_id(self.enumerator, device_id)
+        except OSError:
+            return "another device"
+        try:
+            return _name(device) or "another device"
+        finally:
+            _release(device)
+
+    def close(self) -> None:
+        for meter in self._meters.values():
+            _release(meter)
+        self._meters.clear()
+        _release(self.enumerator)
+        self.enumerator = c_void_p()
+
+
+PLAYING = 1e-3  # a peak above this (-60 dBFS) is a device playing something
+CALL_LINGER = 30.0  # seconds the call device stays captured after it last played (a pause in the call)
+ELSEWHERE_AFTER = 5.0  # seconds of nothing heard, while another device plays, before saying where the sound may be
+ELSEWHERE = "Nothing plays on {heard}: the sound may be on {other}. Make it Windows' default output to translate it."
+
+
+class _Speakers:
+    """What the laptop plays (`main`: process loopback, or the default output's whole mix), and also, while something
+    plays there, Windows' default output for calls when that's another device: a call on a Bluetooth headset's
+    "Hands-Free" endpoint, which process loopback (following the default output) doesn't hear. That one is opened only
+    while it plays and closed after CALL_LINGER of silence, so a headset isn't held in call mode by Rflow. Rflow's own
+    voice plays on the default output (Player), never there: `hears_self` is main's. poll(now), about once a second,
+    looks at the meters and says (a message, "" when it's over, None for no change) when the sound may be elsewhere."""
+
+    def __init__(self, main, meters: Callable | None = None, open_call: Callable | None = None):
+        self.main = main
+        self._open_call = open_call or (lambda: _Stream(E_RENDER, E_COMMUNICATIONS))
+        self.rate, self.channels, self.bits, self.is_float = main.rate, main.channels, main.bits, main.is_float
+        self.hears_self = getattr(main, "hears_self", False)
+        self.device_id = getattr(main, "device_id", "")
+        self.note = getattr(main, "note", "")
+        try:
+            self.meters = (meters or _Meters)()
+        except Exception as e:  # the meters are a help, not a need
+            log.info("Live translation: no output meters (%s)", e)
+            self.meters = None
+        self.call = None  # the call device's loopback, while open
+        self._mix: Mixer | None = None
+        self._resample: Resampler | None = None
+        self._call_heard = -1e9  # when the call device last played
+        self._heard: float | None = None  # when the devices listened to last played
+        self._other_since: dict[str, float] = {}  # other devices playing, since when
+        self._told = ""
+
+    def read(self) -> list[np.ndarray]:
+        packets = self.main.read()  # its failure (unplugged) reopens everything
+        if self.call is None:
+            if self._mix is None:
+                return packets
+            rest, self._mix = self._mix.flush(), None  # the call device just closed: what's left of the mix first
+            return [rest, *packets]
+        try:
+            extra = self.call.read()
+        except OSError as e:
+            log.info("Live translation: the call device went away (%s)", e)
+            self._close_call()
+            extra = []
+        a = np.concatenate(packets) if packets else None
+        b = self._resample(np.concatenate(extra)) if extra else None
+        mixed = self._mix(a, b) if self._mix is not None else (a if a is not None else np.zeros(0, np.float32))
+        return [mixed] if len(mixed) else []
+
+    def poll(self, now: float) -> str | None:
+        if self.meters is None:
+            return None
+        try:
+            console, calls, peaks = self.meters.read()
+        except OSError as e:
+            log.debug("Live translation: the output meters couldn't be read: %s", e)
+            return None
+        if self._heard is None:
+            self._heard = now
+        separate = bool(calls) and calls != console
+        if separate and peaks.get(calls, 0.0) > PLAYING:
+            self._call_heard = now
+        want = separate and now - self._call_heard < CALL_LINGER
+        if self.call is not None and (not want or self.call.device_id != calls):
+            log.info("Live translation: no longer captures the device for calls")
+            self._close_call()
+        if want and self.call is None:
+            self._open_call_device()
+        listened = {console} | ({calls} if self.call is not None else set())
+        if any(peaks.get(d, 0.0) > PLAYING for d in listened):
+            self._heard = now
+        self._other_since = {d: self._other_since.get(d, now) for d, peak in peaks.items()
+                             if d not in listened and peak > PLAYING}
+        if now - self._heard < ELSEWHERE_AFTER:
+            message = ""
+        else:
+            others = [d for d, since in self._other_since.items() if now - since >= ELSEWHERE_AFTER - 1.0]
+            message = ELSEWHERE.format(heard=self.meters.name(console) if console else "the default output",
+                                       other=self.meters.name(others[0])) if others else ""
+        if message == self._told:
+            return None
+        self._told = message
+        if message:
+            log.info("Live translation: %s", message)
+        return message
+
+    def _open_call_device(self) -> None:
+        try:
+            self.call = self._open_call()
+        except Exception as e:
+            log.info("Live translation: couldn't capture the device for calls: %s", e)
+            return
+        self._mix, self._resample = Mixer(self.rate), Resampler(self.call.rate, self.rate)
+        log.info("Live translation also hears the device for calls (%d Hz, %d channels)", self.call.rate,
+                 self.call.channels)
+
+    def _close_call(self) -> None:
+        if self.call is not None:
+            self.call.close()
+            self.call = None
+
+    def default_changed(self) -> bool:
+        return self.main.default_changed()
+
+    def muted(self) -> bool:
+        return _muted(self.main)
+
+    def close(self) -> None:
+        self._close_call()
+        self.main.close()
+        if self.meters is not None:
+            self.meters.close()
+            self.meters = None
+
+
 class Capture:
     """start(on_frame) calls on_frame(bytes) with each 100 ms frame, from its own thread: of what the laptop plays
     (speakers()) or of what its microphone hears (microphone()). `hears_self`: Rflow's own voice can be in it. `level`:
-    quiet sound is raised (the computer's). `on_problem(message)`, if set, hears why nothing can be captured (muted)."""
+    quiet sound is raised (True: as the computer's; or a function making a Leveler). `on_problem(message)`, if set,
+    hears why nothing can be captured (muted). `on_note(message)`, if set, hears a hint about where the sound may be
+    instead (another output device playing while nothing is heard), and "" once it no longer applies; called from the
+    capture's thread."""
 
     def __init__(self, opener: Callable = _Stream, clock: Callable[[], float] = time.monotonic,
-                 what: str = "output device", level: bool = False):
-        self._opener, self._clock, self.what, self.level = opener, clock, what, level
+                 what: str = "output device", level: bool | Callable[[], Leveler] = False, highpass: bool = False):
+        self._opener, self._clock, self.what, self.level, self.highpass = opener, clock, what, level, highpass
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.device_rate = 0  # the device's own rate, once opened (for the log)
         self.hears_self = False
         self.on_problem: Callable[[str], None] | None = None
+        self.on_note: Callable[[str], None] | None = None
+        self._notice = ""
 
     @classmethod
     def speakers(cls) -> "Capture":
-        return cls(lambda: _speakers(), what="output device", level=True)
+        return cls(lambda: _Speakers(_speakers()), what="output device", level=True)
 
     @classmethod
-    def microphone(cls) -> "Capture":
-        return cls(lambda: _Stream(E_CAPTURE, E_COMMUNICATIONS), what="microphone")
+    def microphone(cls, wanted: str | Callable[[], str] = "") -> "Capture":
+        """The microphone chosen in Rflow (`wanted`: its name, or a function giving it now), else Windows' default."""
+        return cls(lambda: _Microphone(wanted), what="microphone", level=Leveler.for_microphone, highpass=True)
 
     def start(self, on_frame: Callable[[bytes], None]) -> None:
         self._stop.clear()
@@ -544,21 +963,33 @@ class Capture:
                 if first:
                     first = False
                     opened.set()
-                log.info("Live translation hears the %s (%d Hz, %d channels, %d-bit%s%s)", self.what, stream.rate,
+                note = getattr(stream, "note", "")
+                log.info("Live translation hears the %s (%d Hz, %d channels, %d-bit%s%s%s)", self.what, stream.rate,
                          stream.channels, stream.bits, " float" if stream.is_float else "",
-                         "" if self.hears_self or self.what != "output device" else ", without Rflow's own sound")
+                         "" if self.hears_self or self.what != "output device" else ", without Rflow's own sound",
+                         f"; {note}" if note else "")
                 try:
                     self._pump(stream, on_frame)
                 except OSError as e:  # unplugged, or the format changed: open whatever is the default now
                     log.info("Live translation: the %s changed (%s)", self.what, e)
                 finally:
                     stream.close()
+                    self._tell("")  # a hint about the old device no longer applies
         finally:
             ctypes.WinDLL("ole32").CoUninitialize()
 
+    def _tell(self, notice: str) -> None:
+        if notice != self._notice:
+            self._notice = notice
+            if self.on_note is not None:
+                self.on_note(notice)
+
     def _pump(self, stream, on_frame) -> None:
-        resample, frame, level = Resampler(stream.rate), Framer(), Leveler() if self.level else None
-        last_packet = last_fill = last_check = sound_at = self._clock()
+        resample, frame = Resampler(stream.rate), Framer()
+        level = None if not self.level else Leveler() if self.level is True else self.level()
+        rumble = HighPass() if self.highpass else None
+        poll = getattr(stream, "poll", None)
+        last_packet = last_fill = last_check = last_poll = sound_at = self._clock()
         told = False  # that Windows' output is muted, until sound comes again
         while not self._stop.is_set():
             now = self._clock()
@@ -566,6 +997,8 @@ class Capture:
             if packets:
                 last_packet = last_fill = now
                 samples = resample(np.concatenate(packets))
+                if rumble is not None:
+                    samples = rumble(samples)
                 if level is not None:
                     if len(samples) and float(np.max(np.abs(samples))) > SOUND:
                         sound_at, told = now, False
@@ -585,6 +1018,11 @@ class Capture:
                     log.info("Live translation: nothing heard, and Windows' output is muted")
                     if self.on_problem is not None:
                         self.on_problem(MUTED)
+            if poll is not None and now - last_poll >= POLL_EVERY:
+                last_poll = now
+                notice = poll(now)
+                if notice is not None:
+                    self._tell(notice)
             self._stop.wait(0.01)
 
 
