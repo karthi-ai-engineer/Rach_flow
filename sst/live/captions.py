@@ -514,7 +514,7 @@ class LiveCaptions(QObject):
             self.session.speaker.set_speed(speed)
 
     def set_duck(self, depth: float) -> None:
-        """How loud the other apps stay while the voice speaks: at once, while it speaks, and for the next start."""
+        """How loud the other apps stay while live translation speaks: at once if it runs, and for the next start."""
         self.config = dataclasses.replace(self.config, duck=depth)
         ducker = getattr(self.session.speaker, "ducker", None) if self.session is not None else None
         if ducker is not None:

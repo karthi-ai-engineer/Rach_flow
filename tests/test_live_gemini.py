@@ -169,6 +169,18 @@ def test_a_piece_that_repeats_the_line_replaces_it():
     assert gemini._join("I don'", "t know") == "I don't know" and gemini._join("Chris'", " car") == "Chris' car"
 
 
+def test_a_piece_that_re_sends_the_line_revised_replaces_it_too():
+    """In meetings the model re-sends the whole line with a word or a full stop changed: appended, the caption would say
+    it twice and the voice would read it again."""
+    line = " Yes, we can start now. Next"
+    assert gemini._join(line, " Yes, we can start now. Next week.") == " Yes, we can start now. Next week."
+    assert gemini._join(line, " Yes. We can start now. Next week.") == " Yes. We can start now. Next week."
+    assert gemini._join("We need to finish the report. The deadline", "We have to finish the report. The deadline is "
+                        "Friday.") == "We have to finish the report. The deadline is Friday."
+    assert gemini._join(line, " week we review it.") == f"{line} week we review it."  # a piece that goes on
+    assert gemini._join("Yes, we can", " can we start now?") == "Yes, we can can we start now?"
+
+
 def test_a_pause_finishes_the_line_when_the_model_doesnt(live):
     server = FakeServer()
     engine, events, clock = live([server], line_pause_s=1.5)

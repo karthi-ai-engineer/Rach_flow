@@ -47,7 +47,7 @@ class Settings:
     live_hide_from_share: bool = True  # the translation bar isn't in screen shares and recordings
     live_speak: bool = False  # the translation spoken aloud too, by a voice on this laptop (sst.live.voice)
     live_speak_speed: float = 1.0  # how fast it speaks (faster by itself when it falls behind)
-    live_duck: float = 0.3  # how loud the other apps stay while it speaks (1.0: as they are; sst.live.ducking)
+    live_duck: float = 0.1  # how loud the other apps stay while it speaks (0.0: barely, 1.0: as they are; sst.live.ducking)
     live_voice: str = "en_US-danny-low"  # the voice (sst.live.voice VOICES)
     live_told: bool = False  # the notice (audio goes to Google, the cost) was accepted once
     voice_commands: bool = True  # hold the dictation key and say "make it concise" (sst.commands)

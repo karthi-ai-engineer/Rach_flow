@@ -12,6 +12,13 @@ _Last updated: 2026-10-08_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-08):**
+- **Rflow 2.5.1** (2026-10-08): **phase 41, the spoken translation** (#158). (1) The voice repeated sentences (the
+  owner's log: 3 lines → 10 sentences said, 9 → 30): a leading space on a line's first piece, Gemini re-sending a line
+  revised (appended, not replaced: `gemini._join`), and a new line restarting the last; now `Speaker` remembers what
+  it said by its words and says each sentence once (#159; seven Gemini patterns in `tests/test_live_voice.py`).
+  (2) Other apps stay at the chosen level **the whole time** the voice is on (`Ducker`), the slider 0-100%; 0% is
+  `INAUDIBLE` (0.03%: inaudible, still translated) (#160). Checked live with a Japanese TTS paragraph: 3 lines, 9
+  sentences said, lowered once for the session.
 - **Rflow 2.5.0** (2026-10-08, the owner's "put it"): **phase 40, Text Transform** (#151). (1) The owner's rule: the
   selected text, or with nothing selected **all the text in the box** (Ctrl+A in the field; refused over
   `BOX_LIMIT` 2,000 characters, never in a terminal; the caret put back): the old search for the last dictation by
@@ -1721,7 +1728,7 @@ ask whether the start/stop beep stopped. Not done: Home's own long microphone la
     lowered is written to `%LOCALAPPDATA%\sst\lowered-apps.json` first and `put_back_left()` (at Rflow's start, and
     when a Ducker starts) puts it back after a crash; apps not running then are kept 7 days. Tried on this laptop on
     a test tone's own process: 1.0 -> 0.25 while "speaking", back after, the record gone.
-- **The app:** Live translation → Speak the translation → "Other sound while it speaks": a slider (`ui.Slider`, new:
+- **The app:** Live translation → Speak the translation → "Other sounds while it runs": a slider (`ui.Slider`, new:
   the switch's inset track, Iris fill, round knob) from 10 % to 100 % ("Unchanged"), 30 % by default, saved when let
   go (`live_duck`), applied at once while it speaks (`LiveCaptions.set_duck`). `sst live --speak` uses it too.
 - **Owner to try:** a video, Computer into English, speaking on: the video gets quieter while Danny speaks and comes
