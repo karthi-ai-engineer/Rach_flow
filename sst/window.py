@@ -4258,15 +4258,15 @@ class LivePage(Page):
         line = setting_row("Speed", "It speeds up by itself when it falls behind.", self.speed)[0]
         line.layout().setContentsMargins(0, 14, 0, 0)
         speed.addWidget(line)
-        # How loud the other apps stay while it speaks: lowered like an interpreter's, back after each sentence
-        self.duck = Slider(10, 100, 5)
-        self.duck.setAccessibleName("Other sound while it speaks")
+        # How loud the other apps stay while it runs: lowered like under an interpreter, the whole time, back when it stops
+        self.duck = Slider(0, 100, 5)
+        self.duck.setAccessibleName("Other sounds while it runs")
         self.duck.setFixedWidth(160)
         self.duck_value = label("", wrap=False)
         self.duck_value.setMinimumWidth(QFontMetrics(self.duck_value.font()).horizontalAdvance("Unchanged") + 4)
         self.duck.valueChanged.connect(self._duck_moved)
         self.duck.sliderReleased.connect(self._duck_chosen)
-        line, _, self.duck_caption = setting_row("Other sound while it speaks", " ", self.duck, self.duck_value)
+        line, _, self.duck_caption = setting_row("Other sounds while it runs", " ", self.duck, self.duck_value)
         line.layout().setContentsMargins(0, 14, 0, 0)
         speed.addWidget(line)
         column.addWidget(self.speed_row)
@@ -4444,9 +4444,12 @@ class LivePage(Page):
 
     def _show_duck(self, value: int) -> None:
         self.duck_value.setText("Unchanged" if value >= 100 else f"{value}%")
-        self.duck_caption.setText("Left as it is: the voice speaks over it." if value >= 100 else
-                                  "Other apps get quieter while each sentence is spoken, and come back after it. "
-                                  "Rflow still hears and translates them.")
+        if value >= 100:
+            words = "Left as they are: the voice speaks over them."
+        else:
+            words = ("Other apps go silent for you" if value <= 0 else "Other apps stay this quiet") + \
+                " while live translation runs, and come back when it stops. Rflow still hears and translates them."
+        self.duck_caption.setText(words)
 
     def _say(self, message: str) -> None:
         self.note.setText(message)

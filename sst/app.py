@@ -1827,7 +1827,7 @@ def main(argv: list[str] | None = None) -> int:
         QMessageBox.critical(None, APP_NAME, "Windows has no notification area (system tray) available.")
         return 1
     left = install_crash_handlers(log_dir)  # only now: a second copy that just hands over mustn't touch them
-    put_back_left()  # apps a crash left lowered while the voice spoke: back to their own volume
+    put_back_left()  # apps a crash left lowered while live translation spoke: back to their own volume
     app.aboutToQuit.connect(lambda: mark_clean_exit(log_dir))
     app.commitDataRequest.connect(lambda manager: mark_clean_exit(log_dir))  # Windows signs out or shuts down
     tray_app = start(lambda: TrayApp(quiet_start="--startup" in argv), log_dir, left)

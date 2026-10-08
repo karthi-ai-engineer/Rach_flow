@@ -1791,23 +1791,27 @@ def test_hearing_the_translation_is_switched_on_in_the_section():
     assert page.speak_caption.text().startswith("Downloading the voice Danny: 37%")
 
 
-def test_how_low_the_other_apps_go_while_it_speaks_is_a_slider():
+def test_how_low_the_other_apps_stay_while_it_runs_is_a_slider_from_0_to_100():
     from PySide6.QtCore import QPoint
     from PySide6.QtTest import QTest
     window, app = _live_window(live_speak=True)
     window.show_page("live")
     page = window.pages["live"]
-    assert page.duck.value() == 30 and page.duck_value.text() == "30%" and "get quieter" in page.duck_caption.text()
+    assert page.duck.value() == 10 and page.duck_value.text() == "10%"  # the default: 10%
+    assert "stay this quiet while live translation runs, and come back when it stops" in page.duck_caption.text()
     page.duck.setFocus()
     QTest.keyClick(page.duck, Qt.Key.Key_Right)  # the arrow keys: a step, chosen at once
-    assert page.duck.value() == 35 and app.settings.live_duck == 0.35
+    assert page.duck.value() == 15 and app.settings.live_duck == 0.15
+    QTest.keyClick(page.duck, Qt.Key.Key_Home)  # all the way down: 0%, still heard by live translation (the Ducker)
+    assert page.duck.value() == 0 and app.settings.live_duck == 0.0 and page.duck_value.text() == "0%"
+    assert "go silent for you" in page.duck_caption.text() and "still hears and translates" in page.duck_caption.text()
     page.duck.resize(160, 24)
     QTest.mousePress(page.duck, Qt.MouseButton.LeftButton, pos=QPoint(150, 12))  # a drag: chosen when let go
-    assert page.duck_value.text() == "Unchanged" and app.settings.live_duck == 0.35
+    assert page.duck_value.text() == "Unchanged" and app.settings.live_duck == 0.0
     QTest.mouseRelease(page.duck, Qt.MouseButton.LeftButton, pos=QPoint(150, 12))
     assert ("set_live_duck", 1.0) in app.calls and app.settings.live_duck == 1.0
-    assert "speaks over it" in page.duck_caption.text()
-    assert page.duck.value_at(0) == 10 and page.duck.value_at(80) == 55  # whole steps where the pointer is
+    assert "speaks over them" in page.duck_caption.text()
+    assert page.duck.value_at(0) == 0 and page.duck.value_at(80) == 50  # whole steps where the pointer is
 
 
 def test_the_section_says_when_the_voice_cant_speak_the_language_chosen():

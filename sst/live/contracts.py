@@ -57,7 +57,7 @@ class LiveConfig:
     mic_target: str = "ja"  # the language what the microphone hears is translated into
     speak: bool = False  # the translation spoken aloud too, by a voice on the laptop (sst.live.speaker)
     speak_speed: float = 1.0
-    duck: float = 0.3  # how loud the other apps stay while the voice speaks (1.0: as they are; sst.live.ducking)
+    duck: float = 0.1  # how loud the other apps stay while live translation speaks (1.0: as they are; sst.live.ducking)
     # Why the bar is still empty (its status line, sst.live.session), judged on the last note_after_s seconds heard: a
     # frame quieter than quiet_dbfs is near silence (a muted microphone is all zeros, a quiet room about -60 dBFS); with
     # sound in sound_share of those seconds or more, it's sound without speech, else nothing heard
