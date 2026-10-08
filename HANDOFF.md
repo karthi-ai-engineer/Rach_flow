@@ -7,11 +7,24 @@ Rach_flow or Rach_Darling_Flow:** installed copies up to 2.3.0 (and up to 1.6.0)
 which GitHub redirects only while they stay free (checked after each rename: the old API names answer 301 and
 reach the latest release). Locally: `git remote set-url origin https://github.com/karthi-ai-engineer/rflow-ai.git`.
 
-_Last updated: 2026-10-06_
+_Last updated: 2026-10-08_
 
 ## Start here (a new session, or the owner's other laptop)
 
-**Where things stand (2026-10-07):**
+**Where things stand (2026-10-08):**
+- **Phase 39: live translation fixes** (the owner's report of 2026-10-08, issue #142): found from the log and live
+  tests on the owner's laptop. (1) Microphone mode dropped lines already in the target language (Microphone → into
+  English while speaking English gave an empty bar): now shown with "already English" (#143). (2) The microphone was
+  Windows' default *communications* mic with call-style echo cancellation and noise suppression, ignoring the mic
+  chosen in Rflow and never raised: now the chosen mic, opened raw (`IAudioClient2::SetClientProperties`), a 90 Hz
+  high-pass, `Leveler.for_microphone()`, a phase-safe stereo downmix (#144; measured -47 → -40 dBFS on the Realtek
+  mic). (3) A call on a Bluetooth headset plays on its hands-free device (the default output *for calls*): `_Speakers`
+  adds it by endpoint loopback when it differs and plays, and says "Nothing plays on X: the sound may be on Y" (#145;
+  **still to confirm with the owner's headset in a Teams call**). (4) The empty bar now says why ("Listening…",
+  "Hearing sound, but no speech yet", "Nothing heard…", "You're speaking English…"; `LiveSession.note`, #147).
+  Not an Rflow bug (#146, closed): Gemini Transcribe's "HTTP 400 Thinking is not enabled" on 2026-10-07 came from
+  Google's preview model (the same request worked on 10-08); the log also shows the free Gemini key's quota (429) on
+  2, 5 and 6 October, each time typed with Parakeet instead.
 - **Phase 38: a website that shows what Rflow does** (the owner's request, issue #121): the hero's **Rflow lens**
   (`site/lens.js`, `site/lens.css`; spoken words → the orb with a label per real step → clean text; four examples;
   check it with `site/lens-preview.html`), sections by example instead of a gallery of settings screens (dictation,
