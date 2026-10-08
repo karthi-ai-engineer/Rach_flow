@@ -8,8 +8,10 @@ import numpy as np
 import pytest
 
 from sst import downloads
+from sst.live import speaker as speakers
 from sst.live import voice as voices
 from sst.live.contracts import MIC, SYSTEM, Kind, LiveConfig, LiveEvent
+from sst.live.gemini import GeminiLiveTranslate
 from sst.live.speaker import Speaker, whole_sentences
 from sst.live.voice import PREPARED, TOKENS, Voice, onnx_metadata, prepare
 from sst.live.wasapi import Player
@@ -255,6 +257,102 @@ def test_a_rewritten_line_is_not_said_twice():
     speaker.hear(translation("Hello there. How is it going? Fine"))  # the model rewrote the second sentence
     assert wait_until(lambda: [text for text, _ in said] == ["Hello there.", "How is it going?"])
     speaker.stop()
+
+
+# ---- Gemini's events in a real meeting: the line's text revised, re-sent and restarted, each sentence said once
+
+class Meeting:
+    """Gemini Live Translate's own event making (gemini.py, fed the server's messages by hand) into a Speaker that
+    isn't started: what it would say is what waits in its queue."""
+
+    def __init__(self):
+        self.clock = Clock()
+        self.speaker = Speaker(lambda: None, FakePlayer(), [SYSTEM], clock=self.clock)
+        self.engine = GeminiLiveTranslate("key", LiveConfig(), self.speaker.hear, connect=None, clock=self.clock)
+
+    def run(self, steps):
+        for step, *value in steps:
+            if step == "say":  # a piece of the translation (outputTranscription)
+                self.engine._handle({"serverContent": {"outputTranscription": {"text": value[0]}}})
+            elif step == "heard":  # a piece of the words heard (inputTranscription)
+                self.engine._handle({"serverContent": {"inputTranscription": {"text": value[0]}}})
+            elif step == "turn":
+                self.engine._handle({"serverContent": {"turnComplete": True}})
+            else:  # "quiet": nothing new for this long (a pause ends the line, a last full stop settles)
+                self.clock.now += value[0]
+                self.engine._check_pause()
+                with self.speaker._lock:
+                    self.speaker._settle()
+        return [sentence for _, _, sentence in self.speaker._queue]
+
+
+MEETING = {
+    "pieces that start with a space, the line ended by the turn": (
+        [("say", " Thanks for joining."), ("say", " The budget"), ("say", " is ready."), ("turn",)],
+        ["Thanks for joining.", "The budget is ready."]),
+    "a last sentence said after a quiet, then its line ends": (
+        [("say", " We'll decide"), ("say", " next week."), ("quiet", 0.7), ("turn",)],
+        ["We'll decide next week."]),
+    "a pause ends the line, then the model re-sends its whole turn": (
+        [("heard", "予算は"), ("say", "Thanks for joining."), ("say", " The budget is ready."), ("quiet", 1.6),
+         ("say", "Thanks for joining. The budget is ready. We start on Monday."), ("turn",)],
+        ["Thanks for joining.", "The budget is ready.", "We start on Monday."]),
+    "the line re-sent with an earlier word revised": (
+        [("say", "We need"), ("say", " to finish the report."), ("say", " The deadline"),
+         ("say", "We have to finish the report. The deadline is Friday."), ("turn",)],
+        ["We need to finish the report.", "The deadline is Friday."]),
+    "the line re-sent with a comma made a full stop": (
+        [("say", " Yes, we can start now."), ("say", " Next"), ("say", " Yes. We can start now. Next week we review."),
+         ("turn",)],
+        ["Yes, we can start now.", "Next week we review."]),
+    "a new turn that starts with the last one's end": (
+        [("say", " The budget is ready."), ("say", " We start on Monday."), ("turn",),
+         ("say", " We start on Monday."), ("say", " Any questions?"), ("turn",)],
+        ["The budget is ready.", "We start on Monday.", "Any questions?"]),
+    "a long line cut at a sentence end, the rest re-sent with the next": (
+        [("heard", "First point. "), ("say", "The first point is that the budget for the next quarter is ready "
+                                            "and approved."),
+         ("say", " The second point is that we start hiring in April, as planned."), ("heard", "Second point."),
+         ("say", " The second point is that we start hiring in April, as planned. Third, the office moves."),
+         ("turn",)],
+        ["The first point is that the budget for the next quarter is ready and approved.",
+         "The second point is that we start hiring in April, as planned.", "Third, the office moves."]),
+}
+
+
+@pytest.mark.parametrize("name", MEETING)
+def test_each_sentence_of_a_meeting_is_said_once_however_gemini_revises_it(name):
+    steps, sentences = MEETING[name]
+    assert Meeting().run(steps) == sentences
+
+
+def test_a_revision_of_what_was_said_says_nothing_and_is_counted():
+    meeting = Meeting()
+    said = meeting.run([("say", "The budget is ready. We"), ("say", "The budgets are ready! We")])
+    assert said == ["The budget is ready."] and meeting.speaker.repeats == 1
+    assert meeting.run([("say", " start on Monday."), ("turn",)]) == ["The budget is ready.", "We start on Monday."]
+
+
+def test_what_is_said_again_later_or_only_looks_alike_is_still_said():
+    meeting = Meeting()
+    first = [("say", "Yes."), ("turn",), ("say", "I think so."), ("turn",)]
+    assert meeting.run(first) == ["Yes.", "I think so."]
+    meeting.clock.now += 30  # a while later: "Yes." again is a new answer
+    assert meeting.run([("say", "Yes."), ("turn",), ("say", "I think not."), ("turn",)])[2:] == ["Yes.", "I think not."]
+    sentences = [f"Point number {n} is on the agenda today." for n in range(1, 22)]
+    meeting.run([step for sentence in sentences for step in (("say", sentence), ("turn",))])
+    assert meeting.run([("say", sentences[0]), ("turn",)])[-1] == sentences[0]  # 20 sentences ago: said again
+
+
+@pytest.mark.parametrize(("a", "b", "same"), [
+    ("We need to finish the report.", "We have to finish the report!", True),
+    ("The meeting starts at 3.", "the meeting starts at 3", True),
+    ("I think so.", "I think not.", False),  # short: word for word only
+    ("We start on Monday.", "We stop on Friday.", False),
+    ("It costs 3 million this year.", "It costs 5 million this year.", False),  # another number: another sentence
+])
+def test_sentences_alike(a, b, same):
+    assert speakers.alike(speakers.words(a), speakers.words(b)) is same
 
 
 def test_speaking_lasts_while_the_voice_can_be_heard():

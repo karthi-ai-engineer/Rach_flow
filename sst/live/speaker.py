@@ -9,6 +9,11 @@ before a pause isn't held until the line ends (1.5 s later). An interpreter must
 sentences waiting it speaks faster (up to MAX_SPEED), and one older than STALE seconds is skipped while newer ones wait
 (it stays on screen and in the transcript). Only translations are spoken: speech already in the voice's language is
 heard as it is. Like an interpreter, it lowers the other apps while it speaks, if given a Ducker (sst.live.ducking).
+
+Gemini revises what it has translated: it rewrites earlier words, turns a comma into a full stop, re-sends the whole
+line, and starts a new line with the end of the last. So what was said is remembered by what it says (words(): case,
+spaces and punctuation aside), in its line and for the session's last RECENT sentences, and a sentence that matches one
+of them (alike(), or part of one its line said) is a repeat: never said again. Only new sentences are said, in order.
 """
 import logging
 import os
@@ -17,7 +22,8 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 
 from sst.live.contracts import Kind, LiveEvent
 
@@ -26,16 +32,28 @@ STALE = 10.0  # seconds a sentence may wait while newer ones queue behind it
 CATCH_UP = 0.15  # faster for each sentence waiting
 MAX_SPEED = 1.6
 TAIL = 0.4  # seconds after the voice ends that a microphone (the room) may still hear it
+RECENT = 20  # the session's last sentences remembered: one coming again (a new line re-sends it) isn't said again
+SIMILAR = 0.85  # this alike (difflib's ratio of their words()): the same sentence, a word revised
+SHORT = 4  # words: a shorter sentence is the same only word for word ("I think so" isn't "I think not")
+SHORT_RECENT = 10.0  # seconds a short sentence of another line counts: "Yes." may well be said again later
 _END = re.compile(r"[.!?…。！？]+[\"'”’)\]]*")
 _ENDS = re.compile(r"[.!?…。！？]+[\"'”’)\]]*\s*$")
 _SHORT = {"mr", "mrs", "ms", "dr", "st", "vs", "etc", "e.g", "i.e", "jr", "sr", "no", "prof", "inc", "ltd", "co",
           "approx", "u.s", "u.k", "a.m", "p.m"}  # a full stop after these doesn't end the sentence
+_WORDS = re.compile(r"\w+")
+_NUMBERS = re.compile(r"\d+")
 
 log = logging.getLogger(__name__)
 
 
 def whole_sentences(text: str) -> tuple[list[str], int]:
     """The sentences at the start of `text` that the text goes on past, and where the last of them ends."""
+    spans = _spans(text)
+    return [sentence for sentence, _ in spans], spans[-1][1] if spans else 0
+
+
+def _spans(text: str) -> list[tuple[str, int]]:
+    """whole_sentences(), each with where it ends."""
     found, start = [], 0
     for m in _END.finditer(text):
         end = m.end()
@@ -45,9 +63,31 @@ def whole_sentences(text: str) -> tuple[list[str], int]:
         if m.group().startswith(".") and words and words[-1].lower().rstrip(".") in _SHORT:
             continue
         if sentence := text[start:end].strip():
-            found.append(sentence)
+            found.append((sentence, end))
         start = end
-    return found, start
+    return found
+
+
+def _all(text: str) -> list[str]:
+    """Every sentence of `text`, the unfinished last one too."""
+    sentences, end = whole_sentences(text)
+    return sentences + ([text[end:].strip()] if text[end:].strip() else [])
+
+
+def words(sentence: str) -> str:
+    """What a sentence says: its words, lower case, without punctuation."""
+    return " ".join(_WORDS.findall(sentence.lower()))
+
+
+def alike(a: str, b: str) -> bool:
+    """Two sentences (as words()) that say the same: word for word when short, else nearly (a word revised), and never
+    with other numbers ("it costs 3 million" isn't "it costs 5 million")."""
+    if a == b:
+        return True
+    if min(a.count(" "), b.count(" ")) + 1 < SHORT or _NUMBERS.findall(a) != _NUMBERS.findall(b):
+        return False
+    matcher = SequenceMatcher(None, a, b, autojunk=False)
+    return matcher.real_quick_ratio() >= SIMILAR and matcher.quick_ratio() >= SIMILAR and matcher.ratio() >= SIMILAR
 
 
 @dataclass
@@ -55,6 +95,7 @@ class _Line:
     text: str = ""
     spoken: int = 0  # how much of `text` is said or queued
     at: float = 0.0  # when its last piece came
+    said: list[str] = field(default_factory=list)  # its sentences said, queued or let go while muted, as words()
 
 
 class Speaker:
@@ -71,13 +112,14 @@ class Speaker:
         self.ducker = ducker  # lowers the other apps while the voice speaks (sst.live.ducking), if given
         self._lines: dict[str, _Line] = {}
         self._queue: deque[tuple[float, str, str]] = deque()  # (when it was complete, way, sentence)
+        self._recent: deque[tuple[str, float]] = deque(maxlen=RECENT)  # the session's last sentences: (words, when)
         self._lock = threading.Condition()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._audible_until = 0.0
         self._last_problem = ""
         self.muted = False
-        self.said = self.skipped = 0
+        self.said = self.skipped = self.repeats = 0  # repeats: sentences that came again and weren't said again
 
     @property
     def speaking(self) -> bool:
@@ -121,7 +163,8 @@ class Speaker:
             self.muted = muted
             if muted:
                 self._queue.clear()
-                for line in self._lines.values():
+                for lane, line in self._lines.items():
+                    self._say(lane, line, _all(line.text[line.spoken:]))  # let go: not said after unmuting either
                     line.spoken = len(line.text)
         if muted:
             self.player.interrupt()
@@ -133,24 +176,48 @@ class Speaker:
             if event.lane not in self.lanes:
                 return
             line = self._lines.setdefault(event.lane, _Line())
-            done = line.text[:line.spoken]
-            if not event.text.startswith(done):  # the model rewrote the line: what both still share stays said
-                line.spoken = len(os.path.commonprefix([event.text, done]))
-            line.text, line.at = event.text, self._clock()
+            text = event.text.lstrip()  # a line's first piece may start with a space; its LINE never does
+            start = line.spoken
+            if not text.startswith(line.text[:start]):  # the model revised the line: from the first sentence it changed
+                same = len(os.path.commonprefix([text, line.text[:start]]))
+                start = max((end for _, end in _spans(text) if end <= same), default=0)
+            line.text, line.at = text, self._clock()
             if event.kind is Kind.LINE:
-                self._put(event.lane, event.text[line.spoken:])
+                self._say(event.lane, line, _all(text[start:]), together=True)
                 del self._lines[event.lane]
             else:
-                sentences, end = whole_sentences(event.text[line.spoken:])
-                for sentence in sentences:
-                    self._put(event.lane, sentence)
-                line.spoken += end
+                spans = _spans(text[start:])
+                self._say(event.lane, line, [sentence for sentence, _ in spans])
+                line.spoken = start + (spans[-1][1] if spans else 0)
             self._lock.notify()
 
-    def _put(self, lane: str, sentence: str) -> None:
-        sentence = sentence.strip()
-        if sentence and not self.muted and any(ch.isalnum() for ch in sentence):
+    def _say(self, lane: str, line: _Line, sentences: list[str], together: bool = False) -> None:
+        """Queue the sentences not said before (all of them as one, `together`) and remember them. Under the lock."""
+        new = []
+        for sentence in sentences:
+            said = words(sentence)
+            if not said:
+                continue  # punctuation alone
+            if self._repeats(said, line):
+                self.repeats += not self.muted
+                continue
+            line.said.append(said)
+            self._recent.append((said, self._clock()))
+            if not self.muted:
+                new.append(sentence)
+        for sentence in [" ".join(new)] if together and new else new:
             self._queue.append((self._clock(), lane, sentence))
+
+    def _repeats(self, said: str, line: _Line) -> bool:
+        """Whether a sentence (as words()) was said already: in its line (alike one, two or three of its sentences in a
+        row, or a part of one: a comma made a full stop), or of late in the session."""
+        if any(f" {said} " in f" {other} " for other in line.said):
+            return True
+        for i in range(len(line.said)):
+            if any(alike(said, " ".join(line.said[i:i + n])) for n in (1, 2, 3) if i + n <= len(line.said)):
+                return True
+        now, short = self._clock(), said.count(" ") + 1 < SHORT
+        return any(alike(said, other) for other, at in self._recent if not short or now - at <= SHORT_RECENT)
 
     def _settle(self) -> None:
         """A line whose text ends with a full stop and has had nothing new for SETTLE seconds: that sentence is said."""
@@ -158,7 +225,7 @@ class Speaker:
         for lane, line in self._lines.items():
             rest = line.text[line.spoken:]
             if rest.strip() and _ENDS.search(rest) and now - line.at >= SETTLE:
-                self._put(lane, rest)
+                self._say(lane, line, _all(rest), together=True)
                 line.spoken = len(line.text)
 
     def _next(self) -> tuple[str, int] | None:
