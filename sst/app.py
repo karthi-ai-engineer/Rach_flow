@@ -759,7 +759,7 @@ class TrayApp:
         self.dictation.tick(time.monotonic())
 
     def _on_result(self, heard: str, typed: str, seconds: float) -> None:
-        self.transforms.note_typed(typed + " ")  # as Dictation pasted it: with nothing selected, the shortcut takes it
+        self.transforms.note_typed(typed + " ")  # as Dictation pasted it: Text Transform's text where Ctrl+A copies nothing
         self._add_history(typed, heard)
         self.stats.add(typed, seconds, date.today())
         try:
