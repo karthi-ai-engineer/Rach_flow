@@ -200,6 +200,51 @@ def test_good_cleanups_are_accepted(before, after):
     assert result.accepted, result.reasons
 
 
+# The owner's log of 5-8 October 2026: the guard kept the raw text for 24 of 87 dictations, mostly for "dropped words"
+# that were fillers (like, know, yeah, kind, some...) or a word said again and again.
+@pytest.mark.parametrize("before, after", [
+    ("So I was like thinking we should like move the demo to Monday.", "I was thinking we should move the demo to Monday."),
+    ("We need to check the like deployment and like the logs.", "We need to check the deployment and the logs."),
+    ("And yeah we can do it tomorrow and yeah that's it.", "We can do it tomorrow, and that's it."),
+    ("It works for me, yeah.", "It works for me."),
+    ("Ya know the build is ready, you know.", "The build is ready."),
+    ("There is some kind of issue with the login page.", "There is an issue with the login page."),
+    ("it's kinda slow and sorta broken", "It's slow and broken."),
+    ("The project project project is late and the team team is busy.", "The project is late and the team is busy."),
+    ("We finished the project. Project project review is next.", "We finished the project. Review is next."),
+    ("So basically the review is done, you know, and yeah, we can merge it.", "The review is done, and we can merge it."),
+    ("Okay so yeah I checked it and it's like working, yeah.", "I checked it and it's working."),
+    ("um so like yeah basically we need like the logs", "We need the logs."),  # changed a lot: checked strictly
+    ("Can you please please check it?", "Can you please check it?"),
+])
+def test_fillers_and_repeats_may_go(before, after):
+    result = check(before, after)
+    assert result.accepted, result.reasons
+
+
+@pytest.mark.parametrize("before, after, rule, reason", [
+    ("I think we should go yeah.", "I think we should go PC.", "substitution", "replaced 'yeah' with 'PC'"),
+    ("Yeah, we can test it.", "PC, we can test it.", "substitution", "replaced 'Yeah' with 'PC'"),  # a filler, not a removal
+    ("I think we should go yeah and test it.", "I think we should go PC and test it.", "substitution",
+     "replaced 'yeah' with 'PC'"),
+    ("We need like three servers, yeah.", "We need servers.", "entity_missing", "lost number 'three'"),
+    ("We need three three servers.", "We need servers.", "entity_missing", "lost number 'three'"),  # one stays
+    ("I like the new design.", "The new design is good.", "substitution", "replaced 'like' with 'good'"),  # a verb
+    ("It looks like the build failed.", "The build failed.", "removed_words", "dropped 2 words: looks, like"),
+    ("Or else we can meet on Friday.", "We can meet on Friday.", "removed_words", "dropped 2 words: Or, else"),
+    ("Can you please check the logs?", "Can you check the logs?", "request", "dropped 'please'"),
+    ("So maybe yeah we can ship it.", "We can ship it.", "hedge", "dropped uncertainty (maybe, probably, I think...)"),
+    ("Yeah, I can't make it.", "Yeah, I can make it.", "negation", "dropped a negation"),
+    ("Yeah so is the build ready", "So the build is ready.", "question_lost", "turned a question into a statement"),
+    ("Like, send it to John, you know.", "Send it.", "name_removed", "dropped 'John'"),
+    ("Send it to the client and like the PostgreSQL team.", "Send it to the client and the team.", "entity_missing",
+     "lost term 'PostgreSQL'"),
+])
+def test_fillers_going_never_hides_a_real_change(before, after, rule, reason):
+    result = check(before, after, ["PostgreSQL"])
+    assert not result.accepted and rule in result.diagnostics["rules"] and reason in result.reasons, result.reasons
+
+
 def test_an_applied_self_correction_is_noted():
     result = check("uh I wanted to send this tomorrow no wait Friday", "I wanted to send this Friday.")
     assert result.accepted and result.reasons == ["self-correction: 'tomorrow' -> 'Friday'"]

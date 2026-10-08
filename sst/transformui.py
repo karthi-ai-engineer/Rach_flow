@@ -1,14 +1,17 @@
 """Text Transform (the owner's idea, 2026-10-02): speak normally first, transform the text afterwards, only on request.
 
   say "make it concise"         (holding the dictation key) the transform, right away: sst.commands, run_command
-  double-tap Ctrl (the shortcut) the menu for the text selected in the focused app, or else the last dictation typed there
-  1-9 or a click                the transform (Concise, Professional, Bullet points, Action items...)
+  double-tap Ctrl (the shortcut) the menu for the text selected in the focused app, or else all the text in its box
+  1-9, T or a click             the transform (Concise, Professional, Bullet points, Action items..., T: Translate)
   U, or say "undo that"         undo: the last transform's original comes back (Ctrl+Z in the app works too)
   Esc                           close the menu; nothing changes
 
-The text is the selection, else the last dictation (or transform) typed in that window, selected again by Rflow. The
-menu takes no keyboard focus, so the app keeps its selection; the keys the menu needs are taken from the keyboard hook
-while it is open. The text is transformed by the AI cleanup's model under a strict prompt and checked by
+The text is the selection; with nothing selected, all the text in the box being typed in (the owner's rule of 2026-10-08:
+Ctrl+A there), unless it is longer than BOX_LIMIT, a whole document: then the caret goes back where it was and the user
+is asked to select a part. Rflow's own record of the last dictation (or transform) typed in that window, selected again
+by counting caret steps, is only the fallback where Ctrl+A copies nothing, and how undo finds a transform of part of a
+box. The menu takes no keyboard focus, so the app keeps its selection; the keys the menu needs are taken from the
+keyboard hook while it is open. The text is transformed by the AI cleanup's model under a strict prompt and checked by
 sst.transform.TransformGuard: a result that loses or invents anything isn't typed, and the user is told why. Before the
 result replaces the text, its window is brought back and the text checked to still be selected there; if that can't be
 made sure, the result goes on the clipboard instead ("press Ctrl+V"). Otherwise the user's clipboard is left as it was
@@ -25,11 +28,13 @@ from PySide6.QtWidgets import QWidget
 
 from sst import theme
 from sst.hotkey import HotkeyListener, parse_hotkey
-from sst.transform import TRANSFORMS
+from sst.transform import TRANSFORMS, menu_items
 
 LAST_TEXT_SECONDS = 15 * 60  # the last dictation counts as "the text" this long, in the window it was typed into
-# Keys the open menu takes from the keyboard: 1-9, numpad 1-9, Up, Down, Enter, Esc, U.
-MENU_KEYS = frozenset([*range(0x31, 0x3A), *range(0x61, 0x6A), 0x26, 0x28, 0x0D, 0x1B, 0x55])
+BOX_LIMIT = 2000  # characters: with nothing selected, a box holding more is likely a whole document, not a message
+TOO_LONG = "Select the part to rewrite: there is too much text here to rewrite all of it."
+# Keys the open menu takes from the keyboard: 1-9, numpad 1-9, Up, Down, Enter, Esc, U (undo), T (Translate).
+MENU_KEYS = frozenset([*range(0x31, 0x3A), *range(0x61, 0x6A), 0x26, 0x28, 0x0D, 0x1B, 0x55, 0x54])
 UNDO = "undo"
 # Console windows: Ctrl+C there stops the running program instead of copying, so Text Transform never presses it there.
 TERMINALS = frozenset({"ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "mintty", "VirtualConsoleClass",
@@ -41,8 +46,10 @@ log = logging.getLogger(__name__)
 @dataclass
 class Target:
     text: str  # exactly as selected (or as typed), with its surrounding whitespace
-    source: str  # "selection" or "last" (the last dictation or transform, selected by Rflow)
+    source: str  # "selection", "box" (all the text in the box, nothing being selected) or "last" (the last dictation or
+    # transform, selected again by Rflow)
     hwnd: int  # the window it is in: the result is only pasted there
+    before: str | None = None  # "box": the text that was before the caret, so the caret can go back (textaccess.unselect_all)
 
 
 @dataclass
@@ -66,10 +73,11 @@ def same_text(a: str, b: str) -> bool:
     return " ".join(a.split()) == " ".join(b.split())
 
 
-def place(access, text: str, hwnd: int) -> bool:
+def place(access, text: str, hwnd: int, whole: bool = False) -> bool:
     """Make sure `text` is selected again in window `hwnd`, the moment before it is replaced: the user may have clicked
     elsewhere or switched windows while a menu or popup was open or the model answered. The window comes back to the
-    front, and the text must be the selection, or be found right before the caret (as typed); else False."""
+    front, and the text must be the selection, or be found right before the caret (as typed), or, when it was `whole`
+    box, be all the text in the box again; else False, with nothing left selected."""
     if access.foreground_window() != hwnd:
         if not access.activate(hwnd):
             log.info("The text's window couldn't be brought back")
@@ -80,6 +88,15 @@ def place(access, text: str, hwnd: int) -> bool:
         if not same_text(copied, text):
             log.info("Other text is selected now (%d characters)", len(copied))
         return same_text(copied, text)
+    if whole:
+        log.info("The text isn't selected any more; selecting all the text in the box again")
+        before = access.text_before_caret()
+        again = access.select_all()
+        if again is not None and same_text(again, text):
+            return True
+        log.info("The box holds other text now (%d characters)", len(again or ""))
+        access.unselect_all(before, again)
+        return False
     log.info("The text isn't selected any more; looking for it before the caret")
     return access.select_last(text) is not None
 
@@ -146,7 +163,7 @@ class TransformMenu(QWidget):
             self._choose(self.current)
         else:
             digit = chr(vk) if 0x31 <= vk <= 0x39 else chr(vk - 0x30) if 0x61 <= vk <= 0x69 else ""  # top row, numpad
-            hint = "U" if vk == 0x55 else digit
+            hint = chr(vk) if 0x41 <= vk <= 0x5A else digit  # a row's letter: U, T
             for i, (_, item_hint, _) in enumerate(self.items):
                 if item_hint == hint:
                     self._choose(i)
@@ -266,7 +283,7 @@ class TransformController(QObject):
             self.listener = None
 
     def note_typed(self, text: str, hwnd: int | None = None) -> None:
-        """A dictation (or a transform) was just typed: with nothing selected, the shortcut takes it."""
+        """A dictation (or a transform) was just typed: the text where Ctrl+A copies nothing (_find)."""
         self.last_typed = (text, time.monotonic(), self.access.foreground_window() if hwnd is None else hwnd)
 
     def _pump(self) -> None:
@@ -281,7 +298,7 @@ class TransformController(QObject):
                 self.menu.key(int(event[4:]))
 
     def trigger(self) -> None:
-        """The shortcut: the menu for the selected text (or the last dictation)."""
+        """The shortcut: the menu for the selected text (or all the text in the box)."""
         if self.menu.isVisible():  # the shortcut again closes the menu
             self.menu.close_menu()
             return
@@ -294,7 +311,7 @@ class TransformController(QObject):
         threading.Thread(target=self._capture, args=(None,), name="transform-capture", daemon=True).start()
 
     def run_command(self, command: str) -> None:
-        """A voice command (sst.commands): a transform, or UNDO, on the selected text or the last dictation; no menu."""
+        """A voice command (sst.commands): a transform, or UNDO, on the selected text or all the text in the box; no menu."""
         if self.busy or self.menu.isVisible():
             self.app.say("warning", "Text Transform is still busy with the last one.")
             return
@@ -312,7 +329,7 @@ class TransformController(QObject):
     def _capture(self, command: str | None) -> None:
         """Find the text (on a thread: copying waits for the app), then the menu, or the command right away."""
         try:
-            target = self._find(self.access.foreground_window())
+            target = self._find(self.access.foreground_window(), undo=command == UNDO)
         except Exception as e:  # the clipboard was busy, a window closed...: say so, never leave Text Transform stuck
             log.exception("Reading the text to transform failed")
             target = f"Couldn't read the text ({e})"
@@ -325,8 +342,9 @@ class TransformController(QObject):
         else:
             self._run(target, command)
 
-    def _find(self, hwnd: int) -> Target | str:
-        """The selected text, else the last text typed in this window (selected again); or why there is none."""
+    def _find(self, hwnd: int, undo: bool = False) -> Target | str:
+        """The selected text, else all the text in the box (selected with Ctrl+A), else the last text typed in this window
+        (selected again); or why there is none. For `undo`, the box only when it holds just the last transform."""
         cls = self.access.window_class(hwnd)
         if cls in TERMINALS:
             return "Text Transform doesn't work in a terminal: Ctrl+C there would stop the running program."
@@ -334,7 +352,25 @@ class TransformController(QObject):
         if text and text.strip():
             log.info("Text Transform: %d characters selected in %s", len(text), cls)
             return Target(text, "selection", hwnd)
-        last = self.last_typed
+        # Nothing selected: all the text in the box (the owner's rule of 2026-10-08; counting caret steps back over the last
+        # dictation missed by 3 in Teams' editor). The text before the caret is read first, so the caret can go back.
+        before = self.access.text_before_caret()
+        if before is not None and len(before) > BOX_LIMIT:
+            log.info("Text Transform: nothing selected, and %d characters before the caret in %s", len(before), cls)
+            return TOO_LONG
+        whole = self.access.select_all()
+        if whole is not None and len(whole) > BOX_LIMIT:
+            log.info("Text Transform: nothing selected, and %d characters in the box in %s", len(whole), cls)
+            self.access.unselect_all(before, whole)
+            return TOO_LONG
+        done = self.last if self.last and self.last.hwnd == hwnd else None
+        if whole is not None and not (undo and done and not same_text(whole, done.pasted)):
+            log.info("Text Transform: nothing selected; all the text in the box (%d characters) in %s", len(whole), cls)
+            return Target(whole, "box", hwnd, before)
+        self.access.unselect_all(before, whole)  # never leave a selection Rflow made behind
+        # Ctrl+A copied nothing (an empty box, or an app without Ctrl+A or Ctrl+Insert), or undo of a transform of part of
+        # the box: the text Rflow typed there last, selected again before the caret.
+        last = (done.pasted, time.monotonic(), hwnd) if undo and done else self.last_typed
         if not last or last[2] != hwnd or time.monotonic() - last[1] >= LAST_TEXT_SECONDS:
             log.info("Text Transform: nothing selected in %s, and no recent dictation there", cls)
             return "Select some text first, then try again."
@@ -352,25 +388,44 @@ class TransformController(QObject):
             self.app.say("warning", target)
             return
         self.pending = target
-        items = [(key, str(n), TRANSFORMS[key].name)
-                 for n, key in enumerate((k for k in self.app.settings.transforms if k in TRANSFORMS), 1) if n <= 9]
+        items = menu_items(self.app.settings.transforms)  # Tone, Format, Language; 1-9, and T for Translate
         if self.last and self.last.hwnd == target.hwnd and same_text(target.text, self.last.pasted):
             items.append((UNDO, "U", "Undo: restore the original"))
         if not items:
             self.app.say("warning", "No transforms are chosen: pick some on the Text Transform page.")
             return
         words = len(target.text.split())
-        source = (f"Selected text · {words} word{'s' if words != 1 else ''}" if target.source == "selection"
-                  else f"Your last {'transform' if self.last and same_text(target.text, self.last.pasted) else 'dictation'}"
-                       f" · {words} word{'s' if words != 1 else ''}")
-        self.menu.open_at(QCursor.pos(), items, source)
+        kind = ("Selected text" if target.source == "selection" else
+                "Your last transform" if self.last and same_text(target.text, self.last.pasted) else
+                "All the text here" if target.source == "box" else "Your last dictation")
+        self.menu.open_at(QCursor.pos(), items, f"{kind} · {words} word{'s' if words != 1 else ''}")
         if self.listener is not None:
             self.listener.capture(MENU_KEYS)
 
     def _menu_closed(self) -> None:
         if self.listener is not None:
             self.listener.capture(None)
-        self.pending = None  # the text stays as it was (and selected)
+        target, self.pending = self.pending, None  # the text stays as it was (and selected, unless Rflow selected it all)
+        self._release(target)
+
+    def _release(self, target: Target | None) -> None:
+        """Nothing replaces the text: when Rflow selected all of the box for it, that selection goes (on a thread)."""
+        if target is not None and target.source == "box":
+            self.busy = True
+            threading.Thread(target=self._unselect, args=(target, True), name="transform-release", daemon=True).start()
+
+    def _unselect(self, target: Target, release: bool = False) -> None:
+        """Unselect the box's text Rflow selected, the caret back where it was, if it is still selected there: the user may
+        have clicked or typed meanwhile, and then their caret stays where they put it."""
+        try:
+            if target.source == "box" and self.access.foreground_window() == target.hwnd \
+                    and same_text(self.access.copy_selection() or "", target.text):
+                self.access.unselect_all(target.before, target.text)
+        except Exception:
+            log.exception("Unselecting the box's text failed")
+        finally:
+            if release:
+                self.busy = False
 
     def _chosen(self, key: str) -> None:
         if self.listener is not None:
@@ -399,12 +454,14 @@ class TransformController(QObject):
         if isinstance(result, str):
             self.busy = False
             self.app.say("warning", f"Text Transform didn't work: {result}")
+            self._release(target)
             return
         if not result.accepted:
             self.busy = False
             reason = result.reasons[0] if result.reasons else "the result changed the meaning"
             log.info("Text Transform %s kept the text: %s", result.transform, "; ".join(result.reasons))
             self.app.say("warning", f"Kept your text: {reason}")
+            self._release(target)
             return
         lead, trail = edges(target.text)
         pasted = lead + result.plain + trail
@@ -412,7 +469,7 @@ class TransformController(QObject):
         threading.Thread(target=self._paste, args=(target, result, pasted), name="transform-paste", daemon=True).start()
 
     def _place(self, target: Target) -> bool:
-        return place(self.access, target.text, target.hwnd)
+        return place(self.access, target.text, target.hwnd, whole=target.source == "box")
 
     def _paste(self, target: Target, result, pasted: str) -> None:
         try:
@@ -433,6 +490,7 @@ class TransformController(QObject):
         last = self.last
         try:
             if last is None or not same_text(target.text, last.pasted):
+                self._unselect(target)
                 raise RuntimeError("undo works on the text a transform just typed; Ctrl+Z in the app works too")
             if not self._place(target):
                 self.access.set_clipboard(last.original.strip())
