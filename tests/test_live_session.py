@@ -298,7 +298,7 @@ def test_live_captions_import_nothing_from_dictation():
 class FakeSpeaker:
     def __init__(self, speaking=True, private=False):
         self.speaking, self.private, self.heard, self.started, self.stopped = speaking, private, [], False, False
-        self.said = self.skipped = 0
+        self.said, self.skipped, self.repeats = 7, 1, 3
 
     def hear(self, event):
         self.heard.append(event)
@@ -327,7 +327,8 @@ def test_a_way_that_could_hear_the_voice_gets_silence_while_it_speaks(lane, hear
     assert engine(session, lane).frames == [bytes(3200) if silenced else b"\x01\x02" * 1600]
 
 
-def test_the_speaker_hears_what_is_shown_and_stops_with_the_session(tmp_path):
+def test_the_speaker_hears_what_is_shown_and_stops_with_the_session(tmp_path, caplog):
+    caplog.set_level("INFO", logger="sst.live.session")
     config = LiveConfig(source="both", target="en", mic_target="ja")
     session = LiveSession(config, Transcript(tmp_path, config))
     session.add(MIC, FakeCapture(), FakeEngine)
@@ -339,3 +340,4 @@ def test_the_speaker_hears_what_is_shown_and_stops_with_the_session(tmp_path):
     assert speaker.started and [e.text for e in speaker.heard] == ["予算は"]
     session.stop()
     assert speaker.stopped and session.speaker is None
+    assert "The voice said 7 sentences (1 skipped to keep up); the voice skipped a repeat 3 times" in caplog.text

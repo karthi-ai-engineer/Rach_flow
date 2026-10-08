@@ -135,7 +135,8 @@ class LiveSession:
         old, self.speaker = self.speaker, speaker
         if old is not None:
             old.stop()
-            log.info("The voice said %d sentences (%d skipped to keep up)", old.said, old.skipped)
+            log.info("The voice said %d sentences (%d skipped to keep up); the voice skipped a repeat %d times", old.said,
+                     old.skipped, old.repeats)
         if speaker is not None:
             speaker.start()
 
