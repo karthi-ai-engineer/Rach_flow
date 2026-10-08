@@ -12,6 +12,17 @@ _Last updated: 2026-10-08_
 ## Start here (a new session, or the owner's other laptop)
 
 **Where things stand (2026-10-08):**
+- **Rflow 2.5.0** (2026-10-08, the owner's "put it"): **phase 40, Text Transform** (#151). (1) The owner's rule: the
+  selected text, or with nothing selected **all the text in the box** (Ctrl+A in the field; refused over
+  `BOX_LIMIT` 2,000 characters, never in a terminal; the caret put back): the old search for the last dictation by
+  caret steps failed in Teams (#152). **Proven in the owner's real Teams self-chat** (ms-teams.exe, 113 characters,
+  selected again after Teams dropped the selection, replaced). (2) The cleanup guard allows fillers and repeats
+  (24 of 87 cleanups were refused for "dropped words") but still refuses lost names, numbers, negations (#153).
+  (3) New transforms (#154): translate in place ("translate to Japanese", 翻訳して), a Japanese Teams message, Japanese
+  internal/external email (the writer line only from `signature_name`/`signature_company`), fix grammar; a
+  Japanese-aware `TransformGuard`; the menu grouped Tone · Format · Language (T = Translate). Real tests with
+  gemini-3.5-flash-lite: Teams and translation good; **email structure and fix grammar's tenses need a prompt round**
+  (next). The research: `research_notes/Rflow Text Transform expansion/notes.md` (git-ignored). Per-app formats: later.
 - **Rflow 2.4.1** (2026-10-08, the owner's "release it"): phase 39. **Phase 39: live translation fixes** (the owner's
   report of 2026-10-08, issue #142): found from the log and live
   tests on the owner's laptop. (1) Microphone mode dropped lines already in the target language (Microphone → into
