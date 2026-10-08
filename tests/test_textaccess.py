@@ -9,8 +9,10 @@ from sst.textaccess import (
     CF_EXCLUDE_FROM_HISTORY,
     CF_HTML,
     CF_UNICODETEXT,
+    VK_A,
     VK_C,
     VK_CONTROL,
+    VK_HOME,
     VK_INSERT,
     VK_LEFT,
     VK_RIGHT,
@@ -21,9 +23,12 @@ from sst.textaccess import (
     collapse_selection,
     copy_selection,
     paste_rich,
+    select_all,
     select_back,
     select_last,
     set_clipboard,
+    text_before_caret,
+    unselect_all,
 )
 
 CF_RTF = 0xC0F0  # stands for any registered format the user's copy carries besides its text
@@ -46,12 +51,13 @@ class Desktop:
     """The clipboard and the focused text box, as textaccess sees them. The box holds `units`, the steps its caret takes
     (one per code point, or per cluster like a browser), and its selection runs from `anchor` to `caret`."""
 
-    def __init__(self, text="", units=None, copies=True, insert_copies=True):
+    def __init__(self, text="", units=None, copies=True, insert_copies=True, select_all=True):
         self.clipboard, self.seq = dict(USERS_COPY), 1
         self.units = list(text) if units is None else list(units)
         self.caret = self.anchor = len(self.units)
         self.copies = copies  # False: an app where Ctrl+C copies nothing
         self.insert_copies = insert_copies  # False: an app that copies with Ctrl+C only, not with Ctrl+Insert
+        self.select_all = select_all  # False: an app where Ctrl+A selects nothing
         self.log = []  # "wait" (for the modifiers to be let go) and the keys of each SendInput call, in order
         self.sessions, self.is_open, self.puts = 0, False, 0
         self.on_close = {}  # session number -> what happens right after we close the clipboard that time
@@ -76,10 +82,19 @@ class Desktop:
                 self.held.discard(vk)
                 continue
             self.held.add(vk)
-            if vk == VK_LEFT:
+            if vk == VK_LEFT:  # collapses a selection to its start, else moves back (selecting with Shift)
+                if VK_SHIFT not in self.held and self.caret != self.anchor:
+                    self.caret = self.anchor = min(self.caret, self.anchor)
+                    continue
                 self.caret = max(0, self.caret - 1)
                 if VK_SHIFT not in self.held:
                     self.anchor = self.caret
+            elif vk == VK_A and VK_CONTROL in self.held and self.select_all:
+                self.anchor, self.caret = 0, len(self.units)
+            elif vk == VK_HOME and VK_CONTROL in self.held:
+                self.caret = 0
+                if VK_SHIFT not in self.held:
+                    self.anchor = 0
             elif vk == VK_RIGHT:  # collapses a selection to its end, else moves on
                 end = max(self.caret, self.anchor) if self.caret != self.anchor else min(len(self.units), self.caret + 1)
                 self.caret = self.anchor = end
@@ -351,6 +366,63 @@ def test_whitespace_alone_is_not_selected(desktop):
 ])
 def test_clusters(text, clusters):
     assert textaccess._clusters(text) == clusters
+
+
+# ---------------------------------------------------------------- all the text in the field (nothing selected)
+
+CTRL_A = [(VK_CONTROL, False), (VK_A, False), (VK_A, True), (VK_CONTROL, True)]
+CTRL_SHIFT_HOME = [(VK_CONTROL, False), (VK_SHIFT, False), (VK_HOME, False), (VK_HOME, True), (VK_SHIFT, True),
+                   (VK_CONTROL, True)]
+RIGHT = [(VK_RIGHT, False), (VK_RIGHT, True)]
+
+
+def test_text_before_caret_reads_it_and_puts_the_caret_back(desktop):
+    d = desktop("Hi team, the build is green.")
+    d.caret = d.anchor = 8
+    assert text_before_caret() == "Hi team,"
+    assert presses(d) == [CTRL_SHIFT_HOME, CTRL_INSERT, RIGHT]
+    assert d.caret == d.anchor == 8 and d.clipboard == RESTORED
+
+
+def test_with_the_caret_at_the_start_nothing_more_is_pressed(desktop):
+    d = desktop("Hi team")
+    d.caret = d.anchor = 0
+    assert text_before_caret() is None
+    assert presses(d) == [CTRL_SHIFT_HOME, CTRL_INSERT] and d.caret == d.anchor == 0
+
+
+def test_select_all_selects_and_returns_the_whole_field(desktop):
+    d = desktop("Hi team,\nthe build is green.")
+    d.caret = d.anchor = 3
+    assert select_all() == "Hi team,\nthe build is green."
+    assert presses(d) == [CTRL_A, CTRL_INSERT] and d.selected == "".join(d.units) and d.clipboard == RESTORED
+
+
+def test_select_all_never_presses_ctrl_c(desktop):
+    # With no text known to be selected, Ctrl+C could stop a program in a console Rflow doesn't recognise.
+    d = desktop("Hi team", insert_copies=False)
+    assert select_all() is None and count(d, VK_C) == 0
+    d = desktop("")
+    assert select_all() is None and count(d, VK_C) == 0 and d.clipboard == USERS_COPY
+
+
+@pytest.mark.parametrize("caret, steps", [(0, 0), (3, 3), (20, 4), (24, 0)])  # "Hello team. Ship it now." is 24 long
+def test_unselect_all_puts_the_caret_back_where_it_was(desktop, caret, steps):
+    d = desktop("Hello team. Ship it now.")
+    d.caret = d.anchor = caret
+    before = text_before_caret()
+    whole = select_all()
+    d.log.clear()
+    unselect_all(before, whole)
+    assert d.caret == d.anchor == (caret if before else 24)  # the caret at the start reads as unknown: the end
+    assert count(d, VK_LEFT) + count(d, VK_RIGHT) == steps + 1  # the fewest steps, from the start or from the end
+
+
+def test_unselect_all_with_nothing_known_goes_to_the_end(desktop):
+    d = desktop("Hello")
+    d.select(0, 5)
+    unselect_all(None, None)
+    assert presses(d) == [RIGHT] and d.caret == d.anchor == 5
 
 
 # ---------------------------------------------------------------- paste_rich

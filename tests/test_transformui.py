@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from sst.settings import Settings  # noqa: E402
 from sst.transform import TransformResult  # noqa: E402
-from sst.transformui import MENU_KEYS, UNDO, TransformController, edges  # noqa: E402
+from sst.transformui import BOX_LIMIT, MENU_KEYS, TOO_LONG, UNDO, TransformController, edges  # noqa: E402
 
 ORIGINAL = "I checked the deployment and everything looks good, but we still have one issue with the database migration."
 CONCISE = "Deployment looks good, but the database migration issue remains."
@@ -25,15 +25,31 @@ def qt():
 
 
 class FakeAccess:
-    """The focused app: what is selected, what was typed last, what gets pasted; the window in front."""
+    """The focused app: the text in its box (the caret at its end), what is selected, what was typed last, what gets
+    pasted; the window in front. `keys` records what Rflow did to the box."""
 
-    def __init__(self, selection=None, window=7):
-        self.selection, self.window = selection, window
-        self.selected_last, self.pasted, self.activated = [], [], []
-        self.select_ok = self.activate_ok = True
+    def __init__(self, selection=None, window=7, box=""):
+        self.selection, self.window, self.box = selection, window, box
+        self.selected_last, self.pasted, self.activated, self.keys = [], [], [], []
+        self.select_ok = self.activate_ok = self.select_all_ok = True
         self.cls = "Chrome_WidgetWin_1"
         self.copied = 0
         self.clipboard = None  # what Rflow left there for the user (set_clipboard)
+
+    def text_before_caret(self):
+        self.keys.append("before")
+        return self.box or None
+
+    def select_all(self):
+        self.keys.append("select all")
+        if self.select_all_ok and self.box.strip():
+            self.selection = self.box
+            return self.box
+        return None
+
+    def unselect_all(self, before, whole):
+        self.keys.append(("unselect", before, whole))
+        self.selection = None
 
     def activate(self, hwnd):
         self.activated.append(hwnd)
@@ -62,6 +78,8 @@ class FakeAccess:
 
     def paste_rich(self, text, html=None):
         self.pasted.append((text, html))
+        if self.selection and self.selection in self.box:
+            self.box = self.box.replace(self.selection, text, 1)
         self.selection = None  # the paste replaced the selection: the caret is after it
 
 
@@ -114,8 +132,8 @@ def finish_work():
         controller.stop()
 
 
-def make(selection=None, **app):
-    access, fake_app = FakeAccess(selection), FakeApp(**app)
+def make(selection=None, box="", **app):
+    access, fake_app = FakeAccess(selection, box=box), FakeApp(**app)
     controller = TransformController(fake_app, access=access, listener_factory=FakeListener)
     controller.start("ctrl+alt+t")
     _LIVE.append(controller)
@@ -149,15 +167,116 @@ def test_selected_text_is_transformed_and_replaced(qt):
     assert controller.listener.captured is None and not controller.busy
 
 
-def test_with_nothing_selected_the_last_dictation_is_used(qt):
-    controller, access, app = make(selection=None)
-    controller.note_typed("so I checked the deployment ", hwnd=7)
+def test_with_nothing_selected_all_the_text_in_the_box_is_transformed(qt):
+    # The owner's rule of 2026-10-08: in Teams' editor the last dictation, selected again by counting caret steps, wasn't
+    # found ("332 expected, 329 copied"); all the text in the box is.
+    controller, access, app = make(selection=None, box="Hi team,\n" + ORIGINAL)
+    controller.note_typed(ORIGINAL + " ", hwnd=7)
+    access.select_ok = False  # counting steps back would fail here
     open_menu(controller)
-    assert access.selected_last == ["so I checked the deployment "]
-    assert controller.menu.source.startswith("Your last dictation")
+    assert access.keys == ["before", "select all"] and not access.selected_last
+    assert controller.menu.source == "All the text here · 20 words"
     controller.menu.key(0x0D)  # Enter: the first row
     assert wait_until(lambda: access.pasted)
+    assert app.asked == [("concise", "Hi team,\n" + ORIGINAL)] and access.box == CONCISE
+    assert wait_until(lambda: ("transformed", "Transformed: Concise") in app.said)
+
+
+def test_where_select_all_copies_nothing_the_last_dictation_is_used(qt):
+    controller, access, app = make(selection=None, box="so I checked the deployment ")
+    access.select_all_ok = False  # an app without Ctrl+A or Ctrl+Insert
+    controller.note_typed("so I checked the deployment ", hwnd=7)
+    open_menu(controller)
+    assert access.keys == ["before", "select all", ("unselect", "so I checked the deployment ", None)]
+    assert access.selected_last == ["so I checked the deployment "]
+    assert controller.menu.source.startswith("Your last dictation")
+    controller.menu.key(0x0D)
+    assert wait_until(lambda: access.pasted)
     assert access.pasted[0][0] == CONCISE + " "
+
+
+@pytest.mark.parametrize("caret_far", [False, True])
+def test_a_whole_document_is_never_transformed(qt, caret_far):
+    document = "Chapter one. " * 200  # 2,600 characters: most likely a document, not a message
+    controller, access, app = make(selection=None, box=document)
+    if caret_far:  # the caret far into it: seen before Ctrl+A is pressed
+        access.text_before_caret = lambda: access.keys.append("before") or document
+    else:
+        access.text_before_caret = lambda: access.keys.append("before") or "Chapter one. "
+    controller.run_command("concise")
+    assert wait_until(lambda: not controller.busy and app.said[-1][0] == "warning")
+    assert app.said[-1] == ("warning", TOO_LONG) and not app.asked and not access.pasted
+    assert access.selection is None  # nothing left selected; the caret back where it was
+    assert access.keys == (["before"] if caret_far else ["before", "select all", ("unselect", "Chapter one. ", document)])
+
+
+def test_a_box_of_up_to_the_limit_is_transformed(qt):
+    controller, access, app = make(selection=None, box="a" * BOX_LIMIT)
+    controller.run_command("concise")
+    assert wait_until(lambda: not controller.busy and access.pasted)
+    assert app.asked == [("concise", "a" * BOX_LIMIT)]
+
+
+def test_undo_restores_all_the_text_of_the_box(qt):
+    original = "Hi team,\n" + ORIGINAL
+    controller, access, app = make(selection=None, box=original)
+    controller.run_command("concise")
+    assert wait_until(lambda: controller.last is not None and not controller.busy)
+    assert access.box == CONCISE
+    controller.run_command(UNDO)  # nothing selected: the box holds just the transform
+    assert wait_until(lambda: not controller.busy and len(access.pasted) == 2)
+    assert access.pasted[1] == (original, None) and access.box == original and not access.selected_last
+    assert ("transformed", "Original restored") in app.said and controller.last is None
+
+
+def test_undo_of_part_of_the_box_takes_just_that_part_back(qt):
+    controller, access, app = make(selection=ORIGINAL, box="Hi team, " + ORIGINAL + " Thanks!")
+    controller.run_command("concise")
+    assert wait_until(lambda: controller.last is not None and not controller.busy)
+    assert access.box == "Hi team, " + CONCISE + " Thanks!"
+    access.keys.clear()
+    controller.run_command(UNDO)  # all of the box isn't the transform: Rflow's selection goes, the transform is found
+    assert wait_until(lambda: not controller.busy and len(access.pasted) == 2)
+    transformed = "Hi team, " + CONCISE + " Thanks!"
+    assert access.keys == ["before", "select all", ("unselect", transformed, transformed)]
+    assert access.selected_last == [CONCISE] and access.box == "Hi team, " + ORIGINAL + " Thanks!"
+
+
+def test_closing_the_menu_unselects_the_box(qt):
+    controller, access, app = make(selection=None, box=ORIGINAL)
+    open_menu(controller)
+    assert access.selection == ORIGINAL
+    controller.menu.key(0x1B)  # Esc
+    assert wait_until(lambda: not controller.busy)
+    assert access.keys[-1] == ("unselect", ORIGINAL, ORIGINAL) and access.selection is None and not app.asked
+
+
+def test_a_rejected_transform_of_the_box_unselects_it(qt):
+    rejected = TransformResult("concise", ORIGINAL, "x", "x", "", False, ["lost number '30'"], 2, 1.0)
+    controller, access, app = make(selection=None, box=ORIGINAL, answer=rejected)
+    controller.run_command("concise")
+    assert wait_until(lambda: not controller.busy and app.said[-1][0] == "warning")
+    assert wait_until(lambda: access.selection is None)
+    assert access.keys[-1] == ("unselect", ORIGINAL, ORIGINAL) and not access.pasted
+
+
+def test_the_box_is_selected_again_when_a_click_unselected_it(qt):
+    controller, access, app = make(selection=None, box=ORIGINAL)
+    open_menu(controller)
+    access.selection = None  # a click in the box while the menu was open
+    controller.menu.key(0x31)
+    assert wait_until(lambda: not controller.busy and access.pasted)
+    assert access.keys.count("select all") == 2 and access.box == CONCISE and not access.selected_last
+
+
+def test_a_box_that_changed_meanwhile_is_left_alone(qt):
+    controller, access, app = make(selection=None, box=ORIGINAL)
+    open_menu(controller)
+    access.selection, access.box = None, ORIGINAL + " And one more thing."  # the user typed on
+    controller.menu.key(0x31)
+    assert wait_until(lambda: not controller.busy and app.said[-1][0] == "warning")
+    assert not access.pasted and access.clipboard == (CONCISE, f"<p>{CONCISE}</p>") and access.selection is None
+    assert access.box == ORIGINAL + " And one more thing."
 
 
 @pytest.mark.parametrize("case", ["nothing", "other window", "old", "not found"])
@@ -371,5 +490,5 @@ def test_no_ctrl_c_is_ever_pressed_in_a_terminal(qt, cls):
     controller, access, app = make(selection=ORIGINAL)
     access.cls = cls
     open_menu(controller)
-    assert access.copied == 0 and not access.selected_last and not controller.menu.isVisible()
+    assert access.copied == 0 and not access.selected_last and not access.keys and not controller.menu.isVisible()
     assert "terminal" in app.said[-1][1]
