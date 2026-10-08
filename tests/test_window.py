@@ -1172,9 +1172,34 @@ def test_the_text_transform_page_sets_the_shortcut_and_the_menu():
     assert "double-tap Ctrl" in page.how.text() and page.hotkey.currentText() == "Double-tap Ctrl"
     page.choices["rewrite"].setChecked(True)
     page.choices["professional"].setChecked(False)
-    assert app.settings.transforms == ["concise", "bullets", "actions", "rewrite"]
+    assert app.settings.transforms == ["concise", "rewrite", "bullets", "actions"]  # as the page groups them
+    page.choices["translate"].setChecked(True)
+    assert "then 1-4 or T or a click" in page.how.text() and _keys(page.steps)[-5:] == ["1", "2", "3", "4", "T"]
     page.hotkey.setCurrentIndex(page.hotkey.findData(""))
     assert app.settings.transform_shortcut == "" and "off" in page.how.text()
+
+
+def test_the_name_for_japanese_emails_is_saved():
+    window, app = _window(settings=Settings(welcomed=True))
+    window.show_page("transform")
+    page = window.pages["transform"]
+    assert page.signature_name.text() == "" and page.signature_company.text() == ""
+    page.signature_name.setText("  山田   太郎 ")
+    page.signature_company.setText("株式会社ABC")
+    page.signature_company.editingFinished.emit()
+    assert (app.settings.signature_name, app.settings.signature_company) == ("山田 太郎", "株式会社ABC")
+
+
+def test_the_examples_are_grouped_tone_format_language():
+    window, _ = _window()
+    page = window.pages["transform"]
+    tabs = page.example_tabs
+    assert [list(row.buttons) for row in tabs.rows] == [["concise", "professional", "rewrite", "grammar"],
+                                                        ["bullets", "actions", "teams", "email_internal", "email_external"],
+                                                        ["translate"]]
+    tabs.buttons["teams"].click()
+    assert page.example_key == "teams" and tabs.buttons["teams"].isChecked()
+    assert not any(b.isChecked() for k, b in tabs.buttons.items() if k != "teams")
 
 
 def test_the_voice_command_phrases_can_be_edited():
@@ -1182,7 +1207,8 @@ def test_the_voice_command_phrases_can_be_edited():
     window.show_page("transform")
     page = window.pages["transform"]
     assert page.phrases["concise"].text() == ", ".join(DEFAULT_PHRASES["concise"]) and page.reset.isHidden()
-    assert set(page.phrases) == {"concise", "professional", "bullets", "actions", "rewrite", "undo"}
+    assert set(page.phrases) == {"concise", "professional", "bullets", "actions", "rewrite", "grammar", "teams",
+                                 "email_internal", "email_external", "translate", "undo"}
     page.phrases["concise"].setText("trim it,  tighten this up,")
     page.phrases["concise"].editingFinished.emit()
     assert app.settings.command_phrases == {"concise": "trim it, tighten this up"}

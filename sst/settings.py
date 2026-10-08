@@ -55,6 +55,9 @@ class Settings:
     # Snippets (sst.snippets): {"cue": "my email", "text": "xyz@gmail.com", "anywhere": false}, typed when said
     snippets: list[dict] = field(default_factory=list, metadata={"items": dict})
     transforms: list[str] = field(default_factory=lambda: ["concise", "professional", "bullets", "actions"])  # in the menu
+    # The writer, for a Japanese email's line that names them (株式会社△△の□□です。); empty: no such line, never invented
+    signature_name: str = ""
+    signature_company: str = ""
     raw_audio: bool = False  # ask Windows for the microphone without its voice effects (noise suppression, gating)
     speech_model: str = "parakeet"  # the speech recognition model, a key of sst.engines.SPEECH_MODELS
     speech_language: str = ""  # for models that know many languages (Whisper): "" = detected, or a code such as "ta"

@@ -452,12 +452,24 @@ def test_without_an_ai_model_the_user_is_told(qt):
 
 def test_the_menu_follows_the_chosen_transforms(qt):
     controller, access, app = make(selection=ORIGINAL)
-    app.settings.transforms = ["actions", "rewrite"]
+    app.settings.transforms = ["actions", "translate", "rewrite"]
     open_menu(controller)
-    assert [(hint, label) for _, hint, label in controller.menu.items] == [("1", "Action items"), ("2", "Rewrite")]
+    # Grouped: Tone, Format, Language; Translate keeps its letter
+    assert [(hint, label) for _, hint, label in controller.menu.items] == [("1", "Rewrite"), ("2", "Action items"),
+                                                                          ("T", "Translate")]
     controller.menu.key(0x62)  # numpad 2
     assert wait_until(lambda: app.asked)
-    assert app.asked[0][0] == "rewrite"
+    assert app.asked[0][0] == "actions"
+
+
+def test_the_menus_letter_chooses_translate(qt):
+    controller, access, app = make(selection=ORIGINAL)
+    app.settings.transforms = ["concise", "translate"]
+    open_menu(controller)
+    assert 0x54 in controller.listener.captured
+    controller.menu.key(0x54)  # T
+    assert wait_until(lambda: app.asked)
+    assert app.asked[0][0] == "translate"
 
 
 def test_off_means_no_shortcut(qt):

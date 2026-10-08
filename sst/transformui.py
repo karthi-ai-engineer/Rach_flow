@@ -2,7 +2,7 @@
 
   say "make it concise"         (holding the dictation key) the transform, right away: sst.commands, run_command
   double-tap Ctrl (the shortcut) the menu for the text selected in the focused app, or else all the text in its box
-  1-9 or a click                the transform (Concise, Professional, Bullet points, Action items...)
+  1-9, T or a click             the transform (Concise, Professional, Bullet points, Action items..., T: Translate)
   U, or say "undo that"         undo: the last transform's original comes back (Ctrl+Z in the app works too)
   Esc                           close the menu; nothing changes
 
@@ -28,13 +28,13 @@ from PySide6.QtWidgets import QWidget
 
 from sst import theme
 from sst.hotkey import HotkeyListener, parse_hotkey
-from sst.transform import TRANSFORMS
+from sst.transform import TRANSFORMS, menu_items
 
 LAST_TEXT_SECONDS = 15 * 60  # the last dictation counts as "the text" this long, in the window it was typed into
 BOX_LIMIT = 2000  # characters: with nothing selected, a box holding more is likely a whole document, not a message
 TOO_LONG = "Select the part to rewrite: there is too much text here to rewrite all of it."
-# Keys the open menu takes from the keyboard: 1-9, numpad 1-9, Up, Down, Enter, Esc, U.
-MENU_KEYS = frozenset([*range(0x31, 0x3A), *range(0x61, 0x6A), 0x26, 0x28, 0x0D, 0x1B, 0x55])
+# Keys the open menu takes from the keyboard: 1-9, numpad 1-9, Up, Down, Enter, Esc, U (undo), T (Translate).
+MENU_KEYS = frozenset([*range(0x31, 0x3A), *range(0x61, 0x6A), 0x26, 0x28, 0x0D, 0x1B, 0x55, 0x54])
 UNDO = "undo"
 # Console windows: Ctrl+C there stops the running program instead of copying, so Text Transform never presses it there.
 TERMINALS = frozenset({"ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "mintty", "VirtualConsoleClass",
@@ -163,7 +163,7 @@ class TransformMenu(QWidget):
             self._choose(self.current)
         else:
             digit = chr(vk) if 0x31 <= vk <= 0x39 else chr(vk - 0x30) if 0x61 <= vk <= 0x69 else ""  # top row, numpad
-            hint = "U" if vk == 0x55 else digit
+            hint = chr(vk) if 0x41 <= vk <= 0x5A else digit  # a row's letter: U, T
             for i, (_, item_hint, _) in enumerate(self.items):
                 if item_hint == hint:
                     self._choose(i)
@@ -388,8 +388,7 @@ class TransformController(QObject):
             self.app.say("warning", target)
             return
         self.pending = target
-        items = [(key, str(n), TRANSFORMS[key].name)
-                 for n, key in enumerate((k for k in self.app.settings.transforms if k in TRANSFORMS), 1) if n <= 9]
+        items = menu_items(self.app.settings.transforms)  # Tone, Format, Language; 1-9, and T for Translate
         if self.last and self.last.hwnd == target.hwnd and same_text(target.text, self.last.pasted):
             items.append((UNDO, "U", "Undo: restore the original"))
         if not items:
