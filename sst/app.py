@@ -476,6 +476,7 @@ class TrayApp:
         self.live.changed.connect(self._live_changed)
         self.live.moved.connect(self._live_moved)
         self.live.speak_toggled.connect(lambda on: self.set_live_speak(on))
+        self.live.noted.connect(lambda _: self.window.isVisible() and self.window.refresh())  # the Live page shows it
         self.live_listener = None  # live translation's shortcut (Ctrl+Alt+L), watched by live_keys
         self.live_keys = QTimer(interval=30, timeout=self._live_key_pump)
         self.window = MainWindow(self)
@@ -956,6 +957,10 @@ class TrayApp:
     def live_running(self) -> bool:
         return self.live.running
 
+    def live_note(self) -> str:
+        """The bar's status line while live translation runs: why nothing shows yet, or ""."""
+        return self.live.note
+
     def live_languages(self) -> tuple[str, str]:
         """What live translation translates into now (the computer's sound, the microphone's): while it runs, the ones
         it started with, since a language changed meanwhile waits for the next start."""
@@ -1071,7 +1076,8 @@ class TrayApp:
     def _live_lane(self, lane: str, config: LiveConfig) -> tuple:
         """One way of live translation: what the laptop plays, or the microphone; each its own Gemini session."""
         key, lane_config = self.gateway.key_for("gemini"), config.for_lane(lane)
-        capture = Capture.microphone() if lane == MIC else Capture.speakers()
+        # The microphone chosen for dictation (read at each look: a new choice is followed), else Windows' default
+        capture = Capture.microphone(lambda: self.settings.microphone) if lane == MIC else Capture.speakers()
         return capture, lambda emit: GeminiLiveTranslate(key, lane_config, emit, lane=lane)
 
     def start_live(self) -> str:

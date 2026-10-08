@@ -584,8 +584,12 @@ def test_live_translation_needs_a_gemini_key_and_asks_once_before_the_first_star
     monkeypatch.setattr(sst_app.QMessageBox, "question", lambda *args: asked.append(args) or
                         sst_app.QMessageBox.StandardButton.Yes)
     assert app.start_live() == "" and app.live_running() and app.settings.live_told and app.live_action.isChecked()
+    from sst.live.contracts import Kind, LiveEvent
+    app.live.event.emit(LiveEvent(Kind.NOTE, "Nothing heard from the microphone", lane="mic"))  # the bar's status line
+    assert app.live_note() == "Nothing heard from the microphone"  # the Live page shows it too
     app.stop_live()
     assert not app.live_running() and started == [True, False] and not app.live_action.isChecked()
+    assert app.live_note() == ""
     assert app.start_live() == "" and len(asked) == 2  # told once: not asked again
     app.stop_live()
 

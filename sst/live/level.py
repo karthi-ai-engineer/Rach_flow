@@ -10,7 +10,11 @@ frames are made:
 
 Sound at a normal volume is left exactly as it is. The gain drops at once when something loud comes (no burst), rises
 by RISE dB a second at most, and a soft limit above LIMIT keeps the first loud moment after a quiet one from clipping.
-Pure numpy: tested without Windows.
+
+A microphone hears the room as well as the voices: raised the same way, a quiet room's hum would be brought up to
+speech level in every pause. So the microphone's leveler (`for_microphone`) has a noise floor: the quietest blocks of
+the last NOISE_WINDOW seconds (the pauses) are never raised above MIC_NOISE_CEILING, and it raises by MIC_MAX_GAIN at
+most. Pure numpy: tested without Windows.
 """
 from collections import deque
 
@@ -24,6 +28,11 @@ TARGET = -20.0  # dBFS: the loudest 20 ms of speech at a normal volume is about 
 MAX_GAIN = 60.0  # dB: down to -80 dBFS; below, it's the content's own noise
 RISE = 20.0  # dB a second
 LIMIT = 0.9  # above this the peaks are rounded off, never cut
+NOISE_WINDOW = 10.0  # seconds the noise floor is judged by: longer than a sentence, so its pauses are in it
+NOISE_PERCENTILE = 10  # the noise floor: the level only the quietest tenth of the blocks is under (the pauses)
+MIC_NOISE_CEILING = -45.0  # dBFS: a microphone's noise floor isn't raised above this (25 dB under speech at TARGET;
+#                            the owner's laptop microphone, raw and without its rumble: -52, so it may rise 7 dB)
+MIC_MAX_GAIN = 30.0  # dB: a laptop microphone's speech is around -40 dBFS; further down it's someone across the room
 
 
 def soft_limit(x: np.ndarray, limit: float = LIMIT) -> np.ndarray:
@@ -38,13 +47,23 @@ def soft_limit(x: np.ndarray, limit: float = LIMIT) -> np.ndarray:
 
 
 class Leveler:
-    """Float samples at `rate` in, the same samples raised where they're quiet out; state kept across calls."""
+    """Float samples at `rate` in, the same samples raised where they're quiet out; state kept across calls. With a
+    `noise_ceiling` (dBFS), the noise floor heard is never raised above it."""
 
-    def __init__(self, rate: int = RATE):
-        self.rate = rate
+    def __init__(self, rate: int = RATE, max_gain: float = MAX_GAIN, noise_ceiling: float | None = None):
+        self.rate, self.max_gain, self.noise_ceiling = rate, max_gain, noise_ceiling
         self.block = rate * BLOCK_MS // 1000
         self._loudest: deque[float] = deque(maxlen=round(WINDOW * 1000 / BLOCK_MS))
+        self._levels: deque[float] = deque(maxlen=round(NOISE_WINDOW * 1000 / BLOCK_MS))
         self.gain_db = 0.0
+
+    @classmethod
+    def for_microphone(cls, rate: int = RATE) -> "Leveler":
+        return cls(rate, MIC_MAX_GAIN, MIC_NOISE_CEILING)
+
+    def noise_db(self) -> float:
+        """The noise floor heard lately (dBFS; -150 for digital silence)."""
+        return float(np.percentile(self._levels, NOISE_PERCENTILE)) if self._levels else -150.0
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
         x = np.asarray(x, dtype=np.float32)
@@ -53,8 +72,13 @@ class Leveler:
 
     def _block(self, x: np.ndarray) -> np.ndarray:
         rms = float(np.sqrt(np.mean(x * x, dtype=np.float64)))
-        self._loudest.append(20 * np.log10(rms) if rms > 0 else -np.inf)
-        want = min(max(TARGET - max(self._loudest), 0.0), MAX_GAIN)
+        db = 20 * np.log10(rms) if rms > 0 else -np.inf
+        self._loudest.append(db)
+        limit = self.max_gain
+        if self.noise_ceiling is not None:  # the room's hum stays well under the voices
+            self._levels.append(max(db, -150.0))
+            limit = min(limit, max(self.noise_ceiling - self.noise_db(), 0.0))
+        want = min(max(TARGET - max(self._loudest), 0.0), limit)
         old = self.gain_db
         if want <= old:  # louder sound: down at once, for this whole block
             self.gain_db = want
