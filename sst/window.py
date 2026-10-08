@@ -103,7 +103,7 @@ from sst.snippets import expand as expand_snippets
 from sst.snippets import load as load_snippets
 from sst.snippets import protect as protect_snippets
 from sst.theme import font, surface, tok
-from sst.transform import TRANSFORMS
+from sst.transform import GROUPS, TRANSFORMS, menu_items
 from sst.translate import LANGUAGES as TRANSLATE_LANGUAGES
 from sst.translate import fallback_second, system_language
 from sst.ui import (
@@ -4519,7 +4519,77 @@ TRANSFORM_EXAMPLES = {
          "The update didn't install because the disk was full."),
         ("The meeting is probably going to be next week.", "The meeting will probably be next week."),
     ],
+    "grammar": [
+        ("i finish the test for login page, two bug found, one is critical",
+         "I finished the test for the login page; two bugs were found, and one is critical."),
+        ("明日の会議わ10時からです。資料を確認しといてください。", "明日の会議は10時からです。資料を確認しておいてください。"),
+    ],
+    # The research's examples (research_notes "Rflow Text Transform expansion", 1.6): names stay as written, so "suzuki
+    # san" is Suzukiさん, never a guessed 鈴木さん.
+    "teams": [
+        ("田中さん、明日の会議なんだけど、資料まだできてなくて、たぶん15時ぐらいになると思う、ごめん",
+         "田中さん\nお疲れ様です。\n明日の会議資料ですが、まだ完成しておらず、15時頃になる見込みです。\n遅くなり申し訳ありません。\n"
+         "よろしくお願いいたします。"),
+        ("hi suzuki san, i finish the test for login page, two bug found, one is critical, i will fix by tomorrow morning, "
+         "can you review PR after that",
+         "Suzukiさん\nお疲れ様です。\nログイン画面のテストが完了しました。\nバグが2件見つかり、うち1件はクリティカルです。\n"
+         "明日の午前中までに修正しますので、その後PRのレビューをお願いできますか。\nよろしくお願いいたします。"),
+    ],
+    "email_internal": [
+        ("佐藤さん、来週の定例の資料、金曜までに共有します、たぶん10ページぐらい",
+         "佐藤さん\n\nお疲れ様です。\n\n来週の定例会議の資料は、金曜日までに共有いたします。\n分量は10ページ程度になる見込みです。\n\n"
+         "よろしくお願いいたします。"),
+        ("tanaka san, the server maintenance moved to 10/20 from 9 PM, please tell your team",
+         "Tanakaさん\n\nお疲れ様です。\n\nサーバーメンテナンスが10/20の21時からに変更になりました。\n"
+         "お手数ですが、チームの皆さんにもお伝えください。\n\nよろしくお願いいたします。"),
+    ],
+    "email_external": [
+        ("山本さん、見積もりの件ありがとうございます、ちょっと社内で確認するんで、来週の水曜までに返事します",
+         "山本様\n\nいつもお世話になっております。\n\nお見積もりの件、ありがとうございます。\n社内で確認のうえ、来週水曜日までに"
+         "ご連絡いたします。\n\n何卒よろしくお願いいたします。"),
+        ("Mr. Kato from ABC, thanks for the meeting yesterday, I'll send the revised quote by Friday",
+         "ABC\nKato様\n\nいつもお世話になっております。\n\n昨日はお打ち合わせのお時間をいただき、ありがとうございました。\n"
+         "修正したお見積もりを金曜日までにお送りいたします。\n\n何卒よろしくお願いいたします。"),
+    ],
+    "translate": [
+        ("Can you send me the invoice by Friday?", "金曜日までに請求書を送っていただけますか？"),
+        ("来週の定例会議は木曜日の午後3時からに変更になりました。", "Next week's regular meeting has moved to Thursday at 3 PM."),
+    ],
 }
+
+
+class _GroupedTabs(QWidget):
+    """The transforms as tabs, one row per group (Tone, Format, Language): one chosen across all the rows."""
+
+    changed = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self.rows: list[Segmented] = []
+        self.buttons: dict[str, QPushButton] = {}
+        for group in GROUPS:
+            options = [(key, t.name) for key, t in TRANSFORMS.items() if t.group == group]
+            tabs = Segmented(options)
+            tabs.changed.connect(self.set_current)
+            tabs.changed.connect(self.changed)
+            self.rows.append(tabs)
+            self.buttons |= tabs.buttons
+            name = caption(group, "3", wrap=False)
+            name.setFixedWidth(68)
+            layout.addLayout(row(name, tabs, stretch_at=2, spacing=10))
+
+    def set_current(self, key: str) -> None:
+        for tabs in self.rows:
+            if key in tabs.buttons:
+                tabs.set_current(key)
+                continue
+            for b in tabs.buttons.values():  # another row's choice: none chosen here
+                b.setAutoExclusive(False)
+                b.setChecked(False)
+                b.setAutoExclusive(True)
 
 
 class TransformPage(Page):
@@ -4527,9 +4597,10 @@ class TransformPage(Page):
     transform does with examples, a box to try them, then the voice commands' phrases and the menu (sst.commands)."""
 
     def __init__(self, app, go_to):
-        super().__init__("Text Transform", "Rewrite text you already have: shorter, more professional, as bullet points "
-                                           "or as action items. It works in any app, on the text you select or on "
-                                           "your last dictation. Numbers, names, dates and your “maybe” stay.")
+        super().__init__("Text Transform", "Rewrite text you already have: shorter, more professional, grammar fixed, as "
+                                           "a Japanese Teams message or email, or translated. It works in any app, on the "
+                                           "text you select, or on all the text in the box you're typing in. Numbers, "
+                                           "names, dates and your “maybe” stay.")
         self.app = app
         s = app.settings
         self.ai = AiNeeded(go_to, "Text Transform")
@@ -4548,7 +4619,7 @@ class TransformPage(Page):
         examples, layout = card(12, (20, 18, 20, 20))
         layout.addWidget(label("What each one does", "heading"))
         self.example_key = "concise"
-        self.example_tabs = Segmented([(key, transform.name) for key, transform in TRANSFORMS.items()])
+        self.example_tabs = _GroupedTabs()
         self.example_tabs.set_current("concise")
         self.example_tabs.changed.connect(self._show_examples)
         layout.addWidget(self.example_tabs)
@@ -4568,14 +4639,16 @@ class TransformPage(Page):
         fixed_height(self.sample, 88)
         layout.addWidget(self.sample)
         self.try_buttons: dict[str, QPushButton] = {}
-        buttons = QHBoxLayout()
-        buttons.setSpacing(8)
-        for key, transform in TRANSFORMS.items():
-            b = button(transform.name, lambda _=False, k=key: self._try(k), size="sm")
-            self.try_buttons[key] = b
-            buttons.addWidget(b)
-        buttons.addStretch()
-        layout.addLayout(buttons)
+        holder = QWidget()
+        buttons = FlowLayout(8)  # ten of them: they wrap
+        holder.setLayout(buttons)
+        for group in GROUPS:
+            for key, transform in TRANSFORMS.items():
+                if transform.group == group:
+                    b = button(transform.name, lambda _=False, k=key: self._try(k), size="sm")
+                    self.try_buttons[key] = b
+                    buttons.addWidget(b)
+        layout.addWidget(holder)
         self.result = QTextBrowser()
         field(self.result, "well")
         self.result.setFixedHeight(120)
@@ -4603,7 +4676,9 @@ class TransformPage(Page):
         for i, key in enumerate(DEFAULT_PHRASES):
             edit = QLineEdit()
             edit.setPlaceholderText("no phrase: this command is off")
-            edit.setToolTip(f"What you say for {names[key]}. The defaults: {', '.join(DEFAULT_PHRASES[key])}.")
+            edit.setToolTip(f"What you say for {names[key]}. The defaults: {', '.join(DEFAULT_PHRASES[key])}." + (
+                " A language works too, while Translate has a phrase: “translate it into Japanese”, “in English, formally”, "
+                "“英語にして”." if key == "translate" else ""))
             edit.editingFinished.connect(self._save_phrases)
             field(edit)
             self.phrases[key] = edit
@@ -4630,17 +4705,42 @@ class TransformPage(Page):
         shortcut, _, self.how = setting_row("Shortcut", "", self.hotkey)
         layout.addWidget(shortcut)
         layout.addWidget(divider())
-        layout.addWidget(caption("In the menu", "2"))
+        layout.addWidget(caption("In the menu: numbered 1-9 in this order; Translate is T", "2"))
         self.choices: dict[str, Toggle] = {}
-        for key, transform in TRANSFORMS.items():
-            box = Toggle(transform.name)
-            box.setChecked(key in app.settings.transforms)
-            box.toggled.connect(self._apply)
-            self.choices[key] = box
-            choice, _, _ = setting_row(transform.name, transform.description, box)
-            choice.layout().setContentsMargins(0, 8, 0, 8)
-            layout.addWidget(choice)
+        for group in GROUPS:
+            heading = _caps_label(group)
+            heading.setContentsMargins(0, 10, 0, 0)
+            layout.addWidget(heading)
+            for key, transform in TRANSFORMS.items():
+                if transform.group != group:
+                    continue
+                box = Toggle(transform.name)
+                box.setChecked(key in app.settings.transforms)
+                box.toggled.connect(self._apply)
+                self.choices[key] = box
+                choice, _, _ = setting_row(transform.name, transform.description, box)
+                choice.layout().setContentsMargins(0, 8, 0, 8)
+                layout.addWidget(choice)
         self.add(frame)
+
+        sender, layout = card(10, (20, 18, 20, 20))
+        layout.addWidget(label("Your name for emails", "heading"))
+        layout.addWidget(caption("Internal and External email write the line that introduces you (株式会社△△の□□です。) "
+                                 "from these. Left empty, that line is left out: Rflow never makes a name up.", "2"))
+        self.signature_name, self.signature_company = QLineEdit(s.signature_name), QLineEdit(s.signature_company)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(8)
+        for i, (title, edit, hint) in enumerate((("Name", self.signature_name, "山田 / Yamada"),
+                                                 ("Company", self.signature_company, "株式会社〇〇 (for external emails)"))):
+            edit.setPlaceholderText(hint)
+            edit.editingFinished.connect(self._save_sender)
+            field(edit)
+            grid.addWidget(label(title, "rowtitle", wrap=False), i, 0)
+            grid.addWidget(edit, i, 1)
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+        self.add(sender)
         self.body.addStretch()
         self._show_examples("concise")
 
@@ -4648,9 +4748,12 @@ class TransformPage(Page):
         s, model = self.app.settings, self.app.transform_model()
         shortcut = s.transform_shortcut
         press = "double-tap Ctrl" if shortcut == "double ctrl" else f"press {self.hotkey.currentText()}"
+        items = menu_items(s.transforms)
+        numbers = sum(hint.isdigit() for _, hint, _ in items)
+        letters = "".join(f" or {hint}" for _, hint, _ in items if not hint.isdigit())
         self.how.setText("The menu is off: voice commands still work." if not shortcut else
-                         f"Select text, or don't (then your last dictation is used), {press}, then 1-"
-                         f"{max(1, len(s.transforms))} or a click. U undoes the last transform; Esc closes the menu.")
+                         f"Select text, or don't (then all the text in the box is used), {press}, then 1-"
+                         f"{max(1, numbers)}{letters} or a click. U undoes the last transform; Esc closes the menu.")
         self.how.show()
         phrases = phrases_for(s.command_phrases)
         for key, edit in self.phrases.items():
@@ -4681,7 +4784,8 @@ class TransformPage(Page):
     def _steps(self, phrases: dict[str, list[str]]) -> list:
         """How to use it, with the user's own dictation key, first phrase, menu shortcut and menu."""
         s = self.app.settings
-        steps: list = [["Select text in any app. Or select nothing: then your last dictation is used."]]
+        steps: list = [["Select text in any app. Or select nothing: then all the text in the box you're typing in is used "
+                        "(if it's not a long document)."]]
         said = phrases.get("concise", [])
         if s.voice_commands and said:
             steps.append(["Hold", keys(key_names(self.app.hotkey_label())), f"and say “{said[0]}”, or another "
@@ -4690,7 +4794,9 @@ class TransformPage(Page):
             first = "Or" if len(steps) > 1 else "Then"
             press = ([f"{first} double-tap", keys("Ctrl")] if s.transform_shortcut == "double ctrl" else
                      [f"{first} press", _shortcut_caps(s.transform_shortcut)])
-            steps.append(([*press, "for the menu, and press a number:"], self._menu_preview()))
+            letters = [hint for _, hint, _ in menu_items(s.transforms) if not hint.isdigit()]
+            steps.append(([*press, f"for the menu, and press a number{' or ' + letters[0] if letters else ''}:"],
+                          self._menu_preview()))
         undo = phrases.get(UNDO, [])
         undo = next((p for p in undo if " " in p), undo[0]) if undo else ""  # "undo that" reads better than "undo"
         steps.append(["Rflow writes the result in place of the text." + (f" Not what you wanted? Say “{undo}”."
@@ -4702,13 +4808,13 @@ class TransformPage(Page):
         holder = QWidget()
         flow = FlowLayout(16)
         holder.setLayout(flow)
-        for i, key in enumerate([k for k in self.app.settings.transforms if k in TRANSFORMS][:9]):
+        for _, hint, name in menu_items(self.app.settings.transforms):
             pair = QWidget()
             layout = QHBoxLayout(pair)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(8)
-            layout.addWidget(keycap(str(i + 1), "sm"), 0, Qt.AlignmentFlag.AlignVCenter)
-            layout.addWidget(label(TRANSFORMS[key].name, tone="2", wrap=False), 0, Qt.AlignmentFlag.AlignVCenter)
+            layout.addWidget(keycap(hint, "sm"), 0, Qt.AlignmentFlag.AlignVCenter)
+            layout.addWidget(label(name, tone="2", wrap=False), 0, Qt.AlignmentFlag.AlignVCenter)
             flow.addWidget(pair)
         return holder
 
@@ -4744,6 +4850,13 @@ class TransformPage(Page):
         if custom != self.app.settings.command_phrases:
             self.app.apply_settings(dataclasses.replace(self.app.settings, command_phrases=custom))
         self.refresh()
+
+    def _save_sender(self) -> None:
+        """The name and company for Japanese emails, as typed (spaces tidied)."""
+        name, company = (" ".join(e.text().split()) for e in (self.signature_name, self.signature_company))
+        s = self.app.settings
+        if (name, company) != (s.signature_name, s.signature_company):
+            self.app.apply_settings(dataclasses.replace(s, signature_name=name, signature_company=company))
 
     def _reset_phrases(self) -> None:
         self.app.apply_settings(dataclasses.replace(self.app.settings, command_phrases={}))
