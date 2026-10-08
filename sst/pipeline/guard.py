@@ -6,9 +6,11 @@ own, deterministically, and any doubt rejects, because the fallback, the formatt
     were: none lost, none new ("5:30" -> "6:30" is one of each). A number may change between words and digits ("five", "5").
   - Meaning stays: negations, the speech act (a question stays a question, a command a command, §57), uncertainty
     ("maybe"), names; no word is swapped for another ("increase" -> "decrease", "on" -> "off") and nothing is added (§67).
-  - Words may go only where cleanup is expected to remove them (§65): fillers, stutters and repeats, a false start abandoned
-    for a restart, and the words a clear self-correction replaced, when its replacement made it into `after` (§56:
-    "send this tomorrow no wait Friday" -> "send this Friday"). Anything else: at most one dropped word.
+  - Words may go only where cleanup is expected to remove them (§65): fillers ("um", "you know", "some kind of", "like"
+    where it isn't a verb or a comparison, "so", "yeah", "okay" opening a clause, "yeah" closing one), stutters and a word
+    said again and again ("project project project"), a false start abandoned for a restart, and the words a clear
+    self-correction replaced, when its replacement made it into `after` (§56: "send this tomorrow no wait Friday" -> "send
+    this Friday"). Anything else: at most one dropped word. A filler may go, but not turn into a new word ("yeah" -> "PC").
 The change ratio is recorded and makes the word counts stricter when it is high, but never rejects alone: a dictation full
 of fillers legitimately changes a lot (§66). Scripts written without spaces (Japanese) are split where the script changes,
 so they are compared roughly, but nothing crashes on them and a translation is never let through.
@@ -322,8 +324,16 @@ being do does did doing have has had having to of in on at by for with from into
 just really very also too not no nor never""".split())
 _FILLERS = {"um", "umm", "uh", "uhh", "uhm", "er", "erm", "ah", "eh", "hmm", "hm", "mm", "mhm", "oh", "basically", "literally",
             "えーと", "えっと", "えー", "あの", "あのー", "まあ"}
-_FILLER_PAIRS = {("you", "know"), ("i", "mean"), ("sort", "of"), ("kind", "of")}
-_START_FILLERS = {"so", "well", "okay", "ok", "like", "yeah", "right", "alright", "anyway"}  # fillers only opening a clause
+_FILLER_PAIRS = {("you", "know"), ("ya", "know"), ("i", "mean"), ("sort", "of"), ("kind", "of")}
+_START_FILLERS = {"so", "well", "okay", "ok", "like", "yeah", "yep", "yup", "right", "alright", "anyway", "anyways"}  # opening
+_END_FILLERS = {"yeah", "yep", "yup"}  # closing a clause: "that works for me, yeah"
+_OPENERS = {"and", "but", "or"}  # "and yeah we can", "but like it works": a clause still opens after them
+# "like" is a word after these (a verb: "I like it", "would like"; a comparison: "looks like rain", "something like that")
+# or before "this", "that"...; anywhere else it is a filler ("I was like thinking", "check the like logs").
+_LIKE_AFTER = {"i", "you", "we", "they", "people", "would", "to", "not", "really", "also", "still", "always", "do", "does",
+               "did", "look", "looks", "looked", "looking", "sound", "sounds", "sounded", "seem", "seems", "seemed", "feel",
+               "feels", "felt", "something", "anything", "nothing", "more", "much", "exactly"}
+_LIKE_BEFORE = {"this", "that", "these", "those", "to"}
 _DETERMINERS = {"the", "a", "an", "this", "that", "these", "those", "what", "which", "some", "any", "every", "each", "no", "all",
                 "same", "other", "different", "my", "your", "our", "their", "his", "her", "its"}
 _CONTRACTIONS = {"n't": "not", "'ll": "will", "'re": "are", "'ve": "have", "'m": "am", "'d": "would", "'s": ""}
@@ -573,28 +583,34 @@ def _reparandum(b: _Side, candidates: list[int], repair: list[int], kind: str) -
 def _excused(b: _Side, a: _Side) -> tuple[set[int], list[str]]:
     """The words of `before` the cleanup may drop, and notes on the self-corrections it applied."""
     toks, n, out, notes = b.toks, len(b.toks), set(), []
-    at_start, i = True, 0
+    at_start, joined, i = True, False, 0  # opening a clause; right after "and", "but" or "or"
     while i < n:  # fillers
-        t, prev = toks[i], toks[i - 1].norm if i else ""
+        t, prev = toks[i], b.words[i - 1][-1] if i else ""
+        nxt = toks[i + 1].norm if i + 1 < n else ""
         at_start = at_start or t.clause
-        if (pair := (t.norm, toks[i + 1].norm) if i + 1 < n else ()) in _FILLER_PAIRS and not (
-                pair[1] == "of" and prev in _DETERMINERS):  # "kind of", but not "what kind of car"
-            out.update((i, i + 1))
+        if (pair := (t.norm, nxt) if nxt else ()) in _FILLER_PAIRS and not (
+                pair[1] == "of" and prev in _DETERMINERS - {"some"}):  # "kind of", "some kind of"; not "what kind of car"
+            out.update((i - (prev == "some" and pair[1] == "of"), i, i + 1))
             i += 2
             continue
-        like = t.norm == "like" and (  # "it was, like, big", "um like": a filler; "I like it": a word
-            "," in b.gap(i) + b.gap(i + 1) or prev in _FILLERS or i + 1 < n and toks[i + 1].norm in _FILLERS)
-        if t.norm in _FILLERS or at_start and t.norm in _START_FILLERS or like:
-            out.add(i)
+        like = t.norm == "like" and (  # "it was, like, big", "um like", "I was like thinking": a filler; "I like it": a word
+            "," in b.gap(i) + b.gap(i + 1) or prev in _FILLERS or nxt in _FILLERS
+            or prev not in _LIKE_AFTER and nxt not in _LIKE_BEFORE)
+        kinda = t.norm in ("kinda", "sorta") and prev not in _DETERMINERS - {"some"}  # "it's kinda slow"
+        last = i + 1 == n or toks[i + 1].clause
+        if (t.norm in _FILLERS or at_start and t.norm in _START_FILLERS or last and t.norm in _END_FILLERS or like
+                or kinda or t.norm == "y'know" or joined and t.norm in _START_FILLERS - {"right", "well"}):
+            out.update((i - 1, i) if kinda and prev == "some" else (i,))
+        elif t.norm in _OPENERS:  # "and yeah", "but so": still opening ("left and right" keeps its "right")
+            joined = True
         else:
-            at_start = False
+            at_start = joined = False
         i += 1
     said = [i for i in range(n) if i not in out]
-    for size in (3, 2, 1):  # repeats, fillers aside: "we need to we need to", "the the", "I uh I"
+    for size in (3, 2, 1):  # repeats, fillers aside: "we need to we need to", "the the", "I uh I", "project. Project"
         for p in range(len(said) - 2 * size + 1):
             run = said[p:p + 2 * size]
-            if toks[run[0]].sent == toks[run[-1]].sent and all(
-                    toks[run[k]].norm == toks[run[size + k]].norm for k in range(size)):
+            if all(toks[run[k]].norm == toks[run[size + k]].norm for k in range(size)):
                 out.update(run[:size])
     for i, t in enumerate(toks):  # cut-off words: a stutter ("th- the"), or a false start given up for a restart
         if t.cut:
@@ -654,6 +670,20 @@ def _reconcile(b: _Side, a: _Side, removed: list[str], added: list[str]) -> None
         if (v := next((x for x in added if _variant(r, x)), None)) is not None:
             removed.remove(r)
             added.remove(v)
+
+
+def _swapped_fillers(b: _Side, a: _Side, excused: set[int], added: set[str]) -> list[str]:
+    """Words the cleanup may drop (fillers, repeats...) that it replaced with new words where they stood instead: "go,
+    yeah" -> "go PC" is a change, not a removal."""
+    if not added:
+        return []
+    matcher = difflib.SequenceMatcher(None, [t.norm for t in b.toks], [t.norm for t in a.toks], autojunk=False)
+    swaps = []
+    for op, i1, i2, j1, j2 in matcher.get_opcodes():
+        gone, new = [i for i in range(i1, i2) if i in excused], [j for j in range(j1, j2) if added & set(a.keys[j])]
+        if op == "replace" and gone and new:
+            swaps.append(f"'{b.quote(gone)}' with '{a.quote(new)}'")
+    return swaps
 
 
 def _change_ratio(before: str, after: str) -> float:
@@ -742,6 +772,8 @@ class Guard:
         if removed and added:
             fired.append(("substitution", "replaced " + ", ".join(f"'{b.shown[r]}' with '{a.shown[x]}'"
                                                                   for r, x in zip(removed, added, strict=False))))
+        elif swaps := _swapped_fillers(b, a, excused, set(added)):  # a filler may go, not become a new word
+            fired.append(("substitution", "replaced " + ", ".join(swaps)))
         proper = {k for i, t in enumerate(b.toks) if not t.first and t.text[:1].isupper() and b.words[i][0] != "i"
                   for k in b.keys[i]}
         if names := [b.shown[k] for k in removed if k in proper]:
