@@ -8,7 +8,7 @@ nothing has come for SETTLE seconds: so "It costs 3." isn't said before ".5 mill
 before a pause isn't held until the line ends (1.5 s later). An interpreter mustn't fall behind for good: with
 sentences waiting it speaks faster (up to MAX_SPEED), and one older than STALE seconds is skipped while newer ones wait
 (it stays on screen and in the transcript). Only translations are spoken: speech already in the voice's language is
-heard as it is. Like an interpreter, it lowers the other apps while it speaks, if given a Ducker (sst.live.ducking).
+heard as it is. Like an interpreter, it keeps the other apps lower while it runs, if given a Ducker (sst.live.ducking).
 
 Gemini revises what it has translated: it rewrites earlier words, turns a comma into a full stop, re-sends the whole
 line, and starts a new line with the end of the last. So what was said is remembered by what it says (words(): case,
@@ -109,7 +109,7 @@ class Speaker:
         self._load, self.player, self.language, self.speed = voice_loader, player, language, speed
         self.lanes = set(lanes)
         self._problem, self._clock = on_problem, clock
-        self.ducker = ducker  # lowers the other apps while the voice speaks (sst.live.ducking), if given
+        self.ducker = ducker  # keeps the other apps lower while it runs (sst.live.ducking), if given
         self._lines: dict[str, _Line] = {}
         self._queue: deque[tuple[float, str, str]] = deque()  # (when it was complete, way, sentence)
         self._recent: deque[tuple[str, float]] = deque(maxlen=RECENT)  # the session's last sentences: (words, when)
@@ -135,7 +135,7 @@ class Speaker:
         self._thread = threading.Thread(target=self._run, name="live-voice", daemon=True)
         self._thread.start()
         if self.ducker is not None:
-            self.ducker.start(lambda: self.speaking)
+            self.ducker.start()
 
     def stop(self) -> None:
         self._stop.set()

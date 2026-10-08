@@ -1,11 +1,11 @@
-"""Interpreter style: the other apps lowered while the voice speaks (sst.live.ducking), with fake apps."""
+"""The other apps kept lower while live translation speaks (sst.live.ducking), with fake apps."""
 import json
 import time
 
 import pytest
 
 from sst.live import ducking
-from sst.live.ducking import CHANGED, DOWN, HOLD, KEEP, RESCAN, UP, Ducker, put_back
+from sst.live.ducking import CHANGED, DOWN, INAUDIBLE, KEEP, RESCAN, UP, Ducker, put_back
 
 
 class Sound:
@@ -25,6 +25,7 @@ class Sound:
             raise OSError("the app ended")
         self.level = value
         self.sets.append(round(value, 3))
+        self.lowest = min(getattr(self, "lowest", 1.0), value)
 
     def close(self):
         self.closed += 1
@@ -53,104 +54,115 @@ def ducker_with(*sounds, depth=0.3, tmp_path):
     return Ducker(depth, find=apps, record=tmp_path / "lowered.json", clock=clock, wall=lambda: 5000.0), clock, apps
 
 
-def run(ducker, clock, speaking, seconds, step=0.02):
+def run(ducker, clock, seconds, step=0.02):
     for _ in range(round(seconds / step)):
         clock.now += step
-        ducker.tick(speaking)
+        ducker.tick()
 
 
-def test_the_apps_go_down_while_the_voice_speaks_and_come_back_after_it(tmp_path):
+def test_the_apps_stay_lowered_the_whole_session_and_come_back_when_it_stops(tmp_path):
     video, music = Sound("chrome.exe", 1.0), Sound("spotify.exe", 0.5)
     ducker, clock, _ = ducker_with(video, music, tmp_path=tmp_path)
-    run(ducker, clock, True, DOWN + 0.1)
+    run(ducker, clock, DOWN + 0.1)
     assert video.level == pytest.approx(0.3) and music.level == pytest.approx(0.15)  # each from its own volume
     record = json.loads((tmp_path / "lowered.json").read_text(encoding="utf-8"))
     assert {(e["name"], e["original"]) for e in record} == {("chrome.exe", 1.0), ("spotify.exe", 0.5)}
-    run(ducker, clock, False, HOLD - 0.06)
-    assert video.level == pytest.approx(0.3)  # a moment's gap between sentences: still low
-    run(ducker, clock, False, 0.06 + UP + 0.1)
+    run(ducker, clock, 30)  # between sentences and through long pauses: still low, no pumping up and down
+    assert video.level == pytest.approx(0.3) and music.level == pytest.approx(0.15)
+    lowest = video.sets.index(min(video.sets))  # a ramp down, then left there
+    assert video.sets[:lowest + 1] == sorted(video.sets[:lowest + 1], reverse=True) and lowest == len(video.sets) - 1
+    ducker.release()  # live translation or speaking stopped, or Rflow quits
     assert video.level == 1.0 and music.level == 0.5 and not (tmp_path / "lowered.json").exists()
-    assert not ducker._lowered and video.closed  # Windows' handles given back once they're up again
-    lowest = video.sets.index(min(video.sets))  # a ramp down, then a ramp up: no jumps back and forth
-    assert video.sets[:lowest + 1] == sorted(video.sets[:lowest + 1], reverse=True)
-    assert video.sets[lowest:] == sorted(video.sets[lowest:])
+    assert not ducker._lowered and video.closed  # Windows' handles given back
 
 
-def test_it_goes_down_quickly_and_comes_back_gently(tmp_path):
+def test_it_goes_down_quickly_and_comes_back_up_gently_when_raised(tmp_path):
     video = Sound("chrome.exe")
     ducker, clock, _ = ducker_with(video, tmp_path=tmp_path)
-    run(ducker, clock, True, 0.06)
+    run(ducker, clock, 0.06)
     assert 0.3 < video.level < 1.0  # on its way down
-    run(ducker, clock, True, 1.0)
-    run(ducker, clock, False, HOLD + UP / 2)
-    assert 0.3 < video.level < 1.0  # on its way back
+    run(ducker, clock, 1.0)
+    ducker.set_depth(0.8)
+    run(ducker, clock, UP / 2)
+    assert 0.3 < video.level < 0.8  # on its way up
+    run(ducker, clock, UP)
+    assert video.level == pytest.approx(0.8)
 
 
 def test_nothing_is_touched_when_the_apps_stay_as_they_are(tmp_path):
     video = Sound("chrome.exe")
     ducker, clock, _ = ducker_with(video, depth=1.0, tmp_path=tmp_path)
-    run(ducker, clock, True, 1.0)
+    run(ducker, clock, 1.0)
     assert video.sets == [] and not (tmp_path / "lowered.json").exists()
 
 
-def test_an_app_that_starts_playing_during_a_sentence_is_lowered_too(tmp_path):
+def test_an_app_that_starts_playing_during_the_session_is_lowered_too(tmp_path):
     video, call = Sound("chrome.exe"), Sound("teams.exe", playing=False)
     ducker, clock, _ = ducker_with(video, call, tmp_path=tmp_path)
-    run(ducker, clock, True, 0.3)
+    run(ducker, clock, 0.3)
     assert call.sets == []  # not playing: left alone
     call.playing = True
-    run(ducker, clock, True, RESCAN + DOWN + 0.1)
+    run(ducker, clock, RESCAN + 0.1)
     assert call.level == pytest.approx(0.3)
 
 
 def test_an_app_the_user_turns_up_meanwhile_keeps_the_users_volume(tmp_path):
     video = Sound("chrome.exe", 0.8)
     ducker, clock, _ = ducker_with(video, tmp_path=tmp_path)
-    run(ducker, clock, True, 0.5)
+    run(ducker, clock, 0.5)
     video.level = 0.6  # the user moves its slider in the volume mixer
-    run(ducker, clock, False, HOLD + UP + 0.2)
+    run(ducker, clock, 0.2)
+    ducker.release()
     assert video.level == 0.6 and not (tmp_path / "lowered.json").exists()
 
 
 def test_an_app_that_ends_is_let_go_quietly(tmp_path):
     video, music = Sound("chrome.exe"), Sound("spotify.exe")
     ducker, clock, _ = ducker_with(video, music, tmp_path=tmp_path)
-    run(ducker, clock, True, 0.5)
+    run(ducker, clock, 0.5)
     video.gone = True
-    run(ducker, clock, False, HOLD + UP + 0.2)
-    assert music.level == 1.0 and not ducker._lowered and video.closed
+    ducker.set_depth(0.5)
+    run(ducker, clock, UP + 0.2)
+    assert music.level == pytest.approx(0.5) and "chrome.exe|1" not in ducker._lowered and video.closed
 
 
-def test_stopping_puts_every_app_back_at_once(tmp_path):
+def test_a_new_level_is_followed_at_once(tmp_path):
     video = Sound("chrome.exe")
     ducker, clock, _ = ducker_with(video, tmp_path=tmp_path)
-    run(ducker, clock, True, 0.5)
-    ducker.release()
-    assert video.level == 1.0 and not (tmp_path / "lowered.json").exists()
-
-
-def test_a_new_depth_is_followed_at_once(tmp_path):
-    video = Sound("chrome.exe")
-    ducker, clock, _ = ducker_with(video, tmp_path=tmp_path)
-    run(ducker, clock, True, 0.5)
-    ducker.set_depth(0.6)
-    run(ducker, clock, True, 0.1)
-    assert video.level == pytest.approx(0.6)
-    ducker.set_depth(1.0)  # "Unchanged" while it speaks: back up, and nothing more is lowered
-    run(ducker, clock, True, HOLD + UP + 0.1)
-    assert video.level == 1.0
+    run(ducker, clock, 0.5)
+    ducker.set_depth(0.2)
+    run(ducker, clock, 0.1)
+    assert video.level == pytest.approx(0.2)
+    ducker.set_depth(1.0)  # "Unchanged": back up, and nothing more is lowered
+    run(ducker, clock, UP + 0.1)
+    assert video.level == 1.0 and not ducker._lowered and not (tmp_path / "lowered.json").exists()
     ducker.set_depth(-3)
     assert ducker.depth == 0.0
 
 
-def test_the_thread_lowers_while_speaking_and_puts_back_when_stopped(tmp_path):
+@pytest.mark.parametrize(("original", "level"), [(1.0, INAUDIBLE), (0.5, INAUDIBLE), (0.002, INAUDIBLE)])
+def test_zero_percent_is_inaudible_but_never_silence_so_live_translation_still_hears_the_meeting(tmp_path, original,
+                                                                                                    level):
+    """Windows' mix after a session volume of exactly 0 is silence: live translation would hear nothing."""
+    video = Sound("chrome.exe", original)
+    ducker, clock, _ = ducker_with(video, depth=0.0, tmp_path=tmp_path)
+    run(ducker, clock, DOWN + 0.1)
+    assert video.level == pytest.approx(level) and 0 < INAUDIBLE <= 0.0003  # phase 37: translated in full at 0.03%
+    assert video.lowest == pytest.approx(level)  # never 0 on the way down either
+    ducker.release()
+    assert video.level == original
+
+
+def test_the_thread_lowers_until_it_is_stopped_then_puts_back(tmp_path):
     video = Sound("chrome.exe")
     ducker = Ducker(0.3, find=Apps(video), record=tmp_path / "lowered.json")
-    ducker.start(lambda: True)
+    ducker.start()
     end = time.monotonic() + 3
     while time.monotonic() < end and video.level > 0.31:
         time.sleep(0.01)
     assert video.level == pytest.approx(0.3)
+    time.sleep(0.2)
+    assert video.level == pytest.approx(0.3)  # and stays there
     ducker.stop()
     assert video.level == 1.0 and not any(t.name == "live-ducker" and t.is_alive() for t in __import__("threading").enumerate())
 
@@ -189,9 +201,9 @@ def test_a_ducker_keeps_what_was_left_in_the_record_while_it_lowers_others(tmp_p
                           "left": True})
     video = Sound("chrome.exe")
     ducker = Ducker(0.3, find=Apps(video), record=record, clock=Clock(), wall=lambda: 5000.0)
-    run(ducker, ducker._clock, True, 0.3)
+    run(ducker, ducker._clock, 0.3)
     assert {e["name"] for e in json.loads(record.read_text(encoding="utf-8"))} == {"teams.exe", "chrome.exe"}
-    run(ducker, ducker._clock, False, HOLD + UP + 0.1)
+    ducker.release()
     assert [e["name"] for e in json.loads(record.read_text(encoding="utf-8"))] == ["teams.exe"]
 
 

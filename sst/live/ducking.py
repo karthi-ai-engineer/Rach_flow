@@ -1,14 +1,17 @@
-"""Interpreter style: while the voice speaks, the other apps are lowered; after the sentence they come back.
+"""While live translation speaks, the other apps stay lower for the whole session, at the level the user chose.
 
-    Speaker.speaking -> Ducker (its own thread, every STEP) -> each other app's sound, on every output: its volume in
-    Windows' volume mixer (ISimpleAudioVolume) x depth, over DOWN seconds; HOLD seconds after the voice, back over UP
+    Ducker (its own thread, every STEP, from start() to stop()) -> each other app's sound, on every output: its volume in
+    Windows' volume mixer (ISimpleAudioVolume) x depth, over DOWN seconds; stop() puts them back at once
 
-Rflow's own sound (the voice) and Windows' system sounds are left alone, and only apps playing are lowered (one that
-starts during a sentence is found within RESCAN seconds). Windows remembers each app's mixer volume, so what is lowered
+The owner's choice (2026-10-08): not lowered for each sentence and back between them, which pumped the meeting up and
+down, but low the whole time while Speak the translation is on, and back when live translation or speaking stops, or
+Rflow quits. Rflow's own sound (the voice) and Windows' system sounds are left alone, and only apps playing are lowered
+(one that starts later is found within RESCAN seconds). Windows remembers each app's mixer volume, so what is lowered
 is written down first (RECORD, on this PC) and put back at the next start if Rflow ended while it was low; an app whose
 volume the user changes meanwhile keeps the user's. Rflow hears the lowered apps lower too: the computer's sound has
-its own level (sst.live.level) and Gemini translates speech down to -70 dBFS (measured), so a sentence said meanwhile is
-still translated.
+its own level (sst.live.level) and Gemini translates speech down to -70 dBFS (measured), so the meeting is still
+translated. Even at 0%: an app at a mixer volume of exactly 0 is silence in the mix Rflow hears, so 0% is INAUDIBLE
+instead (phase 37 measured an app at 0.03% translated in full, and nobody hears it).
 """
 import ctypes
 import json
@@ -25,11 +28,11 @@ from pathlib import Path
 
 from sst.live.wasapi import _CLSCTX_ALL, _GUID, E_RENDER, _com, _enumerator, _method, _release
 
-STEP = 0.02  # seconds between looks at the voice
+STEP = 0.02  # seconds between steps
 DOWN = 0.15  # seconds from full volume to silence (a smaller step down takes less)
-UP = 0.6  # and back up: the original returns gently
-HOLD = 0.2  # seconds after the voice has stopped (Speaker.speaking: 0.4 s after its sound) before the apps come back
-RESCAN = 0.5  # seconds between looks for apps that started playing while they're lowered
+UP = 0.6  # and back up, when the user raises the level: gently
+RESCAN = 0.5  # seconds between looks for apps that started playing while the others are lowered
+INAUDIBLE = 0.0003  # the lowest mixer volume Rflow sets: 0% for the user, still heard by live translation (see above)
 CHANGED = 0.02  # a volume this far from what Rflow set was changed by the user: theirs from now on
 KEEP = 7 * 86_400  # seconds a lowered app that isn't running is remembered, to be put back when it runs again
 RECORD = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "sst" / "lowered-apps.json"
@@ -45,9 +48,9 @@ class _Lowered:
 
 
 class Ducker:
-    """start(speaking) watches `speaking()` (Speaker.speaking) on its own thread; stop() puts every app back at once.
-    `find(playing)` lists the apps' sounds (all of them, or only those playing now): the real ones by default, fakes in
-    the tests. `depth`: how loud the apps stay while the voice speaks (1.0: as they are)."""
+    """start() keeps the other apps at `depth` on its own thread; stop() puts every app back at once. `find(playing)`
+    lists the apps' sounds (all of them, or only those playing now): the real ones by default, fakes in the tests.
+    `depth`: how loud the other apps stay, 0.0 to 1.0 (1.0: as they are; 0.0: INAUDIBLE)."""
 
     def __init__(self, depth: float, find: Callable[[bool], list] | None = None, record: Path = RECORD,
                  clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time):
@@ -56,7 +59,7 @@ class Ducker:
         self.record, self._clock, self._wall = record, clock, wall
         self._lowered: dict[str, _Lowered] = {}
         self._level = 1.0  # where the apps are: 1.0 as the user left them, `depth` lowered
-        self._voice_at = self._scanned = -math.inf
+        self._scanned = -math.inf
         self._ticked: float | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -65,9 +68,9 @@ class Ducker:
     def set_depth(self, depth: float) -> None:
         self.depth = _bounded(depth)
 
-    def start(self, speaking: Callable[[], bool]) -> None:
+    def start(self) -> None:
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, args=(speaking,), name="live-ducker", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="live-ducker", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -75,36 +78,33 @@ class Ducker:
         if self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(3)
 
-    def _run(self, speaking: Callable[[], bool]) -> None:
+    def _run(self) -> None:
         _com()
         try:
-            put_back(self._find, self.record, self._wall)  # left low by a Rflow that ended while it spoke
+            put_back(self._find, self.record, self._wall)  # left low by a Rflow that ended while they were low
             while not self._stop.wait(STEP):
-                self.tick(speaking())
+                self.tick()
         except Exception:
             log.exception("Lowering the other apps failed")
         finally:
             self.release()
             ctypes.WinDLL("ole32").CoUninitialize()
 
-    def tick(self, speaking: bool) -> None:
-        """One look: the voice speaks (or did a moment ago): the apps go down; it's quiet: they come back."""
+    def tick(self) -> None:
+        """One step: the apps playing (new ones too) go towards `depth`, down quickly, up gently."""
         now = self._clock()
         step = 0.0 if self._ticked is None else min(now - self._ticked, 0.25)
         self._ticked = now
-        if speaking and self.depth < 1.0:
-            self._voice_at = now
-        low = now - self._voice_at < HOLD
-        if low:
-            if now - self._scanned >= RESCAN:
-                self._scanned = now
-                self._scan()
+        if self.depth < 1.0 and now - self._scanned >= RESCAN:
+            self._scanned = now
+            self._scan()
+        if self._level > self.depth:
             self._level = max(self.depth, self._level - step / DOWN)
         else:
-            self._level = min(1.0, self._level + step / UP)
+            self._level = min(self.depth, self._level + step / UP)
         self._apply()
-        if not low and self._level >= 1.0 and self._lowered:
-            self._forget()  # all back up
+        if self.depth >= 1.0 and self._level >= 1.0 and self._lowered:
+            self._forget()  # "Unchanged" chosen meanwhile: all back up
 
     def release(self) -> None:
         """Every app back to its own volume at once (stopping)."""
@@ -134,11 +134,12 @@ class Ducker:
             names = {_app_name(sound.name) for sound in added} - self._said
             if names:  # once each, not for every sentence
                 self._said |= names
-                log.info("While the voice speaks, lowered to %d%%: %s", round(self.depth * 100), ", ".join(sorted(names)))
+                log.info("While live translation speaks, lowered to %d%%: %s", round(self.depth * 100),
+                         ", ".join(sorted(names)))
 
     def _apply(self) -> None:
         for key, item in list(self._lowered.items()):
-            want = item.original * self._level
+            want = item.original if self._level >= 1.0 else max(item.original * self._level, INAUDIBLE)
             if want == item.now:  # where it is already: Windows isn't asked again
                 continue
             try:
@@ -173,7 +174,7 @@ class Ducker:
 
 
 def put_back(find: Callable[[bool], list], record: Path = RECORD, wall: Callable[[], float] = time.time) -> int:
-    """Apps a Rflow that ended while its voice spoke left lowered: back to their own volume (where nobody changed them
+    """Apps a Rflow that ended while live translation spoke left lowered: back to their own volume (where nobody changed them
     since). Those not running now are kept for KEEP seconds. How many were put back."""
     entries = _read(record)
     if not entries:
