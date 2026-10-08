@@ -89,7 +89,34 @@ def test_the_title_says_what_is_translated_into_what():
 def test_before_anyone_speaks_it_says_it_listens():
     bar = CaptionBar(LiveConfig(target="ja"))
     bar.show_event(LiveEvent(Kind.STATUS, "Listening"))
-    assert bar.text() == "Listening: translations into Japanese appear when someone speaks."
+    assert bar.text() == "Translations into Japanese appear here when someone speaks."
+
+
+def test_the_status_line_shows_each_ways_note_until_the_session_clears_it():
+    bar = CaptionBar(LiveConfig(source="both"))
+    assert bar.footer.isHidden() and bar.note() == ""
+    bar.show_event(LiveEvent(Kind.NOTE, "Listening…"))
+    bar.show_event(LiveEvent(Kind.NOTE, "Listening…", lane=MIC))
+    assert bar.note() == "Listening…" and not bar.footer.isHidden()  # the same words once
+    bar.show_event(LiveEvent(Kind.NOTE, "Nothing heard from the microphone", lane=MIC))
+    bar.show_event(LiveEvent(Kind.NOTE, "Hearing sound, but no speech yet"))
+    assert bar.footer.text() == "Hearing sound, but no speech yet  ·  Nothing heard from the microphone"
+    assert "Nothing heard" not in bar.text()  # a line of its own, not one of the captions
+    bar.show_event(LiveEvent(Kind.NOTE, ""))
+    bar.drop_lane(MIC)
+    assert bar.note() == "" and bar.footer.isHidden()
+
+
+def test_the_live_page_hears_when_the_status_line_changes():
+    live, made = live_captions()
+    noted = []
+    live.noted.connect(noted.append)
+    live.start(LiveConfig(target="en"))
+    made[0].on_event(LiveEvent(Kind.NOTE, "Nothing heard yet: is the sound playing on this laptop?"))
+    QApplication.processEvents()
+    assert noted == [live.note] == ["Nothing heard yet: is the sound playing on this laptop?"]
+    live.stop()
+    assert live.note == ""
 
 
 def test_a_problem_says_whose_it_is_and_goes_when_words_come():

@@ -4,11 +4,12 @@ import ast
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import sst.live
 from sst.live.contracts import MIC, SYSTEM, Kind, LiveConfig, LiveEvent, already_in, language_name
-from sst.live.session import LiveSession
+from sst.live.session import LiveSession, dbfs
 from sst.live.speaker import Speaker
 from sst.live.transcript import Transcript
 
@@ -111,7 +112,7 @@ def test_with_the_microphone_alone_lines_already_in_its_language_are_shown_and_k
     mic = engine(session, MIC)
     mic.on_event(LiveEvent(Kind.SOURCE, "Let's set the budget", language="en", lane=MIC))
     mic.on_event(LiveEvent(Kind.LINE, "", source="Let's set the budget next week.", language="en", lane=MIC))
-    assert [e.kind for e in shown] == [Kind.SOURCE, Kind.LINE] and session.lines == {MIC: 1}
+    assert [e.kind for e in shown if e.kind is not Kind.NOTE] == [Kind.SOURCE, Kind.LINE] and session.lines == {MIC: 1}
     assert "Let's set the budget next week." in session.transcript.path.read_text(encoding="utf-8")
     assert not speaker._queue  # the voice says translations only
     mic.on_event(LiveEvent(Kind.LINE, "Thank you.", source="ありがとう。", language="ja", lane=MIC))
@@ -123,6 +124,113 @@ def test_a_line_already_in_the_target_language_is_told_from_one_whose_translatio
     assert already_in(LiveEvent(Kind.LINE, "", source="Let's start."), "en")  # the engine didn't say: as heard
     assert not already_in(LiveEvent(Kind.LINE, "", source="始めましょう。", language="ja"), "en")
     assert not already_in(LiveEvent(Kind.LINE, "Let's start.", source="始めましょう。"), "en")
+
+
+# ---- the status line: why the bar is still empty
+
+LOUD, QUIET = np.full(1600, 3000, dtype="<i2").tobytes(), bytes(3200)  # 100 ms frames: about -21 dBFS, and silence
+
+
+def notes(shown, lane=SYSTEM):
+    return [e.text for e in shown if e.kind is Kind.NOTE and e.lane == lane]
+
+
+def listening(source="computer", lane=SYSTEM, **config):
+    shown = []
+    session = LiveSession(LiveConfig(source=source, **config), on_event=shown.append)
+    capture = FakeCapture()
+    session.add(lane, capture, FakeEngine)
+    engine(session, lane).on_event(LiveEvent(Kind.STATUS, "Listening", lane=lane))
+    return session, capture, shown
+
+
+def test_the_status_line_says_listening_then_that_nothing_is_heard_then_that_sound_has_no_speech():
+    session, capture, shown = listening()
+    assert notes(shown) == ["Listening…"]
+    for _ in range(79):
+        capture.on_frame(QUIET)
+    assert notes(shown) == ["Listening…"]  # not before 8 s
+    capture.on_frame(QUIET)
+    assert notes(shown)[-1] == "Nothing heard yet: is the sound playing on this laptop?"
+    for _ in range(19):
+        capture.on_frame(LOUD)
+    assert notes(shown)[-1].startswith("Nothing heard")  # 1.9 s of sound in the last 8: still mostly silence
+    capture.on_frame(LOUD)
+    assert notes(shown)[-1] == "Hearing sound, but no speech yet"
+    assert len(notes(shown)) == 3  # each change once, not every frame
+
+
+def test_words_clear_the_status_line_for_good():
+    session, capture, shown = listening()
+    for _ in range(80):
+        capture.on_frame(LOUD)
+    engine(session, SYSTEM).on_event(LiveEvent(Kind.SOURCE, "今日は"))
+    assert notes(shown)[-1] == ""
+    for _ in range(200):  # the video paused afterwards: not "nothing heard yet"
+        capture.on_frame(QUIET)
+    engine(session, SYSTEM).on_event(LiveEvent(Kind.STATUS, "Listening"))  # a new connection
+    assert notes(shown) == ["Listening…", "Hearing sound, but no speech yet", ""]
+
+
+def test_nothing_is_judged_before_the_engine_listens():
+    shown = []
+    session = LiveSession(LiveConfig(), on_event=shown.append)
+    capture = FakeCapture()
+    session.add(SYSTEM, capture, FakeEngine)
+    for _ in range(100):  # still connecting: the title says so
+        capture.on_frame(QUIET)
+    assert notes(shown) == []
+
+
+def test_the_microphone_alone_says_it_hears_nothing_but_with_both_its_silence_is_the_user_listening():
+    session, capture, shown = listening("microphone", MIC)
+    for _ in range(80):
+        capture.on_frame(QUIET)
+    assert notes(shown, MIC) == ["Listening…", "Nothing heard from the microphone"]
+    session, capture, shown = listening("both", MIC)
+    for _ in range(80):
+        capture.on_frame(QUIET)
+    assert notes(shown, MIC) == []
+
+
+def test_speaking_the_language_it_translates_into_is_said_until_a_line_is_translated():
+    session, capture, shown = listening("microphone", MIC, mic_target="en")
+    mic = engine(session, MIC)
+    mic.on_event(LiveEvent(Kind.SOURCE, "Let's set", language="en", lane=MIC))
+    mic.on_event(LiveEvent(Kind.LINE, "", source="Let's set the budget.", language="en", lane=MIC))
+    you = "You're speaking English, the language it translates into"
+    assert notes(shown, MIC) == ["Listening…", "", you]
+    assert [e.kind for e in shown if e.kind in (Kind.LINE, Kind.NOTE)][-2:] == [Kind.LINE, Kind.NOTE]  # line first
+    mic.on_event(LiveEvent(Kind.SOURCE, "Next", language="en", lane=MIC))  # words in progress: the note stays
+    mic.on_event(LiveEvent(Kind.LINE, "", source="Next week.", language="en", lane=MIC))
+    assert notes(shown, MIC)[-1] == you and len(notes(shown, MIC)) == 3
+    mic.on_event(LiveEvent(Kind.LINE, "Thank you.", source="ありがとう。", language="ja", lane=MIC))
+    assert notes(shown, MIC)[-1] == ""
+
+
+def test_a_capture_can_say_what_it_found_on_the_status_line_until_words_come():
+    shown = []
+    session = LiveSession(LiveConfig(), on_event=shown.append)
+    capture = FakeCapture()
+    capture.on_note = None  # a Capture that has it gets a callable: the session's note() for its way
+    session.add(SYSTEM, capture, FakeEngine)
+    engine(session, SYSTEM).on_event(LiveEvent(Kind.STATUS, "Listening"))
+    capture.on_note("Nothing plays on Speakers: the call may be on Headset")
+    for _ in range(100):
+        capture.on_frame(QUIET)  # its finding stays: the session's own guess doesn't replace it
+    assert notes(shown) == ["Listening…", "Nothing plays on Speakers: the call may be on Headset"]
+    session.note(SYSTEM, "")  # taken back: the session's own note again
+    capture.on_frame(QUIET)
+    assert notes(shown)[-2:] == ["", "Nothing heard yet: is the sound playing on this laptop?"]
+    session.note(SYSTEM, "The call may be on Headset")
+    engine(session, SYSTEM).on_event(LiveEvent(Kind.TRANSLATION, "Good morning"))
+    assert notes(shown)[-1] == ""
+    session.note(MIC, "no such way")  # a way that isn't running: nothing
+    assert all(e.lane == SYSTEM for e in shown)
+
+
+def test_the_level_of_a_frame():
+    assert dbfs(QUIET) == -np.inf and round(dbfs(LOUD)) == -21 and dbfs(b"") == -np.inf
 
 
 def test_the_settings_of_each_way():
