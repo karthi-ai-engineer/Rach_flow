@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from sst.live import level
-from sst.live.level import LIMIT, MAX_GAIN, RISE, TARGET, Leveler, soft_limit
+from sst.live.level import LIMIT, MAX_GAIN, MIC_MAX_GAIN, MIC_NOISE_CEILING, RISE, TARGET, Leveler, soft_limit
 
 RATE = 16_000
 
@@ -67,6 +67,33 @@ def test_a_soft_limit_rounds_off_only_what_is_above_it():
     assert np.all(np.diff(soft_limit(np.linspace(0.8, 1.2, 41, dtype=np.float32))) > 0)  # bent, not flattened
     inside = np.abs(x) <= LIMIT
     assert np.array_equal(y[inside], x[inside])
+
+
+def noise(seconds, db, seed=2):
+    return np.random.default_rng(seed).standard_normal(int(seconds * RATE)).astype(np.float32) * np.float32(10 ** (db / 20))
+
+
+def rms_db(x):
+    return 10 * np.log10(np.mean(np.asarray(x, np.float64) ** 2))
+
+
+def test_a_microphones_quiet_room_isnt_raised_to_speech_level():
+    room = noise(12, -62)  # a laptop's fan, nobody speaking
+    assert rms_db(run(Leveler(), room)[-3 * RATE:]) > -25  # the computer's leveler would make it speech-loud
+    mic = Leveler.for_microphone()
+    out = run(mic, room)
+    assert mic.noise_db() == pytest.approx(-62 - 1.3, abs=1.0)  # the quietest tenth of its 20 ms blocks
+    assert rms_db(out[-3 * RATE:]) == pytest.approx(MIC_NOISE_CEILING, abs=1.5)  # raised, but kept 25 dB under speech
+
+
+def test_a_quiet_voice_over_a_quiet_room_is_raised_by_the_microphones_leveler():
+    voice = speech(10, -42) + noise(10, -80)
+    out = run(Leveler.for_microphone(), voice)
+    assert loudest_db(out, 2) == pytest.approx(TARGET, abs=1.0)
+    far = speech(10, -65)  # someone across the room in digital silence: raised by MIC_MAX_GAIN at most
+    mic = Leveler.for_microphone()
+    run(mic, far)
+    assert mic.gain_db == pytest.approx(MIC_MAX_GAIN)
 
 
 def test_the_window_is_a_few_seconds_of_what_was_heard():
