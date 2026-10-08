@@ -476,6 +476,7 @@ class TrayApp:
         self.live.changed.connect(self._live_changed)
         self.live.moved.connect(self._live_moved)
         self.live.speak_toggled.connect(lambda on: self.set_live_speak(on))
+        self.live.noted.connect(lambda _: self.window.isVisible() and self.window.refresh())  # the Live page shows it
         self.live_listener = None  # live translation's shortcut (Ctrl+Alt+L), watched by live_keys
         self.live_keys = QTimer(interval=30, timeout=self._live_key_pump)
         self.window = MainWindow(self)
@@ -955,6 +956,10 @@ class TrayApp:
 
     def live_running(self) -> bool:
         return self.live.running
+
+    def live_note(self) -> str:
+        """The bar's status line while live translation runs: why nothing shows yet, or ""."""
+        return self.live.note
 
     def live_languages(self) -> tuple[str, str]:
         """What live translation translates into now (the computer's sound, the microphone's): while it runs, the ones

@@ -1636,6 +1636,21 @@ def test_the_page_follows_live_translation_started_or_stopped_elsewhere():
     assert page.start_button.text() == "Start" and page.state.text() == "Off" and not page.light.blinking
 
 
+def test_the_page_says_why_the_bar_is_still_empty():
+    window, app = _live_window()
+    window.show_page("live")
+    page = window.pages["live"]
+    app._live_note = "Nothing heard yet: is the sound playing on this laptop?"
+    window.refresh()
+    assert page.hearing.isHidden()  # not running: nothing to say
+    app._live = True
+    window.refresh()  # what the TrayApp does when the bar's status line changes
+    assert page.hearing.text() == app._live_note and not page.hearing.isHidden()
+    app._live_note = ""  # words came
+    window.refresh()
+    assert page.hearing.isHidden()
+
+
 def test_the_live_light_blinks_only_while_it_runs_and_is_shown():
     from PySide6.QtGui import QHideEvent, QShowEvent
     window, _ = _live_window()
