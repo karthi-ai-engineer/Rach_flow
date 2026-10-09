@@ -79,8 +79,34 @@ def test_copy_needs_an_answer_and_puts_it_on_the_clipboard(box):
     assert QGuiApplication.clipboard().text() == "**Priya** owns it." and box.copy_button.toolTip() == "Copied"
     box._copied.timeout.emit()  # 1.5 s later
     assert box.copy_button.toolTip() == "Copy the answer"
-    box.show_question("Next one?")
+    box.show_question("Next one?")  # the answer stays readable (and copyable) until the next one comes
+    assert box.copy_button.isEnabled() and box.answer_text == "**Priya** owns it."
+    box.show_error("Next one?", "The AI model couldn't answer")
     assert not box.copy_button.isEnabled()
+
+
+def test_the_next_question_shows_above_the_answer_still_being_read(box):
+    box.show_answer("Who owns it?", "Priya owns it.")
+    box.show_question("And the budget?")
+    page = box.view.toPlainText()
+    assert "Next: And the budget?" in page and "Priya owns it." in page and box.question_text == "Who owns it?"
+    box.show_answer("And the budget?", "Two million.")
+    page = box.view.toPlainText()
+    assert "Next:" not in page and "Priya" not in page and box.question_text == "And the budget?"
+
+
+def test_an_error_is_titled_no_answer(box):
+    box.show_error("Why?", "timeout")
+    box.show_status("")
+    assert box.title_text == "No answer"
+
+
+def test_a_remembered_size_bigger_than_the_screen_is_made_to_fit(box):
+    area = QGuiApplication.primaryScreen().availableGeometry()
+    box.place([area.left(), area.top(), area.width() + 3000, area.height() + 2000])
+    assert box.width() <= area.width() and box.height() <= area.height()
+    box.place([area.right() - 200, area.bottom() - 100, 500, area.height()])  # partly below the screen's edge
+    assert area.contains(box.geometry())
 
 
 def test_retry_only_when_a_question_is_shown_and_nothing_is_going_on(box):

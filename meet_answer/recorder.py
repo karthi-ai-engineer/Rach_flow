@@ -96,6 +96,7 @@ class Recorder:
         with self._lock:
             frames, ahead, heard, seconds = self._frames, self._ahead, self._heard, self._clock() - self._started
             self._frames, self.recording = [], False
+            self._ring.clear()  # answered now: the next question's look-back never brings it back
         if self.lookback <= 0:
             self._close()
         return Recording(to_audio(frames) if heard else np.zeros(0, dtype=np.float32), seconds,

@@ -125,6 +125,7 @@ class MeetApp(QObject):
         self._busy = 0  # audio and question jobs not finished yet
         self._job_status = ""
         self._job_since = 0.0  # when the worker began its current step
+        self._note = ""  # the capture's hint (where the sound may be), shown under the answer
         self._placed = False
         self.model_name = ""  # the speech model loaded ("" until then, or when none could be)
         self.prepared = False  # the first try to load it is over
@@ -212,8 +213,9 @@ class MeetApp(QObject):
         except Exception as e:  # no device, or Windows refused it: said in the box
             log.warning("Can't record the meeting audio: %s", e)
             self._show_box()
-            self.box.show_error("", f"Can't listen to the meeting audio: {e}")
+            self._tell(f"Can't listen to the meeting audio: {e}")
             return
+        self.box.show_note(self._note)  # a message from the last press goes
         if self.listener:
             self.listener.recording = True  # Esc now cancels
         self._show_box()
@@ -228,11 +230,12 @@ class MeetApp(QObject):
         log.info("Recorded %.1f s (+%.1f s look-back), %.1f s with sound", recording.seconds, recording.lookback,
                  recording.total)
         if not recording.heard or not len(recording.audio):
-            self.box.show_error("", NOTHING_HEARD)
+            self._tell(NOTHING_HEARD)
             self._refresh_header()
             return
+        if not self._busy:  # else the worker is still on the last question, and says when it gets to this one
+            self._set_status("Transcribing…")
         self._busy += 1
-        self._set_status("Transcribing…")
         self._refresh_header()
         self._submit(Job("audio", recording=recording))
 
@@ -249,8 +252,9 @@ class MeetApp(QObject):
         question = self.box.question_text
         if not question:
             return
+        if not self._busy:
+            self._set_status("Thinking…")
         self._busy += 1
-        self._set_status("Thinking…")
         self._refresh_header()
         self._submit(Job("question", question=question))
 
@@ -335,7 +339,9 @@ class MeetApp(QObject):
         if not self._busy:
             self._job_status = ""
         self._show_box()  # the answer was asked for, even if the box was closed meanwhile
-        if error:
+        if error and not question:
+            self._tell(error)  # nothing new to show (no words, no speech model): the answer being read stays
+        elif error:
             self.box.show_error(question, error)
         else:
             self.box.show_answer(question, answer)
@@ -349,7 +355,15 @@ class MeetApp(QObject):
         self._set_tray()
 
     def _on_note(self, text: str) -> None:
+        self._note = text
         self.box.show_note(text)
+
+    def _tell(self, message: str) -> None:
+        """A message about this press: under the answer being read, if there is one (it stays), else in its place."""
+        if self.box.answer_text:
+            self.box.show_note(message)
+        else:
+            self.box.show_error("", message)
 
     def _refresh_header(self) -> None:
         if self.recorder.recording:
@@ -382,8 +396,10 @@ class MeetApp(QObject):
 
     def _box_moved(self, geometry: list) -> None:
         self.config.box = [int(v) for v in geometry]
-        try:
-            self.config.save()
+        try:  # only the box changes: the file may have been edited by hand since the start
+            saved = MeetConfig.load()
+            saved.box = self.config.box
+            saved.save()
         except OSError as e:
             log.warning("Couldn't remember where the box is: %s", e)
 
