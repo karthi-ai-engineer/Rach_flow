@@ -303,3 +303,16 @@ def test_history_keeps_text_and_trims(data_dir, monkeypatch):
         history.add(f"q{i}", f"a{i}", "m")
     entries = history.read()
     assert [e["question"] for e in entries] == ["q2", "q3", "q4"] and history.history_file().parent == config.DATA_DIR
+
+
+def test_audio_already_answered_never_comes_back_in_the_next_look_back():
+    rec, made, _ = _recorder(lookback=2.0)
+    rec.open()
+    rec.start()
+    made[0].feed(*[SOUND] * 10)
+    assert rec.stop().heard
+    made[0].feed(*[QUIET] * 5)
+    rec.start()
+    made[0].feed(*[QUIET] * 5)
+    r = rec.stop()
+    assert not r.heard and r.lookback == 0.5  # only what came after the answered recording

@@ -270,3 +270,36 @@ def test_a_slow_answer_is_counted_so_it_never_looks_hung(qapp):
     assert box.header == "Thinking… 9 s"
     meet._on_finished("q", "a", "")
     assert box.header == "" and not meet._tick.isActive()
+
+
+def test_nothing_heard_leaves_the_answer_being_read(qapp):
+    recorder = FakeRecorder()
+    meet, box = _app(qapp, recorder=recorder)
+    meet.toggle()
+    meet.toggle()
+    recorder.heard = False
+    meet.toggle()
+    meet.toggle()
+    assert box.answer_text == "Answer to What is the Q3 target?" and box.note == meet_app.NOTHING_HEARD
+    recorder.heard = True
+    meet.toggle()  # the next press clears the message
+    assert box.note == ""
+
+
+def test_a_question_waiting_behind_another_doesnt_reset_the_status(qapp):
+    meet, box = _app(qapp)
+    meet._threaded = True  # jobs queue up instead of running at once
+    meet._busy = 1
+    meet._set_status("Thinking…")
+    since = meet._job_since
+    meet.toggle()
+    meet.toggle()
+    assert meet._busy == 2 and meet._job_status == "Thinking…" and meet._job_since == since
+
+
+def test_moving_the_box_keeps_settings_edited_by_hand(qapp, data_dir):
+    meet, box = _app(qapp)
+    MeetConfig(style="detailed", notes="finance lead", lookback=30.0).save()
+    box.moved.emit([5, 6, 400, 300])
+    saved = MeetConfig.load()
+    assert (saved.style, saved.notes, saved.lookback, saved.box) == ("detailed", "finance lead", 30.0, [5, 6, 400, 300])

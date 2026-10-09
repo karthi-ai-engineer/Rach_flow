@@ -159,6 +159,7 @@ class AnswerBox(QWidget):
         self.resize(DEFAULT_SIZE)
         self.hide_from_capture, self.shortcut_label = hide_from_capture, shortcut_label
         self._question = self._answer = self._error = ""
+        self._pending = ""  # the next question, being answered while the last answer stays readable
         self._state = "idle"  # "recording", "busy" (transcribing, thinking...) or "idle": Retry only when idle
         self._seen = False  # something was asked: the idle title is "Answer" from then on
         self._title_text = ""
@@ -178,7 +179,7 @@ class AnswerBox(QWidget):
         self.copy_button = self._head_button("Copy the answer")
         self.copy_button.clicked.connect(self._copy)
         self.retry_button = self._head_button("Ask the AI again")
-        self._set_icon(self.retry_button, next((n for n in ("refresh", "retry") if n in theme.ICONS), ""), "Retry")
+        self._set_icon(self.retry_button, "update", "Retry")
         self.retry_button.clicked.connect(self.retry.emit)
         self.close_button = self._head_button("Close")
         self._set_icon(self.close_button, "close", "✕")
@@ -269,7 +270,10 @@ class AnswerBox(QWidget):
 
     def _idle(self) -> None:
         self._state = "idle"
-        self._set_title("Answer" if self._seen else "Meeting answers", "text3")
+        if self._error and not self._answer:
+            self._set_title("No answer", "warn")
+        else:
+            self._set_title("Answer" if self._seen else "Meeting answers", "text3")
 
     def _set_title(self, title: str, colour: str, hint: str = "", warning: str = "") -> None:
         muted, warn = _token("text3").name(), _token("warn").name()
@@ -286,8 +290,14 @@ class AnswerBox(QWidget):
     # -- the body: the question and its answer
 
     def show_question(self, question: str) -> None:
-        """The words heard, while the answer is being written: the last answer goes."""
-        self._show(question, "", "")
+        """The words heard, while the answer is being written. An answer on screen stays until the new one comes (it
+        may still be being read: two questions can follow closely); the new question shows above it meanwhile."""
+        if self._answer:
+            self._pending = question.strip()
+            self._seen = True
+            self._render()
+        else:
+            self._show(question, "", "")
 
     def show_answer(self, question: str, answer: str) -> None:
         self._show(question, answer.strip(), "")
@@ -297,6 +307,7 @@ class AnswerBox(QWidget):
 
     def _show(self, question: str, answer: str, error: str) -> None:
         self._question, self._answer, self._error = question.strip(), answer, error
+        self._pending = "" if answer or error else self._pending
         self._seen = True
         if self._state == "busy" and (answer or error):  # done: the header goes quiet (a recording keeps its own)
             self._idle()
@@ -321,6 +332,9 @@ class AnswerBox(QWidget):
     def _render(self) -> None:
         muted = _token("text3").name()
         parts = []
+        if self._pending:
+            parts.append(f'<p style="{_P}; font-size:13px; color:{_token("text2").name()}"><b>Next:</b> '
+                         f'{html.escape(tail(self._pending, QUESTION_CHARS // 2))}</p>')
         if self._question:
             parts.append(f'<p style="{_P}; font-size:13px; color:{muted}">{html.escape(tail(self._question))}</p>')
         if self._answer:
@@ -376,8 +390,10 @@ class AnswerBox(QWidget):
         if rect is not None:
             rect.setSize(rect.size().expandedTo(MIN_SIZE))
             for screen in QGuiApplication.screens():
-                seen = screen.availableGeometry().intersected(rect)
+                area = screen.availableGeometry()
+                seen = area.intersected(rect)
                 if seen.width() >= 120 and seen.height() >= 60:  # enough of it to grab and drag back
+                    rect.setSize(rect.size().boundedTo(area.size()).expandedTo(MIN_SIZE))  # a smaller screen now
                     self.setGeometry(rect)
                     return
         screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
