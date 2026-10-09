@@ -284,6 +284,9 @@ def test_nothing_heard_leaves_the_answer_being_read(qapp):
     recorder.heard = True
     meet.toggle()  # the next press clears the message
     assert box.note == ""
+    meet.transcriber.text = ""  # a tone, no speech: no words either
+    meet.toggle()
+    assert box.answer_text == "Answer to What is the Q3 target?" and box.note == meet_app.NO_WORDS
 
 
 def test_a_question_waiting_behind_another_doesnt_reset_the_status(qapp):

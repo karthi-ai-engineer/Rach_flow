@@ -339,7 +339,9 @@ class MeetApp(QObject):
         if not self._busy:
             self._job_status = ""
         self._show_box()  # the answer was asked for, even if the box was closed meanwhile
-        if error:
+        if error and not question:
+            self._tell(error)  # nothing new to show (no words, no speech model): the answer being read stays
+        elif error:
             self.box.show_error(question, error)
         else:
             self.box.show_answer(question, answer)

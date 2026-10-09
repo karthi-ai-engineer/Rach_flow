@@ -179,7 +179,8 @@ class AnswerBox(QWidget):
         self.copy_button = self._head_button("Copy the answer")
         self.copy_button.clicked.connect(self._copy)
         self.retry_button = self._head_button("Ask the AI again")
-        self._set_icon(self.retry_button, "update", "Retry")
+        self._set_icon(self.retry_button, "", "↻")  # the design has no retry icon ("update" reads as upload)
+        self.retry_button.setFont(theme.font(16, 600))
         self.retry_button.clicked.connect(self.retry.emit)
         self.close_button = self._head_button("Close")
         self._set_icon(self.close_button, "close", "✕")
@@ -394,6 +395,8 @@ class AnswerBox(QWidget):
                 seen = area.intersected(rect)
                 if seen.width() >= 120 and seen.height() >= 60:  # enough of it to grab and drag back
                     rect.setSize(rect.size().boundedTo(area.size()).expandedTo(MIN_SIZE))  # a smaller screen now
+                    rect.moveTo(min(max(rect.x(), area.left()), area.right() - rect.width() + 1),
+                                min(max(rect.y(), area.top()), area.bottom() - rect.height() + 1))  # every edge reachable
                     self.setGeometry(rect)
                     return
         screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()

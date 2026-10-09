@@ -105,6 +105,8 @@ def test_a_remembered_size_bigger_than_the_screen_is_made_to_fit(box):
     area = QGuiApplication.primaryScreen().availableGeometry()
     box.place([area.left(), area.top(), area.width() + 3000, area.height() + 2000])
     assert box.width() <= area.width() and box.height() <= area.height()
+    box.place([area.right() - 200, area.bottom() - 100, 500, area.height()])  # partly below the screen's edge
+    assert area.contains(box.geometry())
 
 
 def test_retry_only_when_a_question_is_shown_and_nothing_is_going_on(box):
